@@ -6,8 +6,9 @@ import { icon } from '../icons.js';
 /**
  * Shows a modal. Resolves with the id of the button pressed, or null if dismissed (Esc / backdrop).
  * buttons: [{ id, label, primary? }]
+ * bind({ finish, dialog }): for dialogs that manage their own controls (e.g. the update dialog).
  */
-export function showDialog({ title, message, content = [], buttons = [{ id: 'ok', label: 'OK', primary: true }], iconName, className = '', onOpen }) {
+export function showDialog({ title, message, content = [], buttons = [{ id: 'ok', label: 'OK', primary: true }], iconName, className = '', onOpen, bind }) {
   return new Promise((resolve) => {
     const titleId = `dlg-${Math.random().toString(36).slice(2)}`;
     const footer = h('div', { class: 'dialog-actions' });
@@ -20,7 +21,10 @@ export function showDialog({ title, message, content = [], buttons = [{ id: 'ok'
     const backdrop = h('div', { class: 'dialog-backdrop ui' }, dialog);
     const previousFocus = document.activeElement;
 
+    let finished = false;
     const finish = (result) => {
+      if (finished) return;
+      finished = true;
       backdrop.classList.remove('open');
       backdrop.addEventListener('transitionend', () => backdrop.remove(), { once: true });
       setTimeout(() => backdrop.remove(), 250);
@@ -40,6 +44,8 @@ export function showDialog({ title, message, content = [], buttons = [{ id: 'ok'
       }
     });
 
+    footer.hidden = buttons.length === 0;
+    bind?.({ finish, dialog });
     document.getElementById('overlay-root').append(backdrop);
     requestAnimationFrame(() => backdrop.classList.add('open'));
     // Focus the primary (safe) action, so Enter never picks e.g. "Don't save" by accident.
@@ -62,23 +68,32 @@ export async function promptPassword({ fileName, incorrect = false }) {
   return result === 'ok' ? input.value : null;
 }
 
-/** A short message. `action: { label, run }` adds a button (e.g. Undo); such toasts stay a little longer. */
+/**
+ * A short message. `action: { label, run }` adds a button (e.g. Undo); such toasts stay a little longer.
+ * kind: info | success | error | update | busy (a spinner). Returns a function that dismisses it early.
+ */
 export function toast(message, { kind = 'info', timeout = 3600, action = null } = {}) {
   let host = document.getElementById('toasts');
   if (!host) {
     host = h('div', { id: 'toasts', class: 'ui', 'aria-live': 'polite' });
     document.getElementById('overlay-root').append(host);
   }
-  const iconName = kind === 'error' ? 'triangle-alert' : kind === 'success' ? 'check' : 'info';
+  const iconName = { error: 'triangle-alert', success: 'check', update: 'sparkles' }[kind] ?? 'info';
   const dismiss = () => {
     el.classList.remove('open');
     setTimeout(() => el.remove(), 300);
   };
   const el = h('div', { class: `toast ${kind}${action ? ' has-action' : ''}`, role: kind === 'error' ? 'alert' : 'status' },
-    h('span', { class: 'toast-icon', html: icon(iconName, 16) }),
+    kind === 'busy'
+      ? h('span', { class: 'toast-icon' }, h('span', { class: 'toast-spinner' }))
+      : h('span', { class: 'toast-icon', html: icon(iconName, 16) }),
     h('span', { text: message }),
     action ? h('button', { class: 'toast-action', onClick: () => { dismiss(); action.run(); } }, action.label) : null);
   host.append(el);
   requestAnimationFrame(() => el.classList.add('open'));
-  setTimeout(dismiss, action ? Math.max(timeout, 6000) : timeout);
+  const timer = setTimeout(dismiss, action ? Math.max(timeout, 6000) : timeout);
+  return () => {
+    clearTimeout(timer);
+    dismiss();
+  };
 }

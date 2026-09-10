@@ -16,6 +16,7 @@ const names = [
   'case-sensitive', 'whole-word', 'external-link', 'ellipsis', 'check', 'plus', 'info', 'file-text',
   'book-open', 'text-select', 'key-round', 'eraser', 'save-all', 'arrow-up-to-line', 'arrow-down-to-line',
   'contrast', 'copy-plus', 'file-output', 'scissors', 'files', 'list-checks',
+  'sparkles', 'refresh-cw', 'wifi-off',
 ];
 
 const icons = {};

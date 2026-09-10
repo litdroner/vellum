@@ -4,13 +4,21 @@ A calm, fast PDF reader for Windows. WPF shell, WebView2 surface, pdf.js renderi
 
 Developed by **Pankaj Manhas** · Homelabs. Made in India.
 
-## Install
+## Download and install
 
-Run `dist\Vellum-Setup.exe` (built by `tools\publish.ps1`). It installs for your user only (no admin
-prompt) into `%LOCALAPPDATA%\Programs\Vellum`, adds a Start-menu entry and, if you tick the option,
-registers Vellum as a PDF app. Windows then asks you to confirm the default once in
-**Settings → Apps → Default apps → Vellum** (no app can make itself the default silently).
-Needs the Microsoft Edge WebView2 Runtime, which Windows 10/11 normally already has.
+Download **Vellum-Setup.exe** from the [latest release](https://github.com/litdroner/vellum/releases/latest)
+and run it. It installs for your user only (no admin prompt) into `%LOCALAPPDATA%\Programs\Vellum`, adds
+a Start-menu entry and, if you tick the option, registers Vellum as a PDF app. Windows then asks you to
+confirm the default once in **Settings → Apps → Default apps → Vellum** (no app can make itself the
+default silently). Needs the Microsoft Edge WebView2 Runtime, which Windows 10/11 normally already has.
+
+The installer isn't code-signed yet, so SmartScreen may show "Windows protected your PC": choose
+**More info → Run anyway**.
+
+### Updates
+Vellum checks GitHub for a new version once a day (switch this off in **About**), and
+**⋯ → Check for updates…** checks right away. Updating downloads the new installer, verifies it against
+the SHA-256 GitHub publishes for it, installs it and reopens the documents you had open.
 
 ## What it does
 
@@ -61,6 +69,7 @@ tools\run.ps1 -Files some.pdf        # build (Debug) and run
 tools\run.ps1 -Debug                 # also exposes DevTools on port 9222
 node tools\cdp.mjs eval "document.title"   # poke the running app
 tools\publish.ps1                    # self-contained Release build + installer (Inno Setup 6)
+tools\release.ps1 -NotesFile n.md    # publish the installer as a GitHub release (in-app updates find it)
 ```
 
 ## How it's put together

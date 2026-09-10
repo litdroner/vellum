@@ -16,6 +16,7 @@ import { promptPassword, showDialog, toast } from './ui/dialogs.js';
 import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
 import { createPageActions } from './pages/actions.js';
+import { Updates } from './ui/updates.js';
 
 // Diagnostics hook read by tools/cdp.mjs during development.
 window.__vellum = { errors: [] };
@@ -286,7 +287,10 @@ const actions = {
     applyTheme(currentTheme() === 'light' ? 'dark' : 'light', { animate: true });
   },
   about() {
-    showAbout({ version: session.version });
+    showAbout({ version: session.version, updates: ui.updates });
+  },
+  checkForUpdates() {
+    ui.updates.checkNow();
   },
   async setDefault() {
     const choice = await showDialog({
@@ -316,6 +320,7 @@ ui.toolbar.onPageTone = setPageTone;
 ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages);
 ui.findbar = new FindBar(stage, app);
 ui.start = new StartScreen(stage, { bridge, onOpenDialog: () => actions.openDialog(), onOpenRecent: (p) => actions.openRecent(p) });
+ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
 stage.append(zoomHud.el);
 installShortcuts(commands);
 
@@ -362,26 +367,30 @@ app.addEventListener('activechange', () => {
 });
 app.addEventListener('viewchange', updateTitle);
 
-// Closing the window: offer to save unsaved annotations first.
+/** Before quitting (closing the window, or restarting to update): offer to save unsaved changes. False if cancelled. */
+async function prepareToQuit() {
+  const dirty = app.views.filter((v) => v.annotations.dirty);
+  if (dirty.length) {
+    if (dirty.length === 1) app.activate(dirty[0]);
+    const choice = await askToSave(dirty);
+    if (choice === 'cancel') return false;
+    if (choice === 'save') {
+      for (const view of dirty) {
+        app.activate(view);
+        if (!(await saveView(view))) return false;
+      }
+    }
+  }
+  for (const view of app.views) rememberPosition(view);
+  return true;
+}
+
 let closing = false;
 bridge.on('close-requested', async () => {
   if (closing) return;
   closing = true;
   try {
-    const dirty = app.views.filter((v) => v.annotations.dirty);
-    if (dirty.length) {
-      if (dirty.length === 1) app.activate(dirty[0]);
-      const choice = await askToSave(dirty);
-      if (choice === 'cancel') return;
-      if (choice === 'save') {
-        for (const view of dirty) {
-          app.activate(view);
-          if (!(await saveView(view))) return;
-        }
-      }
-    }
-    for (const view of app.views) rememberPosition(view);
-    bridge.send('window.closeConfirmed');
+    if (await prepareToQuit()) bridge.send('window.closeConfirmed');
   } finally {
     closing = false;
   }
@@ -417,6 +426,7 @@ ui.toolbar.onMenu = async (anchor) => {
       ? menuItem('view.theme', 'moon', { label: 'Dark theme' })
       : menuItem('view.theme', 'sun', { label: 'Light theme' }),
     menuItem('app.setDefault', 'file-text'),
+    menuItem('app.checkUpdates', 'refresh-cw'),
     menuItem('app.about', 'info'),
   ], { anchor, align: 'end' });
 };
@@ -484,15 +494,18 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 try {
-  const { files, theme, user, version } = await bridge.request('ready');
+  const { files, theme, user, version, updatedFrom } = await bridge.request('ready');
   session.user = user ?? '';
   session.version = version ?? '';
   // localStorage is the page's source of truth; fall back to the host's copy if it was cleared.
   let stored = null;
   try { stored = localStorage.getItem('vellum.theme'); } catch { /* storage unavailable */ }
   applyTheme(stored ? currentTheme() : (theme === 'light' ? 'light' : 'dark'));
+  if (updatedFrom) ui.updates.announce(version);
   if (files.length) await openAll(files);
   else ui.start.refresh();
+  // The daily update check waits until startup has settled.
+  setTimeout(() => ui.updates.checkQuietly(), 6000);
 } catch (err) {
   window.__vellum.errors.push(String(err?.stack ?? err));
 }
