@@ -129,8 +129,28 @@ export class AnnotationLayer extends EventTarget {
     this.store.remove(id);
   }
 
+  /**
+   * Drops every page overlay, popover and open note editor. Used when the document's pages are
+   * rebuilt: page numbers on screen and in the store briefly disagree, so nothing may be drawn
+   * or edited until the new pages render (then they re-attach as usual).
+   */
+  reset() {
+    this.#closeEditor(false);
+    this.#closePopover();
+    this.#pendingNote = null;
+    this.#stroke = null;
+    this.selectedId = null;
+    this.#observer.disconnect();
+    for (const layer of this.#pages.values()) {
+      layer.hl.remove();
+      layer.marks.remove();
+    }
+    this.#pages.clear();
+  }
+
   /** Turns the current text selection into highlight / underline annotations. */
   markSelection(type, color = toolPrefs[type]) {
+    if (this.view.rebuilding) return false;
     const groups = selectionToQuads(this.view);
     if (!groups.length) return false;
     this.store.add(...groups.map((g) => this.store.create({ type, page: g.page, quads: g.quads, color })));
@@ -140,6 +160,7 @@ export class AnnotationLayer extends EventTarget {
   }
 
   addNoteAt(clientX, clientY) {
+    if (this.view.rebuilding) return;
     const at = this.#pageAt(document.elementFromPoint(clientX, clientY));
     if (!at) return;
     const [x, y] = this.#toPdf(at.pageView, clientX, clientY);
@@ -163,7 +184,16 @@ export class AnnotationLayer extends EventTarget {
 
   // ---- page overlays -------------------------------------------------------------
 
+  /** Attaches overlays to every page that has already rendered (after a rebuild finishes). */
+  refresh() {
+    const count = this.view.pdf?.numPages ?? 0;
+    for (let n = 1; n <= count; n++) {
+      if (this.view.viewer.getPageView(n - 1)?.renderingState === 3 /* finished */) this.#attach(n);
+    }
+  }
+
   #attach(n) {
+    if (this.view.rebuilding) return; // the pages on screen are about to be replaced
     const pageView = this.view.viewer.getPageView(n - 1);
     if (!pageView?.div) return;
     let layer = this.#pages.get(n);

@@ -51,6 +51,10 @@ export class Toolbar {
     this.continuousBtn = button('view.continuous', 'gallery-vertical-end', 'seg-btn');
     this.singleBtn = button('view.single', 'file', 'seg-btn');
     this.layoutSeg = h('div', { class: 'seg doc-only layout-seg', role: 'group', 'aria-label': 'Page layout' }, this.continuousBtn, this.singleBtn);
+    this.toneBtn = h('button', {
+      class: 'tb-btn tone-btn', title: 'Page colours (Ctrl+Shift+D)', 'aria-label': 'Page colours', 'aria-haspopup': 'menu',
+      html: icon('contrast'), onClick: () => this.#openToneMenu(),
+    });
     this.rotateCcwBtn = button('view.rotateCcw', 'rotate-ccw');
     this.rotateCwBtn = button('view.rotateCw', 'rotate-cw');
     this.searchBtn = button('find.open', 'search');
@@ -70,6 +74,7 @@ export class Toolbar {
       h('div', { class: 'tb-group tools-group doc-only' }, this.toolSeg, this.colorBtn),
       h('div', { class: 'tb-sep doc-only' }),
       this.layoutSeg,
+      h('div', { class: 'tb-group doc-only' }, this.toneBtn),
       h('div', { class: 'tb-group rotate-group doc-only' }, this.rotateCcwBtn, this.rotateCwBtn),
       h('div', { class: 'tb-sep doc-only' }),
       h('div', { class: 'tb-group doc-only' }, this.searchBtn, this.printBtn, this.saveBtn),
@@ -129,6 +134,15 @@ export class Toolbar {
     this.colorBtn.style.setProperty('--dot', toolPrefs[this.#colorTool()]);
 
     this.saveBtn.hidden = !(ready && s.dirty);
+    this.toneBtn.disabled = !ready;
+    this.toneBtn.setAttribute('aria-pressed', String((document.documentElement.dataset.pageTone ?? 'normal') !== 'normal'));
+  }
+
+  #openToneMenu() {
+    const current = document.documentElement.dataset.pageTone ?? 'normal';
+    openMenu(Object.entries(this.pageTones ?? {}).map(([tone, label]) => ({
+      label, checked: tone === current, action: () => this.onPageTone?.(tone),
+    })), { anchor: this.toneBtn, align: 'center' });
   }
 
   /** The tool whose colour the swatch button shows (Select shows the highlighter's). */

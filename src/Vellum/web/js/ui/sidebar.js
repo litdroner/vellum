@@ -1,17 +1,20 @@
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
+import { ThumbnailPanel } from './thumbnails.js';
 
-// Left sidebar: page thumbnails and the document's own outline (table of contents).
-// Each document gets its own panels, created lazily and kept while its tab is open.
-
-const THUMB_CSS_WIDTH = 124;
+// Left sidebar: page thumbnails (which double as the page organiser) and the document's own outline.
+// Each document gets its own panels, created lazily and kept while its tab is open. When a
+// document's pages are rearranged it's rebuilt, so its panels are replaced (carrying over the
+// thumbnails already drawn, the selection and the scroll position).
 
 export class Sidebar {
   #panels = new WeakMap();
+  #watched = new WeakSet();
 
-  constructor(root, app) {
+  constructor(root, app, pageActions) {
     this.root = root;
     this.app = app;
+    this.pageActions = pageActions;
     this.mode = localStorage.getItem('vellum.sidebar.mode') === 'outline' ? 'outline' : 'thumbs';
     this.isOpen = localStorage.getItem('vellum.sidebar.open') !== '0';
 
@@ -19,15 +22,24 @@ export class Sidebar {
       h('span', { html: icon('layout-grid', 16) }), h('span', { text: 'Pages' }));
     this.outlineTab = h('button', { class: 'seg-btn', role: 'tab', title: 'Document outline', onClick: () => this.setMode('outline') },
       h('span', { html: icon('list-tree', 16) }), h('span', { text: 'Outline' }));
-    this.body = h('div', { class: 'sidebar-body' });
     this.tabs = h('div', { class: 'seg sidebar-tabs', role: 'tablist' }, this.thumbsTab, this.outlineTab);
-    root.append(h('div', { class: 'sidebar-head' }, this.tabs), this.body);
+    this.pageMenuBtn = h('button', {
+      class: 'tb-btn small page-menu-btn', title: 'Page tools', 'aria-label': 'Page tools', 'aria-haspopup': 'menu',
+      html: icon('ellipsis', 16), onClick: () => this.pageActions.panelMenu(this.app.active, this.thumbs, this.pageMenuBtn),
+    });
+    this.body = h('div', { class: 'sidebar-body' });
+    root.append(h('div', { class: 'sidebar-head' }, this.tabs, this.pageMenuBtn), this.body);
 
     app.addEventListener('activechange', () => this.render());
     app.addEventListener('viewready', () => this.render());
-    app.addEventListener('viewchange', () => this.#panelsFor(app.active)?.thumbs?.sync());
+    app.addEventListener('viewchange', () => this.thumbs?.sync());
     this.#applyOpen();
     this.render();
+  }
+
+  /** The thumbnail panel of the active document, if it has been created. */
+  get thumbs() {
+    return this.#panelsFor(this.app.active)?.thumbs ?? null;
   }
 
   toggle(force) {
@@ -35,6 +47,12 @@ export class Sidebar {
     localStorage.setItem('vellum.sidebar.open', this.isOpen ? '1' : '0');
     this.#applyOpen();
     if (this.isOpen) this.render();
+  }
+
+  /** Opens the sidebar on the page thumbnails (used by page commands). */
+  showPages() {
+    if (!this.isOpen) this.toggle(true);
+    if (this.mode !== 'thumbs') this.setMode('thumbs');
   }
 
   setMode(mode) {
@@ -48,16 +66,40 @@ export class Sidebar {
     this.outlineTab.setAttribute('aria-selected', String(this.mode === 'outline'));
     this.tabs.style.setProperty('--seg-index', this.mode === 'outline' ? '1' : '0');
     const view = this.app.active;
-    if (!view || view.status !== 'ready') {
+    const ready = view?.status === 'ready';
+    this.pageMenuBtn.hidden = this.mode !== 'thumbs' || !ready;
+    if (!ready) {
       this.body.replaceChildren(h('div', { class: 'panel-empty', text: view?.status === 'loading' ? '' : 'No document' }));
       return;
     }
+    if (!this.#watched.has(view)) {
+      this.#watched.add(view);
+      view.addEventListener('documentchange', () => this.#rebuilt(view));
+    }
     const panels = this.#panelsFor(view, true);
-    const panel = this.mode === 'thumbs'
-      ? (panels.thumbs ??= new ThumbnailPanel(view))
-      : (panels.outline ??= new OutlinePanel(view));
+    let panel;
+    if (this.mode === 'thumbs') {
+      panels.thumbs ??= new ThumbnailPanel(view, { actions: this.pageActions, ...panels.carry });
+      panels.carry = null;
+      panel = panels.thumbs;
+    } else {
+      panel = panels.outline ??= new OutlinePanel(view);
+    }
     if (panel.el.parentNode !== this.body) this.body.replaceChildren(panel.el);
     panel.shown?.();
+  }
+
+  #rebuilt(view) {
+    const panels = this.#panelsFor(view);
+    if (!panels) return;
+    const old = panels.thumbs;
+    if (old) {
+      panels.carry = { cache: old.cache, selection: old.selectedIds, scrollTop: old.list.scrollTop };
+      old.destroy();
+    }
+    panels.thumbs = null;
+    panels.outline = null;
+    if (view === this.app.active) this.render();
   }
 
   #panelsFor(view, create = false) {
@@ -69,121 +111,6 @@ export class Sidebar {
   #applyOpen() {
     this.root.classList.toggle('collapsed', !this.isOpen);
     this.root.setAttribute('aria-hidden', String(!this.isOpen));
-  }
-}
-
-class ThumbnailPanel {
-  #items = [];
-  #visible = new Set();
-  #queue = new Set();
-  #busy = false;
-  #rotation = 0;
-  #activePage = 0;
-
-  constructor(view) {
-    this.view = view;
-    this.el = h('div', { class: 'thumbs', role: 'listbox', 'aria-label': 'Pages' });
-    this.observer = new IntersectionObserver((entries) => this.#onIntersect(entries), { root: this.el, rootMargin: '600px 0px' });
-    this.#rotation = view.state.rotation;
-    // Thumbnails show annotations too; redraw a page's thumbnail when its annotations change.
-    view.annotations.addEventListener('change', (e) => {
-      for (const n of e.detail.pages) {
-        const item = this.#items[n - 1];
-        if (!item) continue;
-        item.rendered = false;
-        if (this.#visible.has(n)) this.#queue.add(n);
-      }
-      this.#pump();
-    });
-    this.#build();
-  }
-
-  async #build() {
-    const pdf = this.view.pdf;
-    const first = await pdf.getPage(1);
-    const vp = first.getViewport({ scale: 1, rotation: (first.rotate + this.#rotation) % 360 });
-    const ratio = `${vp.width} / ${vp.height}`;
-    const fragment = document.createDocumentFragment();
-    for (let n = 1; n <= pdf.numPages; n++) {
-      const frame = h('div', { class: 'thumb-frame', style: { aspectRatio: ratio } });
-      const el = h('button', { class: 'thumb', role: 'option', title: `Page ${n}`, dataset: { page: n }, onClick: () => this.view.goToPage(n, { pulse: true }) },
-        frame, h('span', { class: 'thumb-num', text: String(n) }));
-      this.#items.push({ n, el, frame, rendered: false });
-      fragment.append(el);
-    }
-    this.el.append(fragment);
-    for (const item of this.#items) this.observer.observe(item.el);
-    this.sync(true);
-  }
-
-  shown() {
-    this.sync(true);
-  }
-
-  /** Follows the current page and rotation of the document. */
-  sync(force = false) {
-    const { pageNumber, rotation } = this.view.state;
-    if (rotation !== this.#rotation) {
-      this.#rotation = rotation;
-      for (const item of this.#items) item.rendered = false;
-      for (const n of this.#visible) this.#queue.add(n);
-      this.#pump();
-    }
-    if (pageNumber === this.#activePage && !force) return;
-    const item = this.#items[pageNumber - 1];
-    if (!item) return; // thumbnails not built yet; #build syncs again when they are
-    const previous = this.#items[this.#activePage - 1];
-    previous?.el.classList.remove('active');
-    previous?.el.setAttribute('aria-selected', 'false');
-    this.#activePage = pageNumber;
-    item.el.classList.add('active');
-    item.el.setAttribute('aria-selected', 'true');
-    if (this.el.isConnected) item.el.scrollIntoView({ block: force ? 'center' : 'nearest', behavior: force ? 'instant' : 'smooth' });
-  }
-
-  #onIntersect(entries) {
-    for (const entry of entries) {
-      const n = Number(entry.target.dataset.page);
-      if (entry.isIntersecting) {
-        this.#visible.add(n);
-        if (!this.#items[n - 1].rendered) this.#queue.add(n);
-      } else {
-        this.#visible.delete(n);
-        this.#queue.delete(n);
-      }
-    }
-    this.#pump();
-  }
-
-  /** Renders queued thumbnails one at a time, after the main view has painted, in idle time. */
-  async #pump() {
-    if (this.#busy || this.#queue.size === 0) return;
-    this.#busy = true;
-    await this.view.firstRender;
-    const n = Math.min(...this.#queue);
-    this.#queue.delete(n);
-    const item = this.#items[n - 1];
-    try {
-      if (item && !item.rendered && this.view.pdf) await this.#render(item);
-    } catch { /* page failed to render; leave the placeholder */ }
-    this.#busy = false;
-    requestIdleCallback(() => this.#pump(), { timeout: 120 });
-  }
-
-  async #render(item) {
-    const page = await this.view.pdf.getPage(item.n);
-    const rotation = (page.rotate + this.#rotation) % 360;
-    const base = page.getViewport({ scale: 1, rotation });
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    const viewport = page.getViewport({ scale: (THUMB_CSS_WIDTH * dpr) / base.width, rotation });
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.floor(viewport.width);
-    canvas.height = Math.floor(viewport.height);
-    await page.render({ canvas, canvasContext: canvas.getContext('2d'), viewport }).promise;
-    this.view.paintAnnotations(canvas.getContext('2d'), item.n, viewport);
-    item.frame.style.aspectRatio = `${viewport.width} / ${viewport.height}`;
-    item.frame.replaceChildren(canvas);
-    item.rendered = true;
   }
 }
 

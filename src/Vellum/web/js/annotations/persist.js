@@ -1,4 +1,5 @@
 import { bounds, underlineSegments } from './geometry.js';
+import { isIdentity } from '../pages/plan.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -32,24 +33,159 @@ export async function extractAnnotations(bytes) {
 }
 
 /** Returns new file bytes: the original with Vellum's annotations replaced by `annotations`. */
-export async function writeAnnotations(bytes, annotations) {
+export function writeAnnotations(bytes, annotations) {
+  return composeDocument({ base: bytes, annotations });
+}
+
+/**
+ * Builds a PDF from a page plan (see pages/plan.js).
+ *   base         bytes of the opened file; Vellum annotations already in it are replaced
+ *   plan         page plan, or null for "the file's own pages, unchanged"
+ *   sources      Map of sourceId → bytes, for pages inserted from other PDFs
+ *   annotations  Vellum annotations to write; .page is the 1-based position in the plan
+ *   clean        really remove deleted pages from the file (not just unlink them from the page list)
+ */
+export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], clean = true }) {
   const lib = await pdfLib();
-  let doc;
-  try {
-    doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
-  } catch (err) {
-    throw new AnnotationSaveError(/encrypt/i.test(err.message)
-      ? 'This PDF is encrypted, so annotations can’t be written into it.'
-      : `This PDF couldn’t be prepared for saving (${err.message}).`);
-  }
-  const pages = doc.getPages();
-  for (const page of pages) detachVellum(doc.context, page, lib);
+  const doc = await loadForWriting(lib, base);
+  const ctx = doc.context;
+  const basePages = doc.getPages();
+  for (const page of basePages) detachVellum(ctx, page, lib);
+
+  let pages = basePages;
+  let dropped = null;
+  if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
+
   for (const a of annotations) {
     const page = pages[a.page - 1];
-    if (page) page.node.addAnnot(doc.context.register(buildAnnotation(doc.context, a, page.ref, lib)));
+    if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
   }
+  // After any rearrangement the old page tree (and any deleted pages) are left unreferenced.
+  if (clean && dropped) collectGarbage(ctx, lib, dropped);
   // Uncompressed object layout keeps the /VellumId marker findable by a quick byte scan on open.
-  return doc.save({ useObjectStreams: false });
+  return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+
+/** Page count of a PDF that pages are about to be inserted from (fails clearly if it's protected). */
+export async function countPages(bytes) {
+  const doc = await loadForWriting(await pdfLib(), bytes);
+  return doc.getPageCount();
+}
+
+async function loadForWriting(lib, bytes) {
+  try {
+    return await lib.PDFDocument.load(bytes, { updateMetadata: false });
+  } catch (err) {
+    throw new AnnotationSaveError(/encrypt/i.test(err.message)
+      ? 'This PDF is protected (encrypted), so Vellum can’t write it.'
+      : `This PDF couldn’t be prepared for saving (${err.message}).`);
+  }
+}
+
+// ---- page arrangement ----------------------------------------------------------
+
+const INHERITABLE = ['Resources', 'MediaBox', 'CropBox', 'Rotate'];
+const turn = (angle) => ((angle % 360) + 360) % 360;
+
+/**
+ * Lays the pages out as the plan says. A page of the opened file is reused as-is the first time it
+ * appears, so bookmarks and links pointing at it keep working; repeats and pages from other files
+ * are copies. Copies from one file are made in batches so shared fonts and images are stored once.
+ * Returns the pages in order and the original pages that are no longer used.
+ */
+async function arrangePages(doc, lib, basePages, plan, sources) {
+  const { PDFPage, PDFPageTree, PDFName, PDFNumber, degrees } = lib;
+  const ctx = doc.context;
+
+  const sourceDocs = new Map();
+  for (const e of plan) {
+    if (e.src === 'base' || e.src === 'blank' || sourceDocs.has(e.src)) continue;
+    const bytes = sources.get(e.src);
+    if (!bytes) throw new AnnotationSaveError('A PDF that pages were inserted from is no longer available.');
+    sourceDocs.set(e.src, await loadForWriting(lib, bytes));
+  }
+
+  const pages = new Array(plan.length);
+  const batches = new Map(); // src → [[{ index, position }, ...] per repeat round]
+  const seen = new Map();
+  plan.forEach((e, position) => {
+    if (e.src === 'blank') {
+      pages[position] = PDFPage.create(doc);
+      pages[position].setSize(e.width, e.height);
+      return;
+    }
+    const key = `${e.src}:${e.index}`;
+    const round = seen.get(key) ?? 0;
+    seen.set(key, round + 1);
+    if (e.src === 'base' && round === 0) {
+      pages[position] = basePages[e.index];
+      return;
+    }
+    const rounds = batches.get(e.src) ?? [];
+    batches.set(e.src, rounds);
+    (rounds[e.src === 'base' ? round - 1 : round] ??= []).push({ index: e.index, position });
+  });
+  for (const [src, rounds] of batches) {
+    const from = src === 'base' ? doc : sourceDocs.get(src);
+    for (const batch of rounds) {
+      const copied = await doc.copyPages(from, batch.map((b) => b.index));
+      batch.forEach((b, k) => { pages[b.position] = copied[k]; });
+    }
+  }
+
+  // Settle each page's own attributes (the old page tree may have supplied them), then its rotation.
+  plan.forEach((e, i) => {
+    const node = pages[i].node;
+    for (const key of INHERITABLE) {
+      const name = PDFName.of(key);
+      if (!node.get(name)) {
+        const value = node.getInheritableAttribute(name);
+        if (value) node.set(name, value);
+      }
+    }
+    if (e.rotate) pages[i].setRotation(degrees(turn(pages[i].getRotation().angle + e.rotate)));
+  });
+
+  // A fresh, flat page tree in plan order. It has to be a real PDFPageTree, not a plain dict:
+  // pdf-lib climbs through it whenever it reads a page's inherited attributes (adding an annotation does).
+  const tree = PDFPageTree.withContext(ctx);
+  tree.set(PDFName.of('Kids'), ctx.obj(pages.map((p) => p.ref)));
+  tree.set(PDFName.of('Count'), PDFNumber.of(pages.length));
+  const treeRef = ctx.register(tree);
+  for (const p of pages) p.node.setParent(treeRef);
+  doc.catalog.set(PDFName.of('Pages'), treeRef);
+
+  const used = new Set(pages.map((p) => p.ref.toString()));
+  return { pages, dropped: basePages.filter((p) => !used.has(p.ref.toString())).map((p) => p.ref) };
+}
+
+/**
+ * Deletes every object no longer reachable from the document, never following references into
+ * removed pages. Without this, a "deleted" page would stay inside the file, just unlisted.
+ */
+function collectGarbage(ctx, { PDFRef, PDFDict, PDFArray, PDFStream }, dropped) {
+  const blocked = new Set(dropped.map((ref) => ref.toString()));
+  const reachable = new Set();
+  const stack = Object.values(ctx.trailerInfo).filter(Boolean);
+  while (stack.length) {
+    const obj = stack.pop();
+    if (obj instanceof PDFRef) {
+      const key = obj.toString();
+      if (reachable.has(key) || blocked.has(key)) continue;
+      reachable.add(key);
+      const target = ctx.lookup(obj);
+      if (target) stack.push(target);
+    } else if (obj instanceof PDFDict) {
+      for (const [, value] of obj.entries()) stack.push(value);
+    } else if (obj instanceof PDFArray) {
+      for (const value of obj.asArray()) stack.push(value);
+    } else if (obj instanceof PDFStream) {
+      stack.push(obj.dict);
+    }
+  }
+  for (const [ref] of ctx.enumerateIndirectObjects()) {
+    if (!reachable.has(ref.toString())) ctx.delete(ref);
+  }
 }
 
 // ---- reading -------------------------------------------------------------------

@@ -15,6 +15,7 @@ const names = [
   'minimize-2', 'lock', 'triangle-alert', 'file-x', 'clock', 'trash-2', 'move-horizontal', 'maximize',
   'case-sensitive', 'whole-word', 'external-link', 'ellipsis', 'check', 'plus', 'info', 'file-text',
   'book-open', 'text-select', 'key-round', 'eraser', 'save-all', 'arrow-up-to-line', 'arrow-down-to-line',
+  'contrast', 'copy-plus', 'file-output', 'scissors', 'files', 'list-checks',
 ];
 
 const icons = {};
