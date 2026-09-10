@@ -14,10 +14,19 @@ export function createCommands(app, ui, actions) {
     if (!view) return;
     if (!view.getSelectedText() || !view.annotLayer.markSelection(type)) view.setTool(type);
   };
+  // Page commands act on the pages selected in the sidebar, or on the current page.
+  const inThumbs = (e) => Boolean(e?.target?.closest?.('.thumbs'));
+  const onPages = (fn) => () => {
+    const view = doc();
+    if (!view) return;
+    const ids = ui.sidebar.thumbs?.targetIds() ?? [view.shownPlan[view.state.pageNumber - 1]?.id].filter(Boolean);
+    fn(view, ids);
+  };
+  const pages = actions.pages;
 
   return {
     'file.open': { label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
-    'file.save': { label: 'Save annotations', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
+    'file.save': { label: 'Save changes', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
     'file.saveAs': { label: 'Save as…', keys: ['Ctrl+Shift+S'], global: true, run: () => actions.saveAs() },
     'file.print': { label: 'Print…', keys: ['Ctrl+P'], global: true, run: () => actions.print() },
     'file.close': { label: 'Close document', keys: ['Ctrl+W', 'Ctrl+F4'], global: true, run: () => actions.close() },
@@ -41,8 +50,17 @@ export function createCommands(app, ui, actions) {
     'page.last': { label: 'Last page', keys: ['End', 'Ctrl+End'], run: () => doc()?.lastPage() },
     'page.goto': { label: 'Go to page…', keys: ['Ctrl+G'], global: true, run: () => ui.toolbar.focusPageInput() },
 
-    'view.rotateCw': { label: 'Rotate clockwise', keys: ['Ctrl+Shift+='], hint: 'Ctrl+Shift++', global: true, run: () => doc()?.rotate(90) },
-    'view.rotateCcw': { label: 'Rotate counter-clockwise', keys: ['Ctrl+Shift+-'], global: true, run: () => doc()?.rotate(-90) },
+    // Rotating the view is temporary; rotating pages (below) changes the file when saved.
+    'view.rotateCw': { label: 'Rotate view clockwise', keys: ['Ctrl+Shift+='], hint: 'Ctrl+Shift++', global: true, run: () => doc()?.rotate(90) },
+    'view.rotateCcw': { label: 'Rotate view counter-clockwise', keys: ['Ctrl+Shift+-'], global: true, run: () => doc()?.rotate(-90) },
+    'view.pageTone': { label: 'Page colours', keys: ['Ctrl+Shift+D'], global: true, run: () => actions.cyclePageTone() },
+
+    'pages.rotateRight': { label: 'Rotate page right', run: onPages((view, ids) => pages.rotate(view, ids, 90)) },
+    'pages.rotateLeft': { label: 'Rotate page left', run: onPages((view, ids) => pages.rotate(view, ids, -90)) },
+    'pages.delete': { label: 'Delete page', keys: ['Delete'], when: inThumbs, run: onPages((view, ids) => pages.remove(view, ids)) },
+    'pages.insert': { label: 'Insert pages from file…', run: () => doc() && pages.insertFromFile(doc(), doc().state.pageNumber) },
+    'pages.extract': { label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
+    'pages.split': { label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
     'view.continuous': { label: 'Continuous scroll', run: () => doc()?.setViewMode('continuous') },
     'view.single': { label: 'Single page', run: () => doc()?.setViewMode('single') },
     'sidebar.toggle': { label: 'Toggle sidebar', keys: ['F4', 'Ctrl+B'], global: true, run: () => ui.sidebar.toggle() },
@@ -59,7 +77,7 @@ export function createCommands(app, ui, actions) {
     'annot.ink': { label: 'Draw', keys: ['D'], run: () => doc()?.setTool('ink') },
     'annot.delete': {
       label: 'Delete annotation', keys: ['Delete', 'Backspace'],
-      when: () => Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
+      when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
     'edit.undo': { label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },

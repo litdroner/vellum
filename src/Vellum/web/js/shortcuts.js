@@ -23,16 +23,21 @@ export function comboFromEvent(e) {
 }
 
 export function installShortcuts(commands) {
+  // Several commands may share a key (Delete: a selected annotation, or the selected pages);
+  // the first one whose `when` applies wins.
   const byCombo = new Map();
   for (const command of Object.values(commands)) {
-    for (const combo of command.keys ?? []) byCombo.set(combo, command);
+    for (const combo of command.keys ?? []) {
+      if (!byCombo.has(combo)) byCombo.set(combo, []);
+      byCombo.get(combo).push(command);
+    }
   }
 
   window.addEventListener('keydown', (e) => {
-    const command = byCombo.get(comboFromEvent(e));
+    const editing = isEditable(e.target);
+    const command = byCombo.get(comboFromEvent(e))
+      ?.find((c) => (!editing || c.global) && (!c.when || c.when(e)));
     if (!command) return;
-    if (isEditable(e.target) && !command.global) return;
-    if (command.when && !command.when(e)) return;
     e.preventDefault();
     e.stopPropagation();
     command.run(e);

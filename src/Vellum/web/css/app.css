@@ -1175,6 +1175,136 @@ kbd {
 @media (max-width: 960px) { #toolbar .page-total { display: none; } .zoom-value { min-width: 48px; } }
 @media (max-width: 860px) { #toolbar .zoom-group .tb-btn:not(.zoom-value) { display: none; } }
 
+/* ---- page organiser (thumbnails) ---------------------------------------------------- */
+
+.sidebar-head { display: flex; align-items: center; gap: 4px; }
+.sidebar-head .sidebar-tabs { flex: 1; }
+.thumbs-panel { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.thumbs-panel .thumbs { position: relative; inset: auto; flex: 1; min-height: 0; outline: none; }
+.thumbs-panel.busy .thumbs { opacity: .55; cursor: progress; transition: opacity .2s; }
+.thumb { position: relative; }
+.thumb.selected .thumb-frame {
+  box-shadow: 0 0 0 2px var(--peach), 0 0 18px -2px color-mix(in srgb, var(--peach) 45%, transparent), 0 6px 16px -6px rgba(0, 0, 0, .5);
+}
+.thumb.selected.active .thumb-frame {
+  box-shadow: 0 0 0 2px var(--aqua), 0 0 0 5px color-mix(in srgb, var(--peach) 75%, transparent), 0 6px 16px -6px rgba(0, 0, 0, .5);
+}
+.thumb.selected .thumb-num { color: var(--peach); font-weight: 600; }
+.thumb.lifted { opacity: .3; transition: opacity .15s; }
+.thumbs-panel.dragging .thumb:hover .thumb-frame { transform: none; }
+
+/* where dragged pages (or dropped files) will land */
+.thumb-caret {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  z-index: 2;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 3px;
+  background: var(--aqua);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--aqua) 65%, transparent);
+  pointer-events: none;
+  transition: top .09s var(--ease-out);
+}
+
+.thumb-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 400;
+  width: 84px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: var(--float-shadow);
+  opacity: .94;
+  pointer-events: none;
+}
+.thumb-ghost canvas { display: block; width: 100%; height: auto; border-radius: 3px; }
+.thumb-ghost-count {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 11px;
+  background: var(--peach);
+  color: #2a1d14;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .45);
+}
+
+/* actions for the selected pages */
+.page-bar {
+  flex: none;
+  padding: 9px 10px 11px;
+  background: var(--grain), var(--satin), var(--base-3);
+  box-shadow: 0 -1px 0 var(--groove), inset 0 1px 0 var(--hi), 0 -12px 22px -16px rgba(0, 0, 0, .8);
+  animation: rise .24s var(--ease-out);
+}
+.page-bar-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; color: var(--ink-2); font-size: 12px; }
+.page-bar-actions { display: flex; justify-content: space-between; }
+.page-bar .tb-btn[aria-label="Delete"]:hover:not(:disabled) { color: var(--danger); }
+
+.drop-overlay.zoned { opacity: 0 !important; backdrop-filter: none; }
+.doc.rebuilding .viewer-container { cursor: progress; }
+
+/* ---- page tone (dark / sepia pages) -------------------------------------------------- */
+/* Colours are inverted but hues kept ("invert lightness"), so text turns light on a dark page and
+   colours stay recognisable. The whole page is filtered, annotations included, so highlights
+   still sit correctly under the text. Shadows are set light so that inverted they read dark. */
+
+#stage .pdfViewer .page, .thumb-frame canvas, .thumb-ghost canvas { transition: filter .35s var(--ease-out); }
+:root[data-page-tone="dark"] #stage .pdfViewer .page,
+:root[data-page-tone="dark"] .thumb-frame canvas,
+:root[data-page-tone="dark"] .thumb-ghost canvas { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
+:root[data-page-tone="dark"] #stage .pdfViewer .page {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .22), 0 2px 3px rgba(255, 255, 255, .3), 0 16px 40px -8px rgba(255, 255, 255, .55);
+}
+:root[data-page-tone="dark"] .thumb-frame, :root[data-page-tone="dark"] .thumb-ghost { background: #211e1b; }
+:root[data-page-tone="sepia"] #stage .pdfViewer .page,
+:root[data-page-tone="sepia"] .thumb-frame canvas,
+:root[data-page-tone="sepia"] .thumb-ghost canvas { filter: url(#page-tone-sepia); } /* white → paper, black → brown ink; defined in index.html */
+.tone-btn[aria-pressed="true"] { color: var(--peach); }
+
+/* ---- toast actions & split dialog --------------------------------------------------- */
+
+.toast.has-action { pointer-events: auto; }
+.toast-action {
+  margin-left: 6px;
+  padding: 4px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--pocket), var(--base-2);
+  box-shadow: var(--pocket-shadow);
+  color: var(--aqua);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.toast-action:hover { color: var(--ink); }
+
+.split-dialog { width: min(470px, calc(100vw - 40px)); }
+.choices { display: flex; flex-direction: column; gap: 8px; }
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--pocket), var(--base-2);
+  box-shadow: var(--pocket-shadow);
+}
+.choice.disabled { opacity: .45; }
+.choice input[type="radio"] { margin: 3px 0 0; accent-color: var(--aqua); }
+.choice-label { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); }
+.choice-label > .field:not(.inline) { flex-basis: 100%; height: 32px; margin-top: 4px; }
+.field.inline { width: 66px; height: 28px; padding: 0 8px; }
+.dialog-note { min-height: 1.4em; margin: 12px 0 0; color: var(--ink-3); font-size: 12px; }
+
 /* ---- scrollbars ------------------------------------------------------------------- */
 
 ::-webkit-scrollbar { width: 12px; height: 12px; }

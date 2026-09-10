@@ -15,6 +15,7 @@ import { openMenu } from './ui/menu.js';
 import { promptPassword, showDialog, toast } from './ui/dialogs.js';
 import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
+import { createPageActions } from './pages/actions.js';
 
 // Diagnostics hook read by tools/cdp.mjs during development.
 window.__vellum = { errors: [] };
@@ -142,7 +143,7 @@ async function askToSave(views) {
   const one = views.length === 1;
   const choice = await showDialog({
     title: one ? `Save changes to “${views[0].file.name}”?` : `Save changes to ${views.length} documents?`,
-    message: one ? 'Your annotations will be lost if you don’t save them.' : `${views.map((v) => v.file.name).join(', ')} have unsaved annotations.`,
+    message: one ? 'Your annotations and page changes will be lost if you don’t save them.' : `${views.map((v) => v.file.name).join(', ')} have unsaved changes.`,
     iconName: 'save',
     buttons: [{ id: 'discard', label: 'Don’t save' }, { id: 'cancel', label: 'Cancel' }, { id: 'save', label: one ? 'Save' : 'Save all', primary: true }],
   });
@@ -215,7 +216,24 @@ function applyTheme(theme, { animate = false } = {}) {
   ui.titlebar?.syncTheme();
 }
 
+// Page tone: how pages themselves are coloured (separate from the app theme). Pure CSS filters,
+// so switching is instant and nothing is re-rendered.
+const PAGE_TONES = { normal: 'Normal pages', dark: 'Dark pages', sepia: 'Sepia pages' };
+const currentPageTone = () => (PAGE_TONES[document.documentElement.dataset.pageTone] ? document.documentElement.dataset.pageTone : 'normal');
+
+function setPageTone(tone) {
+  document.documentElement.dataset.pageTone = tone;
+  try { localStorage.setItem('vellum.pageTone', tone); } catch { /* storage unavailable */ }
+  ui.toolbar?.update();
+}
+
 const actions = {
+  cyclePageTone() {
+    const order = Object.keys(PAGE_TONES);
+    const next = order[(order.indexOf(currentPageTone()) + 1) % order.length];
+    setPageTone(next);
+    toast(PAGE_TONES[next], { timeout: 1600 });
+  },
   async openDialog() {
     try {
       const { files } = await bridge.request('openDialog');
@@ -286,17 +304,46 @@ const actions = {
   },
 };
 
+actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
+
 const ui = {};
 const commands = createCommands(app, ui, actions);
 ui.titlebar = new TitleBar(document.getElementById('titlebar'), app, { bridge, commands });
 ui.tabs = new TabStrip(ui.titlebar.tabHost, app, { onNew: () => actions.openDialog(), onClose: (view) => app.requestClose(view) });
 ui.toolbar = new Toolbar(document.getElementById('toolbar'), app, commands);
-ui.sidebar = new Sidebar(document.getElementById('sidebar'), app);
+ui.toolbar.pageTones = PAGE_TONES;
+ui.toolbar.onPageTone = setPageTone;
+ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages);
 ui.findbar = new FindBar(stage, app);
 ui.start = new StartScreen(stage, { bridge, onOpenDialog: () => actions.openDialog(), onOpenRecent: (p) => actions.openRecent(p) });
 stage.append(zoomHud.el);
 installShortcuts(commands);
-installDropZone({ onFiles: (files) => actions.openDropped(files) });
+
+// Files dropped on the page thumbnails are inserted there; anywhere else they open as tabs.
+const isPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+installDropZone({
+  onFiles: (files) => actions.openDropped(files),
+  zones: [{
+    accepts: (e) => Boolean(e.target?.closest?.('.thumbs') && app.active?.canEditPages && ui.sidebar.thumbs),
+    over: (e) => ui.sidebar.thumbs?.showCaret(ui.sidebar.thumbs.insertionIndex(e.clientY)),
+    leave: () => ui.sidebar.thumbs?.hideCaret(),
+    async drop(files, e) {
+      const view = app.active;
+      const index = ui.sidebar.thumbs.insertionIndex(e.clientY);
+      const pdfs = files.filter(isPdf);
+      if (!pdfs.length) {
+        toast('Only PDF files can be inserted', { kind: 'error' });
+        return;
+      }
+      try {
+        const { files: described } = await bridge.request('openDropped', {}, pdfs);
+        await actions.pages.insertFiles(view, described, index);
+      } catch (err) {
+        toast(err.message, { kind: 'error' });
+      }
+    },
+  }],
+});
 
 bridge.on('open-files', ({ files }) => openAll(files));
 
@@ -362,6 +409,10 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('file.showInFolder', 'folder-open', { disabled: !app.active }),
     menuItem('file.close', 'x', { disabled: !app.active }),
     '-',
+    menuItem('pages.insert', 'files', { disabled: !app.active?.canEditPages }),
+    menuItem('pages.extract', 'file-output', { disabled: !app.active?.canEditPages }),
+    menuItem('pages.split', 'scissors', { disabled: !app.active?.canEditPages }),
+    '-',
     currentTheme() === 'light'
       ? menuItem('view.theme', 'moon', { label: 'Dark theme' })
       : menuItem('view.theme', 'sun', { label: 'Light theme' }),
@@ -403,6 +454,15 @@ document.addEventListener('contextmenu', (e) => {
   const s = view.state;
   if (s.canUndo || s.canRedo) {
     items.push(menuItem('edit.undo', 'undo-2', { disabled: !s.canUndo }), menuItem('edit.redo', 'redo-2', { disabled: !s.canRedo }), '-');
+  }
+  const pageEl = e.target.closest('.page');
+  const pageId = pageEl && view.shownPlan?.[Number(pageEl.dataset.pageNumber) - 1]?.id;
+  if (pageId && s.canEditPages) {
+    items.push(
+      { label: 'Rotate page right', icon: 'rotate-cw', action: () => actions.pages.rotate(view, [pageId], 90) },
+      { label: 'Rotate page left', icon: 'rotate-ccw', action: () => actions.pages.rotate(view, [pageId], -90) },
+      { label: 'Delete page', icon: 'trash-2', action: () => actions.pages.remove(view, [pageId]) },
+      '-');
   }
   items.push(
     menuItem('page.prev', 'chevron-up', { disabled: s.pageNumber <= 1, shortcut: null }),

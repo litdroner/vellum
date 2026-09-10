@@ -19,6 +19,12 @@ Needs the Microsoft Edge WebView2 Runtime, which Windows 10/11 normally already 
 - Page thumbnails and the PDF's own outline; search with highlighting; text selection and copy.
 - Highlight, underline, sticky notes, freehand drawing — saved into the PDF as standard annotations
   (other readers show them too) and reopened as editable. Undo/redo.
+- **Page organiser** (the Pages sidebar): rotate, delete, duplicate, insert blank pages, drag
+  thumbnails to reorder (Ctrl/Shift+click to select several), insert pages from another PDF (or drop
+  a PDF onto the thumbnails), extract pages to a new file, split into several files. Page edits and
+  annotations share one undo history, and annotations move with their pages. Deleted pages are
+  removed from the saved file, not just hidden.
+- **Page colours**: normal, dark or sepia pages (Ctrl+Shift+D), independent of the app theme.
 - Print, dark/light theme, password-protected and damaged files handled with clear messages.
 
 ### Protected (encrypted) PDFs
@@ -37,7 +43,9 @@ file's contents). They come back whenever you open that PDF in Vellum; other app
 | Zoom in / out | Ctrl+= / Ctrl+- (or Ctrl+scroll) |
 | Fit page / actual size / fit width | Ctrl+0 / Ctrl+1 / Ctrl+2 |
 | Go to page / first / last | Ctrl+G / Home / End |
-| Rotate | Ctrl+Shift+= / Ctrl+Shift+- |
+| Rotate the view (not saved) | Ctrl+Shift+= / Ctrl+Shift+- |
+| Page colours: normal → dark → sepia | Ctrl+Shift+D |
+| Delete selected pages (in the Pages sidebar) | Del |
 | Sidebar | F4 |
 | Tools: select, highlight, underline, note, draw | V, H, U, N, D (H/U mark selected text directly) |
 | Delete annotation / undo / redo | Del / Ctrl+Z / Ctrl+Y |
@@ -79,7 +87,10 @@ tools/                     run, publish, icon, DevTools helpers
 User data lives in `%LOCALAPPDATA%\Vellum` (settings, recent files, protected-PDF annotations,
 WebView2 profile) and is kept on uninstall.
 
-## Known limitations (v1)
+## Known limitations
 - Snap Layouts flyout on the maximize button isn't available (Win+Z and edge snapping work).
-- Annotations on encrypted PDFs are kept by Vellum, not inside the file (see above).
-- Out of scope for v1: OCR, form filling, e-signatures, cloud sync.
+- Annotations on encrypted PDFs are kept by Vellum, not inside the file (see above), and their pages
+  can't be rearranged.
+- Page colours are a display setting only: printing and saved files are unchanged.
+- Planned next: form filling, then redaction, then editing existing text. Not planned: OCR,
+  e-signatures, cloud sync.

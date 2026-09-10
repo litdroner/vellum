@@ -4,8 +4,12 @@ import { icon } from './icons.js';
 import { documentAssetOptions } from './pdfjs.js';
 import { AnnotationStore } from './annotations/model.js';
 import { AnnotationLayer } from './annotations/layer.js';
-import { extractAnnotations, writeAnnotations } from './annotations/persist.js';
+import { extractAnnotations, composeDocument, countPages } from './annotations/persist.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
+import { newId } from './annotations/model.js';
+import {
+  identityPlan, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, followPages,
+} from './pages/plan.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
 // (page, zoom, rotation, layout, search) and reports changes with a 'change' event.
@@ -65,6 +69,15 @@ export class DocumentView extends EventTarget {
   #lastFlip = 0;
   #zoomAnimation = null;
   #resolveFirstRender;
+  /** Bytes of the opened file, fetched once when first needed; page plans refer to its pages. */
+  #base = null;
+  /** The plan the pages on screen were built from (the store's plan runs ahead while rebuilding). */
+  #shownPlan = null;
+  #rebuildQueued = false;
+  #restore = null;
+  /** Other PDFs pages were inserted from: sourceId → bytes. */
+  sources = new Map();
+  rebuilding = false;
 
   constructor(file, libs, { author = '' } = {}) {
     super();
@@ -72,7 +85,8 @@ export class DocumentView extends EventTarget {
     this.#libs = libs;
     this.firstRender = new Promise((resolve) => { this.#resolveFirstRender = resolve; });
     this.annotations = new AnnotationStore({ author });
-    this.annotations.addEventListener('change', () => {
+    this.annotations.addEventListener('change', (e) => {
+      if (e.detail.plan) this.#rebuild();
       this.#changed();
       const fileKey = this.docKey ?? this.file.path;
       if (this.encrypted && this.annotations.dirty && !warnedProtected.has(fileKey)) {
@@ -108,8 +122,16 @@ export class DocumentView extends EventTarget {
       canUndo: this.annotations.canUndo,
       canRedo: this.annotations.canRedo,
       selectedAnnotation: this.annotLayer?.selectedId ?? null,
+      canEditPages: this.canEditPages,
+      rebuilding: this.rebuilding,
     };
   }
+
+  /** Pages can be rearranged unless the file is protected (it can't be rewritten). */
+  get canEditPages() { return this.status === 'ready' && !this.encrypted; }
+
+  /** The page plan the pages currently on screen were built from. */
+  get shownPlan() { return this.#shownPlan; }
 
   get signal() { return this.#abort.signal; }
 
@@ -134,6 +156,16 @@ export class DocumentView extends EventTarget {
     this.annotLayer.addEventListener('selectionchange', () => this.#changed());
 
     eventBus.on('pagesinit', () => {
+      // After pages were rearranged: stay on the same page, at the same zoom and layout.
+      const restore = this.#restore;
+      if (restore) {
+        this.#restore = null;
+        this.viewer.currentScaleValue = restore.scaleValue || 'auto';
+        this.viewer.pagesRotation = restore.rotation;
+        if (this.viewMode === 'single') this.viewer.scrollMode = this.#libs.viewerLib.ScrollMode.PAGE;
+        this.viewer.currentPageNumber = restore.page;
+        return;
+      }
       // Reopen where you left off (page, zoom, layout), remembered per file by the host.
       const resume = this.file.resume;
       this.viewer.currentScaleValue = resume?.scaleValue || 'auto';
@@ -234,6 +266,8 @@ export class DocumentView extends EventTarget {
       this.#loadingTask = null;
     }
 
+    this.annotations.initPlan(identityPlan(this.pdf.numPages));
+    this.#shownPlan = this.annotations.plan;
     this.viewer.setDocument(this.pdf);
     this.linkService.setDocument(this.pdf, null);
     try {
@@ -383,16 +417,149 @@ export class DocumentView extends EventTarget {
       this.annotations.markSaved();
       return;
     }
-    const response = await fetch(this.file.url);
-    if (!response.ok) throw new Error('The original file couldn’t be read. It may have been moved or deleted.');
-    const original = new Uint8Array(await response.arrayBuffer());
-    const bytes = await writeAnnotations(original, this.annotations.all);
+    const bytes = await composeDocument({
+      base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources, annotations: this.annotations.all,
+    });
+    await this.writeFile(target, bytes);
+    this.annotations.markSaved();
+  }
+
+  /** Sends finished PDF bytes to the host, which writes them to a file it registered (atomically). */
+  async writeFile(target, bytes) {
     const result = await fetch(`${new URL(this.file.url).origin}/save/${target.token}`, {
       method: 'POST', body: bytes, headers: { 'Content-Type': 'application/pdf' },
     });
     const outcome = await result.json().catch(() => ({ ok: false, error: `The file couldn’t be written (${result.status}).` }));
     if (!outcome.ok) throw new Error(outcome.error);
-    this.annotations.markSaved();
+  }
+
+  // ---- page editing -----------------------------------------------------
+  // Every operation takes plan entry ids (from shownPlan), changes the page plan in the edit store
+  // (one undo step, annotations following their pages) and the document is rebuilt to match.
+
+  /** Applies fn(plan) → { plan, copies? }. Returns false if nothing changed. */
+  #editPlan(fn) {
+    if (!this.canEditPages) return false;
+    const before = this.annotations.plan;
+    const { plan, copies = [] } = fn(before);
+    const unchanged = plan.length === before.length && plan.every((e, i) => e.id === before[i].id && e.rotate === before[i].rotate);
+    if (unchanged) return false;
+    if (!plan.length) {
+      this.#notice('A PDF needs at least one page, so the last page can’t be deleted.');
+      return false;
+    }
+    this.annotations.applyPlan(plan, followPages(this.annotations.all, before, plan, copies));
+    return true;
+  }
+
+  rotatePages(ids, delta) {
+    return this.#editPlan((plan) => ({ plan: rotateEntries(plan, new Set(ids), delta) }));
+  }
+
+  deletePages(ids) {
+    return this.#editPlan((plan) => ({ plan: removeEntries(plan, new Set(ids)) }));
+  }
+
+  duplicatePages(ids) {
+    return this.#editPlan((plan) => duplicateEntries(plan, new Set(ids)));
+  }
+
+  /** Moves pages to insertion point `toIndex` (0 = before the first page). */
+  movePages(ids, toIndex) {
+    return this.#editPlan((plan) => ({ plan: moveEntries(plan, new Set(ids), toIndex) }));
+  }
+
+  /** Inserts a blank page at `index`, the same size as the page before it. */
+  insertBlankPage(index) {
+    const near = this.viewer.getPageView(Math.max(0, index - 1))?.pdfPage?.view ?? [0, 0, 612, 792];
+    const entry = { id: newId(), src: 'blank', width: near[2] - near[0], height: near[3] - near[1], rotate: 0 };
+    return this.#editPlan((plan) => ({ plan: insertEntries(plan, index, [entry]) }));
+  }
+
+  /** Inserts every page of another PDF (described by the host) at `index`. Resolves with the page count. */
+  async insertFile(file, index) {
+    if (!this.canEditPages) return 0;
+    const response = await fetch(file.url);
+    if (!response.ok) throw new Error(`“${file.name}” couldn’t be read.`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const count = await countPages(bytes);
+    const sourceId = newId();
+    this.sources.set(sourceId, bytes);
+    const entries = Array.from({ length: count }, (_, i) => ({ id: newId(), src: sourceId, index: i, rotate: 0 }));
+    this.#editPlan((plan) => ({ plan: insertEntries(plan, index, entries) }));
+    return count;
+  }
+
+  /** A new PDF holding just these pages (in document order), with their annotations. */
+  async exportPages(ids) {
+    const wanted = new Set(ids);
+    const current = this.annotations.plan;
+    const plan = current.filter((e) => wanted.has(e.id));
+    const position = new Map(plan.map((e, i) => [e.id, i + 1]));
+    const annotations = [];
+    for (const a of this.annotations.all) {
+      const page = position.get(current[a.page - 1]?.id);
+      if (page) annotations.push({ ...a, page });
+    }
+    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations });
+  }
+
+  async #baseBytes() {
+    if (!this.#base) {
+      const response = await fetch(this.file.url);
+      if (!response.ok) throw new Error('The original file couldn’t be read. It may have been moved or deleted.');
+      this.#base = new Uint8Array(await response.arrayBuffer());
+    }
+    return this.#base;
+  }
+
+  /**
+   * Rebuilds what's on screen from the current plan. Edits made while a rebuild is running are
+   * folded into one more rebuild afterwards, so rapid clicks don't queue up slow work.
+   */
+  async #rebuild() {
+    if (this.rebuilding) {
+      this.#rebuildQueued = true;
+      return;
+    }
+    this.rebuilding = true;
+    this.el.classList.add('rebuilding');
+    this.annotLayer.reset();
+    this.#changed();
+    try {
+      do {
+        this.#rebuildQueued = false;
+        const plan = this.annotations.plan;
+        const keepId = this.#shownPlan?.[this.viewer.currentPageNumber - 1]?.id;
+        const keepIndex = this.viewer.currentPageNumber;
+        const bytes = await composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, clean: false });
+        if (this.#rebuildQueued) continue;
+        const found = plan.findIndex((e) => e.id === keepId);
+        await this.#swapDocument(bytes, plan, found >= 0 ? found + 1 : Math.min(keepIndex, plan.length));
+      } while (this.#rebuildQueued);
+    } catch (err) {
+      this.#notice(`The pages couldn’t be rearranged: ${err.message}`);
+    } finally {
+      this.rebuilding = false;
+      this.el.classList.remove('rebuilding');
+      this.annotLayer.refresh();
+      this.#changed();
+    }
+  }
+
+  async #swapDocument(bytes, plan, page) {
+    const task = this.#libs.pdfjsLib.getDocument({ data: bytes, ...documentAssetOptions });
+    const pdf = await task.promise;
+    const previous = this.#documentTask;
+    this.#restore = { scaleValue: this.viewer.currentScaleValue, rotation: this.viewer.pagesRotation, page };
+    this.pdf = pdf;
+    this.#documentTask = task;
+    this.#shownPlan = plan;
+    Object.assign(this.find, { current: 0, total: 0, state: null });
+    this.viewer.setDocument(pdf);
+    this.linkService.setDocument(pdf, null);
+    previous?.destroy();
+    this.dispatchEvent(new Event('documentchange'));
   }
 
   /** After Save As, this tab now represents the new file. */

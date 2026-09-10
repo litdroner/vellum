@@ -1,4 +1,5 @@
-// Per-document annotation store with undo/redo and "unsaved changes" tracking.
+// Per-document edit store with undo/redo and "unsaved changes" tracking. It holds the annotations
+// and the page plan (see pages/plan.js), so one Ctrl+Z undoes either kind of edit.
 //
 // An annotation is plain data. Geometry is in PDF user space (points, y pointing up), so it's
 // independent of zoom and rotation and can be written straight into the file.
@@ -25,6 +26,7 @@ let opSeq = 0;
 
 export class AnnotationStore extends EventTarget {
   #items = new Map();
+  #plan = null;
   #undo = [];
   #redo = [];
   #savedAt = 0;
@@ -32,6 +34,17 @@ export class AnnotationStore extends EventTarget {
   constructor({ author = '' } = {}) {
     super();
     this.author = author;
+  }
+
+  /** The current page plan (null until the document has loaded). */
+  get plan() { return this.#plan; }
+
+  /** Sets the starting page plan. Not undoable, not dirty. */
+  initPlan(plan) { this.#plan = plan; }
+
+  /** Changes the page plan, plus the annotation changes that go with it, as one undo step. */
+  applyPlan(plan, changes = []) {
+    this.apply([{ plan: { before: this.#plan, after: plan } }, ...changes]);
   }
 
   get all() { return [...this.#items.values()]; }
@@ -114,6 +127,10 @@ export class AnnotationStore extends EventTarget {
 
   #write(changes, side) {
     for (const change of changes) {
+      if (change.plan) {
+        this.#plan = change.plan[side];
+        continue;
+      }
       const value = change[side];
       const id = (change.after ?? change.before).id;
       if (value) this.#items.set(id, value);
@@ -123,14 +140,17 @@ export class AnnotationStore extends EventTarget {
 
   #emitFor(changes) {
     const pages = new Set();
+    let plan = false;
     for (const c of changes) {
+      if (c.plan) plan = true;
       if (c.before) pages.add(c.before.page);
       if (c.after) pages.add(c.after.page);
     }
-    this.#emit(pages);
+    this.#emit(pages, plan);
   }
 
-  #emit(pages) {
-    this.dispatchEvent(new CustomEvent('change', { detail: { pages } }));
+  /** detail.plan is true when the page list itself changed (the document must be rebuilt). */
+  #emit(pages, plan = false) {
+    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan } }));
   }
 }

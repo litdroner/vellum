@@ -177,11 +177,11 @@ public partial class MainWindow : Window
 
         // ---- files --------------------------------------------------------
 
-        bridge.Register("openDialog", _ =>
+        bridge.Register("openDialog", request =>
         {
             var dialog = new OpenFileDialog
             {
-                Title = "Open PDF",
+                Title = OptionalString(request, "title") ?? "Open PDF",
                 Filter = "PDF documents (*.pdf)|*.pdf|All files (*.*)|*.*",
                 Multiselect = true,
                 InitialDirectory = LastFolder(),
@@ -261,7 +261,7 @@ public partial class MainWindow : Window
             var current = OptionalString(request, "path");
             var dialog = new SaveFileDialog
             {
-                Title = "Save PDF as",
+                Title = OptionalString(request, "title") ?? "Save PDF as",
                 Filter = "PDF documents (*.pdf)|*.pdf",
                 DefaultExt = ".pdf",
                 AddExtension = true,
@@ -272,6 +272,29 @@ public partial class MainWindow : Window
                     : LastFolder(),
             };
             return Done(new { file = dialog.ShowDialog(this) == true ? DescribeFile(dialog.FileName) : null });
+        });
+
+        // Split: the user picks a folder; each part gets a free file name there (nothing is overwritten),
+        // registered so the page may write to it.
+        bridge.Register("splitTargets", request =>
+        {
+            var names = request.Payload.ValueKind == JsonValueKind.Object
+                && request.Payload.TryGetProperty("names", out var list) && list.ValueKind == JsonValueKind.Array
+                ? list.EnumerateArray().Select(n => n.GetString() ?? "").ToArray()
+                : [];
+            if (names.Length == 0) throw new ArgumentException("No files to create.");
+            var current = OptionalString(request, "path");
+            var dialog = new OpenFolderDialog
+            {
+                Title = "Choose a folder for the split files",
+                InitialDirectory = current is not null && Directory.Exists(Path.GetDirectoryName(current))
+                    ? Path.GetDirectoryName(current)
+                    : LastFolder(),
+            };
+            if (dialog.ShowDialog(this) != true) return Done(new { files = (object[]?)null });
+            var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var files = names.Select(name => DescribeFile(FreePath(dialog.FolderName, name, taken))).ToArray();
+            return Done(new { files, folder = dialog.FolderName });
         });
 
         // Protected (encrypted) PDFs can't be written, so their annotations live in a sidecar file
@@ -436,6 +459,19 @@ public partial class MainWindow : Window
     }
 
     private static Task<object?> Done(object? result = null) => Task.FromResult(result);
+
+    /// <summary>A file name in `folder` that doesn't exist yet: "name.pdf", then "name (2).pdf", …</summary>
+    private static string FreePath(string folder, string requested, HashSet<string> taken)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var clean = new string(Path.GetFileNameWithoutExtension(requested).Where(c => !invalid.Contains(c)).ToArray()).Trim();
+        if (clean.Length == 0) clean = "Part";
+        for (var i = 1; ; i++)
+        {
+            var path = Path.Combine(folder, (i == 1 ? clean : $"{clean} ({i})") + ".pdf");
+            if (!File.Exists(path) && taken.Add(path)) return path;
+        }
+    }
 
     private static readonly Regex SidecarKey = new("^[0-9A-F]{64}$", RegexOptions.Compiled);
 

@@ -62,19 +62,23 @@ export async function promptPassword({ fileName, incorrect = false }) {
   return result === 'ok' ? input.value : null;
 }
 
-export function toast(message, { kind = 'info', timeout = 3600 } = {}) {
+/** A short message. `action: { label, run }` adds a button (e.g. Undo); such toasts stay a little longer. */
+export function toast(message, { kind = 'info', timeout = 3600, action = null } = {}) {
   let host = document.getElementById('toasts');
   if (!host) {
     host = h('div', { id: 'toasts', class: 'ui', 'aria-live': 'polite' });
     document.getElementById('overlay-root').append(host);
   }
   const iconName = kind === 'error' ? 'triangle-alert' : kind === 'success' ? 'check' : 'info';
-  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' },
-    h('span', { class: 'toast-icon', html: icon(iconName, 16) }), h('span', { text: message }));
-  host.append(el);
-  requestAnimationFrame(() => el.classList.add('open'));
-  setTimeout(() => {
+  const dismiss = () => {
     el.classList.remove('open');
     setTimeout(() => el.remove(), 300);
-  }, timeout);
+  };
+  const el = h('div', { class: `toast ${kind}${action ? ' has-action' : ''}`, role: kind === 'error' ? 'alert' : 'status' },
+    h('span', { class: 'toast-icon', html: icon(iconName, 16) }),
+    h('span', { text: message }),
+    action ? h('button', { class: 'toast-action', onClick: () => { dismiss(); action.run(); } }, action.label) : null);
+  host.append(el);
+  requestAnimationFrame(() => el.classList.add('open'));
+  setTimeout(dismiss, action ? Math.max(timeout, 6000) : timeout);
 }
