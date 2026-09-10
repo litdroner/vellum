@@ -15,6 +15,8 @@ public sealed class SingleInstance : IDisposable
     private static readonly string PipeName = $"Vellum.Open.{UserId}";
 
     private readonly Mutex _mutex;
+    /// <summary>Exists while Vellum runs; an in-app update's Setup waits for it to go before replacing files (see Vellum.iss).</summary>
+    private readonly Mutex _running = new(initiallyOwned: false, @"Local\Vellum.Running");
     private readonly CancellationTokenSource _cts = new();
 
     public bool IsPrimary { get; }
@@ -81,5 +83,6 @@ public sealed class SingleInstance : IDisposable
             try { _mutex.ReleaseMutex(); } catch (ApplicationException) { /* not owned by this thread */ }
         }
         _mutex.Dispose();
+        _running.Dispose();
     }
 }

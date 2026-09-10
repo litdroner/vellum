@@ -30,7 +30,9 @@ public partial class MainWindow : Window
     public MainWindow(string[] startupFiles)
     {
         InitializeComponent();
-        _pendingFiles = [.. startupFiles];
+        // After an in-app update, the documents that were open come back.
+        _pendingFiles = [.. startupFiles, .. Updater.TakeRelaunchFiles(DataFolder).Except(startupFiles, StringComparer.OrdinalIgnoreCase)];
+        _ = Task.Run(_updater.CleanUp);
         RestorePlacement();
         ApplyThemeColors();
 
@@ -165,14 +167,16 @@ public partial class MainWindow : Window
             _pageReady = true;
             var files = _pendingFiles.Select(DescribeFile).ToArray();
             _pendingFiles.Clear();
-            // The Windows user name signs annotations (the PDF "author" field).
-            return Done(new
+            var version = Updater.Current.ToString(3);
+            // Said once, after an update: "Updated to …".
+            var updatedFrom = Updater.TryParseVersion(_settings.LastRunVersion, out var last) && last < Updater.Current ? _settings.LastRunVersion : null;
+            if (_settings.LastRunVersion != version)
             {
-                files,
-                theme = _settings.Theme,
-                user = Environment.UserName,
-                version = typeof(App).Assembly.GetName().Version?.ToString(3),
-            });
+                _settings.LastRunVersion = version;
+                _settings.Save();
+            }
+            // The Windows user name signs annotations (the PDF "author" field).
+            return Done(new { files, theme = _settings.Theme, user = Environment.UserName, version, updatedFrom });
         });
 
         // ---- files --------------------------------------------------------
@@ -377,6 +381,7 @@ public partial class MainWindow : Window
         bridge.Register("window.setTheme", request =>
         {
             _settings.Theme = RequiredString(request, "theme") == "light" ? "light" : "dark";
+            _settings.Background = OptionalString(request, "background") is { } background && HexColor.IsMatch(background) ? background : null;
             _settings.Save();
             ApplyThemeColors();
             WindowEffects.ApplyTheme(Handle, IsDark);
@@ -384,6 +389,8 @@ public partial class MainWindow : Window
                 IsDark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
             return Done();
         });
+
+        RegisterUpdateHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------
@@ -391,6 +398,12 @@ public partial class MainWindow : Window
     private void ApplyThemeColors()
     {
         var (r, g, b) = IsDark ? ((byte)0x1D, (byte)0x1A, (byte)0x17) : ((byte)0xEC, (byte)0xE6, (byte)0xDB);
+        // The page reports its theme's own background, so a coloured theme doesn't flash grey on start.
+        if (_settings.Background is { } hex && HexColor.IsMatch(hex))
+        {
+            var rgb = Convert.ToInt32(hex[1..], 16);
+            (r, g, b) = ((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+        }
         Background = new SolidColorBrush(Color.FromRgb(r, g, b));
         Web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, r, g, b);
     }
@@ -474,6 +487,7 @@ public partial class MainWindow : Window
     }
 
     private static readonly Regex SidecarKey = new("^[0-9A-F]{64}$", RegexOptions.Compiled);
+    private static readonly Regex HexColor = new("^#[0-9a-fA-F]{6}$", RegexOptions.Compiled);
 
     /// <summary>Sidecar file for a document key (a SHA-256 hex string, validated so it can't name another path).</summary>
     private static string SidecarPath(BridgeRequest request)

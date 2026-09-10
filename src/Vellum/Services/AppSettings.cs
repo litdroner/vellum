@@ -4,12 +4,22 @@ using Vellum.Hosting;
 
 namespace Vellum.Services;
 
-/// <summary>Small app preferences kept in %LOCALAPPDATA%\Vellum\settings.json: theme and window placement.</summary>
+/// <summary>Small app preferences kept in %LOCALAPPDATA%\Vellum\settings.json: theme, window placement, updates.</summary>
 public sealed class AppSettings
 {
     private string _path = "";
 
     public string Theme { get; set; } = "dark";
+    /// <summary>The theme's background colour (#rrggbb), painted behind the page while it loads.</summary>
+    public string? Background { get; set; }
+
+    /// <summary>The version that last ran, to say "Updated to …" once after an update.</summary>
+    public string? LastRunVersion { get; set; }
+    public bool AutoUpdate { get; set; } = true;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    /// <summary>A version the user chose to skip: automatic checks stay quiet about it.</summary>
+    public string? SkippedVersion { get; set; }
+
     public double? Left { get; set; }
     public double? Top { get; set; }
     public double? Width { get; set; }

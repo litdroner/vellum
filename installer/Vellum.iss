@@ -32,6 +32,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesAssociations=yes
 CloseApplications=yes
+; An in-app update restarts Vellum itself (see [Run]), so Windows mustn't restart it a second time.
+RestartApplications=no
 
 [Tasks]
 Name: "associate"; Description: "Register Vellum as a PDF app (you confirm the default in Windows Settings)"
@@ -47,6 +49,8 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\Vellum.exe"; Tasks: desktopic
 [Run]
 Filename: "{app}\Vellum.exe"; Parameters: "--register-association"; Flags: runhidden waituntilterminated; Tasks: associate
 Filename: "{app}\Vellum.exe"; Description: "Open Vellum"; Flags: nowait postinstall skipifsilent
+; In-app updates run Setup silently with /relaunch=1: start the new version when done.
+Filename: "{app}\Vellum.exe"; Flags: nowait; Check: RelaunchAfterUpdate
 
 [UninstallRun]
 Filename: "{app}\Vellum.exe"; Parameters: "--unregister-association"; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterPdf"
@@ -69,11 +73,29 @@ begin
     or HasVersion(HKCU, 'Software\' + WebView2Key);
 end;
 
+function RelaunchAfterUpdate(): Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
+
 function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
 begin
   Result := True;
+  // An in-app update starts Setup, then closes Vellum: give it time to finish closing (it holds this
+  // mutex while running; see SingleInstance.cs), so no file is still in use when they're replaced.
+  if RelaunchAfterUpdate() then
+  begin
+    Waited := 0;
+    while CheckForMutexes('Local\Vellum.Running') and (Waited < 30000) do
+    begin
+      Sleep(200);
+      Waited := Waited + 200;
+    end;
+  end;
   if not WebView2Installed() then
-    MsgBox('Vellum needs the Microsoft Edge WebView2 Runtime, which isn''t installed on this PC.' + #13#10#13#10 +
+    SuppressibleMsgBox('Vellum needs the Microsoft Edge WebView2 Runtime, which isn''t installed on this PC.' + #13#10#13#10 +
       'Setup will continue. Before starting Vellum, install the runtime from:' + #13#10 +
-      'https://go.microsoft.com/fwlink/p/?LinkId=2124703', mbInformation, MB_OK);
+      'https://go.microsoft.com/fwlink/p/?LinkId=2124703', mbInformation, MB_OK, IDOK);
 end;

@@ -33,6 +33,7 @@ export function createCommands(app, ui, actions) {
     'file.showInFolder': { label: 'Show in folder', run: () => actions.showInFolder() },
     'app.setDefault': { label: 'Make Vellum the default PDF app…', run: () => actions.setDefault() },
     'app.about': { label: 'About Vellum', run: () => actions.about() },
+    'app.checkUpdates': { label: 'Check for updates…', run: () => actions.checkForUpdates() },
 
     'tab.next': { label: 'Next tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], global: true, run: () => app.cycle(1) },
     'tab.prev': { label: 'Previous tab', keys: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'], global: true, run: () => app.cycle(-1) },

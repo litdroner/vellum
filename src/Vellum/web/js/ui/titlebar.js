@@ -10,6 +10,9 @@ const GLYPHS = { minimize: '', maximize: '', restore: '', close: '' 
 const EDGES = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'];
 
 export class TitleBar {
+  /** Called when the "Update" pill is clicked. */
+  onUpdate = null;
+
   constructor(root, app, { bridge, commands }) {
     this.app = app;
     this.commands = commands;
@@ -20,13 +23,15 @@ export class TitleBar {
 
     this.maxBtn = control('maximize', 'Maximize', 'window.toggleMaximize');
     this.themeBtn = h('button', { class: 'tb-btn small', onClick: () => commands['view.theme'].run() });
+    this.updateBtn = h('button', { class: 'update-pill', hidden: true, onClick: () => this.onUpdate?.() },
+      h('span', { class: 'update-pill-dot' }), h('span', { text: 'Update' }));
     /** The tab strip lives here (see tabs.js). */
     this.tabHost = h('div', { class: 'tab-host' });
 
     root.append(
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark', html: markSvg(17) }), h('span', { class: 'brand-name', text: 'Vellum' })),
       this.tabHost,
-      h('div', { class: 'titlebar-actions' }, this.themeBtn),
+      h('div', { class: 'titlebar-actions' }, this.updateBtn, this.themeBtn),
       h('div', { class: 'window-controls' },
         control('minimize', 'Minimize', 'window.minimize'), this.maxBtn, control('close', 'Close', 'window.close')));
 
@@ -58,6 +63,15 @@ export class TitleBar {
     this.themeBtn.innerHTML = icon(light ? 'moon' : 'sun', 16);
     this.themeBtn.title = label;
     this.themeBtn.setAttribute('aria-label', label);
+  }
+
+  /** Shows the "Update" pill while a new version is available (null hides it). */
+  setUpdate(offer) {
+    this.updateBtn.hidden = !offer;
+    if (!offer) return;
+    const label = `Vellum ${offer.version} is available`;
+    this.updateBtn.title = label;
+    this.updateBtn.setAttribute('aria-label', label);
   }
 
   #setMaximized(maximized) {
