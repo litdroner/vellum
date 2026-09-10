@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Vellum.ico</ApplicationIcon>
+    <AssemblyName>Vellum</AssemblyName>
+    <Product>Vellum</Product>
+    <Version>0.1.0</Version>
+    <Authors>Pankaj Manhas</Authors>
+    <Company>Homelabs</Company>
+    <Copyright>© 2026 Pankaj Manhas, Homelabs. Made in India.</Copyright>
+    <Description>Vellum — a calm, fast PDF reader for Windows.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!-- The HTML/CSS/JS front end. Copied next to the exe and served to WebView2 by AppResourceServer. -->
+  <ItemGroup>
+    <Content Include="web\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

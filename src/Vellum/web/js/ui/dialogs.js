@@ -1,0 +1,80 @@
+import { h } from '../dom.js';
+import { icon } from '../icons.js';
+
+// Modal dialogs and toasts.
+
+/**
+ * Shows a modal. Resolves with the id of the button pressed, or null if dismissed (Esc / backdrop).
+ * buttons: [{ id, label, primary? }]
+ */
+export function showDialog({ title, message, content = [], buttons = [{ id: 'ok', label: 'OK', primary: true }], iconName, className = '', onOpen }) {
+  return new Promise((resolve) => {
+    const titleId = `dlg-${Math.random().toString(36).slice(2)}`;
+    const footer = h('div', { class: 'dialog-actions' });
+    const dialog = h('div', { class: `dialog ${className}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
+      iconName ? h('div', { class: 'dialog-icon', html: icon(iconName, 22) }) : null,
+      h('h2', { id: titleId, class: 'dialog-title', text: title }),
+      message ? h('p', { class: 'dialog-message', text: message }) : null,
+      content,
+      footer);
+    const backdrop = h('div', { class: 'dialog-backdrop ui' }, dialog);
+    const previousFocus = document.activeElement;
+
+    const finish = (result) => {
+      backdrop.classList.remove('open');
+      backdrop.addEventListener('transitionend', () => backdrop.remove(), { once: true });
+      setTimeout(() => backdrop.remove(), 250);
+      previousFocus?.focus?.({ preventScroll: true });
+      resolve(result);
+    };
+
+    for (const b of buttons) {
+      footer.append(h('button', { class: `btn${b.primary ? ' primary' : ''}`, onClick: () => finish(b.id) }, b.label));
+    }
+    backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) finish(null); });
+    dialog.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+      if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
+        const primary = buttons.find((b) => b.primary);
+        if (primary) { e.preventDefault(); finish(primary.id); }
+      }
+    });
+
+    document.getElementById('overlay-root').append(backdrop);
+    requestAnimationFrame(() => backdrop.classList.add('open'));
+    // Focus the primary (safe) action, so Enter never picks e.g. "Don't save" by accident.
+    (onOpen ? onOpen(dialog) : footer.querySelector('.primary') ?? footer.querySelector('.btn'))?.focus?.();
+  });
+}
+
+/** Asks for a PDF password. Resolves with the password, or null if the user cancels. */
+export async function promptPassword({ fileName, incorrect = false }) {
+  const input = h('input', { class: 'field', type: 'password', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Password', placeholder: 'Password' });
+  const result = await showDialog({
+    title: incorrect ? 'Incorrect password' : 'Password required',
+    message: incorrect ? `That password didn’t unlock “${fileName}”. Try again.` : `“${fileName}” is protected. Enter its password to open it.`,
+    iconName: 'key-round',
+    className: incorrect ? 'shake' : '',
+    content: [input],
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Unlock', primary: true }],
+    onOpen: () => input,
+  });
+  return result === 'ok' ? input.value : null;
+}
+
+export function toast(message, { kind = 'info', timeout = 3600 } = {}) {
+  let host = document.getElementById('toasts');
+  if (!host) {
+    host = h('div', { id: 'toasts', class: 'ui', 'aria-live': 'polite' });
+    document.getElementById('overlay-root').append(host);
+  }
+  const iconName = kind === 'error' ? 'triangle-alert' : kind === 'success' ? 'check' : 'info';
+  const el = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' },
+    h('span', { class: 'toast-icon', html: icon(iconName, 16) }), h('span', { text: message }));
+  host.append(el);
+  requestAnimationFrame(() => el.classList.add('open'));
+  setTimeout(() => {
+    el.classList.remove('open');
+    setTimeout(() => el.remove(), 300);
+  }, timeout);
+}

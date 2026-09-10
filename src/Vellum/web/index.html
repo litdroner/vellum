@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <!-- PDFs are untrusted input: lock the page down to our own origin. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' data: blob:">
+  <title>Vellum</title>
+  <script src="js/theme-boot.js"></script>
+  <link rel="stylesheet" href="vendor/pdfjs/web/pdf_viewer.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <!-- "Milled" edges: fractal noise displaces a ring by a couple of pixels, so edges read as
+           machined by hand rather than vector-perfect. Only used on small, static elements. -->
+      <filter id="mill" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="2" seed="11" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+      <filter id="mill-strong" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="3" seed="4" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <div id="app" class="no-doc">
+    <header id="titlebar" class="ui"></header>
+    <div id="toolbar" class="ui" role="toolbar" aria-label="Document"></div>
+    <div id="workspace">
+      <aside id="sidebar" class="ui" aria-label="Navigation"></aside>
+      <main id="stage" class="empty"></main>
+    </div>
+  </div>
+  <div id="window-edges" aria-hidden="true"></div>
+  <div id="overlay-root"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
