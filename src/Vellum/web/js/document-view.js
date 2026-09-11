@@ -75,6 +75,8 @@ export class DocumentView extends EventTarget {
   #shownPlan = null;
   #rebuildQueued = false;
   #restore = null;
+  #resizeObserver = null;
+  #refitFrame = 0;
   /** Other PDFs pages were inserted from: sourceId → bytes. */
   sources = new Map();
   rebuilding = false;
@@ -154,6 +156,21 @@ export class DocumentView extends EventTarget {
     this.annotLayer = new AnnotationLayer(this, this.annotations);
     this.annotLayer.addEventListener('toolchange', () => this.#changed());
     this.annotLayer.addEventListener('selectionchange', () => this.#changed());
+
+    // The fitted zooms (automatic, fit page, fit width) follow the window and the sidebar as they
+    // change size, as in pdf.js's own viewer; a chosen percentage stays put. The border box is
+    // watched, so a scrollbar appearing after a re-fit doesn't trigger another one.
+    let size = '';
+    this.#resizeObserver = new ResizeObserver(([entry]) => {
+      const box = entry.borderBoxSize?.[0];
+      if (!box?.inlineSize || !box.blockSize) return; // a background tab has no size
+      const next = `${Math.round(box.inlineSize)}x${Math.round(box.blockSize)}`;
+      if (next === size) return;
+      size = next;
+      cancelAnimationFrame(this.#refitFrame);
+      this.#refitFrame = requestAnimationFrame(() => this.#refit());
+    });
+    this.#resizeObserver.observe(this.container);
 
     eventBus.on('pagesinit', () => {
       // After pages were rearranged: stay on the same page, at the same zoom and layout.
@@ -590,7 +607,15 @@ export class DocumentView extends EventTarget {
   hide() { this.el.hidden = true; }
   focus() { this.container.focus({ preventScroll: true }); }
 
+  /** Re-applies a fitted zoom for the viewer's current size (pdf.js skips it if nothing changed). */
+  #refit() {
+    const value = this.pdf ? this.viewer.currentScaleValue : null;
+    if (value === 'auto' || value === 'page-fit' || value === 'page-width') this.viewer.currentScaleValue = value;
+  }
+
   destroy() {
+    this.#resizeObserver?.disconnect();
+    cancelAnimationFrame(this.#refitFrame);
     this.#abort.abort();
     try { this.viewer?.setDocument(null); } catch { /* already torn down */ }
     this.#loadingTask?.destroy();

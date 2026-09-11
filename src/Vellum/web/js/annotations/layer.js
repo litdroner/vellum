@@ -59,11 +59,13 @@ export class AnnotationLayer extends EventTarget {
     this.store = store;
 
     // pdf.js clears unknown children from a page when it re-renders (zoom, rotation);
-    // put our overlays straight back, before the next paint.
+    // put our overlays straight back, before the next paint. "Missing" means not inside the page,
+    // not "not in the document": in single-page view pdf.js detaches every page that isn't shown,
+    // and re-appending into a detached page would trigger this observer again, forever.
     this.#observer = new MutationObserver((records) => {
       for (const record of records) {
         for (const layer of this.#pages.values()) {
-          if (layer.div === record.target && !layer.hl.isConnected) record.target.append(layer.hl, layer.marks);
+          if (layer.div === record.target && layer.hl.parentNode !== layer.div) record.target.append(layer.hl, layer.marks);
         }
       }
     });
@@ -209,7 +211,7 @@ export class AnnotationLayer extends EventTarget {
       this.#pages.set(n, layer);
       this.#observer.observe(pageView.div, { childList: true });
     }
-    if (!layer.hl.isConnected) pageView.div.append(layer.hl, layer.marks);
+    if (layer.hl.parentNode !== pageView.div) pageView.div.append(layer.hl, layer.marks);
 
     // viewBox in page points; the group transform maps PDF user space into it (flip + rotation).
     const unit = pageView.viewport.clone({ scale: 1 });

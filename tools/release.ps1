@@ -22,7 +22,7 @@ if (git -C $root ls-remote --tags origin "refs/tags/$tag") { throw "$tag already
 if (-not $SkipBuild) { & (Join-Path $PSScriptRoot 'publish.ps1') }
 $setup = Join-Path $root 'dist\Vellum-Setup.exe'
 if (-not (Test-Path $setup)) { throw "No installer at $setup" }
-$built = (Get-Item $setup).VersionInfo.ProductVersion
+$built = "$((Get-Item $setup).VersionInfo.ProductVersion)".Trim() # Setup pads it with spaces
 if ($built -ne $version) { throw "dist\Vellum-Setup.exe is version $built, not $version. Run without -SkipBuild." }
 
 # GitHub also records a SHA-256 for each upload; the .sha256 file is a fallback the updater reads if not.

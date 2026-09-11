@@ -17,6 +17,7 @@ const names = [
   'book-open', 'text-select', 'key-round', 'eraser', 'save-all', 'arrow-up-to-line', 'arrow-down-to-line',
   'contrast', 'copy-plus', 'file-output', 'scissors', 'files', 'list-checks',
   'sparkles', 'refresh-cw', 'wifi-off',
+  'monitor', 'settings', 'command', 'palette', 'arrow-right', 'keyboard', 'pipette', 'sliders-horizontal', 'zap',
 ];
 
 const icons = {};

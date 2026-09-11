@@ -33,7 +33,12 @@ the SHA-256 GitHub publishes for it, installs it and reopens the documents you h
   annotations share one undo history, and annotations move with their pages. Deleted pages are
   removed from the saved file, not just hidden.
 - **Page colours**: normal, dark or sepia pages (Ctrl+Shift+D), independent of the app theme.
-- Print, dark/light theme, password-protected and damaged files handled with clear messages.
+- **Appearance**: seven colour themes (Mist, Ocean, Sage, Blush, Sand, Lavender, Graphite), each in
+  Light and an Obsidian dark mode or following Windows, plus your own accent colour. Reduce motion and
+  reduce transparency for comfort. PDF pages stay true to the file.
+- **Home**: a greeting, a large Open card and your recent documents with a picture of their first page.
+- **Command palette** (Ctrl+K) for every action and recent file; **Settings** (Ctrl+,) in one place.
+- Print, password-protected and damaged files handled with clear messages.
 
 ### Protected (encrypted) PDFs
 Many PDFs are encrypted even when they open without a password. Vellum can't rewrite those, so it
@@ -58,7 +63,8 @@ file's contents). They come back whenever you open that PDF in Vellum; other app
 | Tools: select, highlight, underline, note, draw | V, H, U, N, D (H/U mark selected text directly) |
 | Delete annotation / undo / redo | Del / Ctrl+Z / Ctrl+Y |
 | Print | Ctrl+P |
-| Theme | Ctrl+Shift+L |
+| Command palette / Settings | Ctrl+K / Ctrl+, |
+| Light / dark mode | Ctrl+Shift+L |
 
 ## Build from source
 
@@ -87,10 +93,12 @@ src/Vellum/
     js/document-view.js    one pdf.js viewer per document
     js/annotations/        model (undo/redo), geometry, SVG layer, pdf-lib persistence, print painting
     js/ui/                 title bar, tabs, toolbar, sidebar, find bar, menus, dialogs, start screen
-    css/app.css            the visual system (tokens, raised/pocket materials)
+    js/themes.js           colour themes and appearance (seed colours; CSS derives the rest)
+    css/app.css            the design system (tokens, glass / clay / paper materials)
     vendor/                pdf.js 6.3, pdf-lib 1.17, Jost font — all local, nothing loaded from the network
 installer/Vellum.iss       Inno Setup script
-tools/                     run, publish, icon, DevTools helpers
+tools/                     run, publish, release, icon, DevTools helpers
+docs/                      design system, architecture guidelines, feature registry
 ```
 
 User data lives in `%LOCALAPPDATA%\Vellum` (settings, recent files, protected-PDF annotations,

@@ -1,9 +1,13 @@
-// Every user action lives here once. The toolbar, keyboard shortcuts and menus all call these,
-// so a shortcut and its button can never drift apart.
-//   keys:   shortcuts (see shortcuts.js for the naming)
-//   hint:   how the shortcut is displayed, when it differs from keys[0]
+// Every user action lives here once. The toolbars, menus, keyboard shortcuts and the command palette
+// all call these, so a shortcut and its button can never drift apart. To add a feature, register its
+// actions here; to remove one, delete them and every surface follows.
+//   label:  what menus and the palette show
+//   group:  palette section; icon: palette / menu icon
+//   keys:   shortcuts (see shortcuts.js for the naming); hint: how the shortcut is shown, if not keys[0]
 //   global: still fires while typing in a text field
 //   when:   optional extra condition, checked before the shortcut is consumed
+//   doc:    needs an open document (hidden from the palette otherwise)
+//   palette: false keeps it out of the palette
 
 export function createCommands(app, ui, actions) {
   const doc = () => (app.active?.status === 'ready' ? app.active : null);
@@ -25,66 +29,72 @@ export function createCommands(app, ui, actions) {
   const pages = actions.pages;
 
   return {
-    'file.open': { label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
-    'file.save': { label: 'Save changes', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
-    'file.saveAs': { label: 'Save as…', keys: ['Ctrl+Shift+S'], global: true, run: () => actions.saveAs() },
-    'file.print': { label: 'Print…', keys: ['Ctrl+P'], global: true, run: () => actions.print() },
-    'file.close': { label: 'Close document', keys: ['Ctrl+W', 'Ctrl+F4'], global: true, run: () => actions.close() },
-    'file.showInFolder': { label: 'Show in folder', run: () => actions.showInFolder() },
-    'app.setDefault': { label: 'Make Vellum the default PDF app…', run: () => actions.setDefault() },
-    'app.about': { label: 'About Vellum', run: () => actions.about() },
-    'app.checkUpdates': { label: 'Check for updates…', run: () => actions.checkForUpdates() },
+    'file.open': { group: 'File', icon: 'folder-open', label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
+    'file.save': { group: 'File', icon: 'save', doc: true, label: 'Save changes', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
+    'file.saveAs': { group: 'File', icon: 'save-all', doc: true, label: 'Save as…', keys: ['Ctrl+Shift+S'], global: true, run: () => actions.saveAs() },
+    'file.print': { group: 'File', icon: 'printer', doc: true, label: 'Print…', keys: ['Ctrl+P'], global: true, run: () => actions.print() },
+    'file.close': { group: 'File', icon: 'x', doc: true, label: 'Close document', keys: ['Ctrl+W', 'Ctrl+F4'], global: true, run: () => actions.close() },
+    'file.showInFolder': { group: 'File', icon: 'folder-open', doc: true, label: 'Show in folder', run: () => actions.showInFolder() },
 
-    'tab.next': { label: 'Next tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], global: true, run: () => app.cycle(1) },
-    'tab.prev': { label: 'Previous tab', keys: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'], global: true, run: () => app.cycle(-1) },
-    'tab.reopen': { label: 'Reopen closed document', keys: ['Ctrl+Shift+T'], global: true, run: () => actions.reopenClosed() },
+    'tab.next': { group: 'Tabs', icon: 'chevron-right', label: 'Next tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], global: true, run: () => app.cycle(1) },
+    'tab.prev': { group: 'Tabs', icon: 'chevron-left', label: 'Previous tab', keys: ['Ctrl+Shift+Tab', 'Ctrl+PageUp'], global: true, run: () => app.cycle(-1) },
+    'tab.reopen': { group: 'Tabs', icon: 'rotate-ccw', label: 'Reopen closed document', keys: ['Ctrl+Shift+T'], global: true, run: () => actions.reopenClosed() },
 
-    'zoom.in': { label: 'Zoom in', keys: ['Ctrl+='], hint: 'Ctrl++', global: true, run: () => doc()?.zoomIn() },
-    'zoom.out': { label: 'Zoom out', keys: ['Ctrl+-'], global: true, run: () => doc()?.zoomOut() },
-    'zoom.fitWidth': { label: 'Fit width', keys: ['Ctrl+2'], global: true, run: () => doc()?.zoomTo('page-width') },
-    'zoom.fitPage': { label: 'Fit page', keys: ['Ctrl+0'], global: true, run: () => doc()?.zoomTo('page-fit') },
-    'zoom.actual': { label: 'Actual size', keys: ['Ctrl+1'], global: true, run: () => doc()?.zoomTo('page-actual') },
-
-    'page.next': { label: 'Next page', keys: ['PageDown', 'ArrowRight'], when: (e) => single() || e.key === 'ArrowRight', run: () => doc()?.nextPage() },
-    'page.prev': { label: 'Previous page', keys: ['PageUp', 'ArrowLeft'], when: (e) => single() || e.key === 'ArrowLeft', run: () => doc()?.prevPage() },
-    'page.first': { label: 'First page', keys: ['Home', 'Ctrl+Home'], run: () => doc()?.firstPage() },
-    'page.last': { label: 'Last page', keys: ['End', 'Ctrl+End'], run: () => doc()?.lastPage() },
-    'page.goto': { label: 'Go to page…', keys: ['Ctrl+G'], global: true, run: () => ui.toolbar.focusPageInput() },
-
+    'zoom.in': { group: 'View', icon: 'zoom-in', doc: true, label: 'Zoom in', keys: ['Ctrl+='], hint: 'Ctrl++', global: true, run: () => doc()?.zoomIn() },
+    'zoom.out': { group: 'View', icon: 'zoom-out', doc: true, label: 'Zoom out', keys: ['Ctrl+-'], global: true, run: () => doc()?.zoomOut() },
+    'zoom.fitWidth': { group: 'View', icon: 'move-horizontal', doc: true, label: 'Fit width', keys: ['Ctrl+2'], global: true, run: () => doc()?.zoomTo('page-width') },
+    'zoom.fitPage': { group: 'View', icon: 'maximize', doc: true, label: 'Fit page', keys: ['Ctrl+0'], global: true, run: () => doc()?.zoomTo('page-fit') },
+    'zoom.actual': { group: 'View', icon: 'square', doc: true, label: 'Actual size', keys: ['Ctrl+1'], global: true, run: () => doc()?.zoomTo('page-actual') },
     // Rotating the view is temporary; rotating pages (below) changes the file when saved.
-    'view.rotateCw': { label: 'Rotate view clockwise', keys: ['Ctrl+Shift+='], hint: 'Ctrl+Shift++', global: true, run: () => doc()?.rotate(90) },
-    'view.rotateCcw': { label: 'Rotate view counter-clockwise', keys: ['Ctrl+Shift+-'], global: true, run: () => doc()?.rotate(-90) },
-    'view.pageTone': { label: 'Page colours', keys: ['Ctrl+Shift+D'], global: true, run: () => actions.cyclePageTone() },
+    'view.rotateCw': { group: 'View', icon: 'rotate-cw', doc: true, label: 'Rotate view clockwise', keys: ['Ctrl+Shift+='], hint: 'Ctrl+Shift++', global: true, run: () => doc()?.rotate(90) },
+    'view.rotateCcw': { group: 'View', icon: 'rotate-ccw', doc: true, label: 'Rotate view counter-clockwise', keys: ['Ctrl+Shift+-'], global: true, run: () => doc()?.rotate(-90) },
+    'view.continuous': { group: 'View', icon: 'gallery-vertical-end', doc: true, label: 'Continuous scroll', run: () => doc()?.setViewMode('continuous') },
+    'view.single': { group: 'View', icon: 'file', doc: true, label: 'Single page', run: () => doc()?.setViewMode('single') },
+    'view.pageTone': { group: 'View', icon: 'contrast', label: 'Page colours: normal, dark, sepia', keys: ['Ctrl+Shift+D'], global: true, run: () => actions.cyclePageTone() },
+    'sidebar.toggle': { group: 'View', icon: 'panel-left', doc: true, label: 'Toggle sidebar', keys: ['F4', 'Ctrl+B'], global: true, run: () => ui.sidebar.toggle() },
 
-    'pages.rotateRight': { label: 'Rotate page right', run: onPages((view, ids) => pages.rotate(view, ids, 90)) },
-    'pages.rotateLeft': { label: 'Rotate page left', run: onPages((view, ids) => pages.rotate(view, ids, -90)) },
-    'pages.delete': { label: 'Delete page', keys: ['Delete'], when: inThumbs, run: onPages((view, ids) => pages.remove(view, ids)) },
-    'pages.insert': { label: 'Insert pages from file…', run: () => doc() && pages.insertFromFile(doc(), doc().state.pageNumber) },
-    'pages.extract': { label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
-    'pages.split': { label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
-    'view.continuous': { label: 'Continuous scroll', run: () => doc()?.setViewMode('continuous') },
-    'view.single': { label: 'Single page', run: () => doc()?.setViewMode('single') },
-    'sidebar.toggle': { label: 'Toggle sidebar', keys: ['F4', 'Ctrl+B'], global: true, run: () => ui.sidebar.toggle() },
-    'view.theme': { label: 'Switch theme', keys: ['Ctrl+Shift+L'], global: true, run: () => actions.toggleTheme() },
+    'page.next': { group: 'Page', icon: 'chevron-right', doc: true, label: 'Next page', keys: ['PageDown', 'ArrowRight'], when: (e) => single() || e.key === 'ArrowRight', run: () => doc()?.nextPage() },
+    'page.prev': { group: 'Page', icon: 'chevron-left', doc: true, label: 'Previous page', keys: ['PageUp', 'ArrowLeft'], when: (e) => single() || e.key === 'ArrowLeft', run: () => doc()?.prevPage() },
+    'page.first': { group: 'Page', icon: 'arrow-up-to-line', doc: true, label: 'First page', keys: ['Home', 'Ctrl+Home'], run: () => doc()?.firstPage() },
+    'page.last': { group: 'Page', icon: 'arrow-down-to-line', doc: true, label: 'Last page', keys: ['End', 'Ctrl+End'], run: () => doc()?.lastPage() },
+    'page.goto': { group: 'Page', icon: 'arrow-right', doc: true, label: 'Go to page…', keys: ['Ctrl+G'], global: true, run: () => ui.viewbar.focusPageInput() },
 
-    'find.open': { label: 'Find', keys: ['Ctrl+F'], global: true, run: () => ui.findbar.open(doc()?.getSelectedText()) },
-    'find.next': { label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
-    'find.prev': { label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
+    'pages.rotateRight': { group: 'Pages', icon: 'rotate-cw', doc: true, label: 'Rotate page right', run: onPages((view, ids) => pages.rotate(view, ids, 90)) },
+    'pages.rotateLeft': { group: 'Pages', icon: 'rotate-ccw', doc: true, label: 'Rotate page left', run: onPages((view, ids) => pages.rotate(view, ids, -90)) },
+    'pages.delete': { group: 'Pages', icon: 'trash-2', doc: true, label: 'Delete page', keys: ['Delete'], when: inThumbs, run: onPages((view, ids) => pages.remove(view, ids)) },
+    'pages.duplicate': { group: 'Pages', icon: 'copy-plus', doc: true, label: 'Duplicate page', run: onPages((view, ids) => pages.duplicate(view, ids)) },
+    'pages.insertBlank': { group: 'Pages', icon: 'file-plus', doc: true, label: 'Insert blank page', run: () => doc() && pages.insertBlank(doc(), doc().state.pageNumber) },
+    'pages.insert': { group: 'Pages', icon: 'files', doc: true, label: 'Insert pages from file…', run: () => doc() && pages.insertFromFile(doc(), doc().state.pageNumber) },
+    'pages.extract': { group: 'Pages', icon: 'file-output', doc: true, label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
+    'pages.split': { group: 'Pages', icon: 'scissors', doc: true, label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
+    'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 
-    'annot.select': { label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
-    'annot.highlight': { label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },
-    'annot.underline': { label: 'Underline', keys: ['U'], run: markOrTool('underline') },
-    'annot.note': { label: 'Sticky note', keys: ['N'], run: () => doc()?.setTool('note') },
-    'annot.ink': { label: 'Draw', keys: ['D'], run: () => doc()?.setTool('ink') },
+    'find.open': { group: 'Search', icon: 'search', doc: true, label: 'Find in document', keys: ['Ctrl+F'], global: true, run: () => ui.findbar.open(doc()?.getSelectedText()) },
+    'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
+    'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
+
+    'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
+    'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },
+    'annot.underline': { group: 'Annotate', icon: 'underline', doc: true, label: 'Underline', keys: ['U'], run: markOrTool('underline') },
+    'annot.note': { group: 'Annotate', icon: 'sticky-note', doc: true, label: 'Sticky note', keys: ['N'], run: () => doc()?.setTool('note') },
+    'annot.ink': { group: 'Annotate', icon: 'pen-line', doc: true, label: 'Draw', keys: ['D'], run: () => doc()?.setTool('ink') },
     'annot.delete': {
-      label: 'Delete annotation', keys: ['Delete', 'Backspace'],
+      group: 'Annotate', icon: 'trash-2', doc: true, palette: false, label: 'Delete annotation', keys: ['Delete', 'Backspace'],
       when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
-    'edit.undo': { label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
-    'edit.redo': { label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
-    'edit.copy': { label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },
-    'edit.selectAll': { label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },
+    'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
+    'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
+    'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },
+    'edit.selectAll': { group: 'Edit', icon: 'text-select', doc: true, label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },
+
+    'app.palette': { group: 'App', icon: 'zap', palette: false, label: 'Command palette', keys: ['Ctrl+K'], global: true, run: () => actions.palette() },
+    'app.settings': { group: 'App', icon: 'settings', label: 'Settings…', keys: ['Ctrl+,'], global: true, run: () => actions.settings() },
+    'view.theme': { group: 'App', icon: 'moon', label: 'Switch light / dark', keys: ['Ctrl+Shift+L'], global: true, run: (e) => actions.toggleTheme(e) },
+    'app.shortcuts': { group: 'App', icon: 'keyboard', label: 'Keyboard shortcuts', run: () => actions.settings('shortcuts') },
+    'app.checkUpdates': { group: 'App', icon: 'refresh-cw', label: 'Check for updates…', run: () => actions.checkForUpdates() },
+    'app.setDefault': { group: 'App', icon: 'file-text', label: 'Make Vellum the default PDF app…', run: () => actions.setDefault() },
+    'app.about': { group: 'App', icon: 'info', label: 'About Vellum', run: () => actions.about() },
   };
 }
 

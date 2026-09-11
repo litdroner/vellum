@@ -38,6 +38,15 @@ export function showDialog({ title, message, content = [], buttons = [{ id: 'ok'
     backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) finish(null); });
     dialog.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+      // Keep Tab inside the dialog while it's open (it's modal).
+      if (e.key === 'Tab') {
+        const focusable = [...dialog.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])')]
+          .filter((el) => !el.disabled && el.offsetParent !== null);
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (first && e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (last && !e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
       if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) {
         const primary = buttons.find((b) => b.primary);
         if (primary) { e.preventDefault(); finish(primary.id); }

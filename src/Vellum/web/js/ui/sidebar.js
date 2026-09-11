@@ -17,6 +17,15 @@ export class Sidebar {
     this.pageActions = pageActions;
     this.mode = localStorage.getItem('vellum.sidebar.mode') === 'outline' ? 'outline' : 'thumbs';
     this.isOpen = localStorage.getItem('vellum.sidebar.open') !== '0';
+    // In a narrow window the sidebar floats over the document (so the page keeps its width) and
+    // starts closed; opening it there doesn't change the remembered wide-window choice.
+    this.narrow = matchMedia('(max-width: 820px)');
+    this.narrowOpen = false;
+    this.narrow.addEventListener('change', () => {
+      this.narrowOpen = false;
+      this.#applyOpen();
+      if (this.isShown) this.render();
+    });
 
     this.thumbsTab = h('button', { class: 'seg-btn', role: 'tab', title: 'Page thumbnails', onClick: () => this.setMode('thumbs') },
       h('span', { html: icon('layout-grid', 16) }), h('span', { text: 'Pages' }));
@@ -42,16 +51,25 @@ export class Sidebar {
     return this.#panelsFor(this.app.active)?.thumbs ?? null;
   }
 
+  /** Whether the sidebar is on screen now. */
+  get isShown() {
+    return this.narrow.matches ? this.narrowOpen : this.isOpen;
+  }
+
   toggle(force) {
-    this.isOpen = force ?? !this.isOpen;
-    localStorage.setItem('vellum.sidebar.open', this.isOpen ? '1' : '0');
+    if (this.narrow.matches) {
+      this.narrowOpen = force ?? !this.narrowOpen;
+    } else {
+      this.isOpen = force ?? !this.isOpen;
+      localStorage.setItem('vellum.sidebar.open', this.isOpen ? '1' : '0');
+    }
     this.#applyOpen();
-    if (this.isOpen) this.render();
+    if (this.isShown) this.render();
   }
 
   /** Opens the sidebar on the page thumbnails (used by page commands). */
   showPages() {
-    if (!this.isOpen) this.toggle(true);
+    if (!this.isShown) this.toggle(true);
     if (this.mode !== 'thumbs') this.setMode('thumbs');
   }
 
@@ -109,8 +127,9 @@ export class Sidebar {
   }
 
   #applyOpen() {
-    this.root.classList.toggle('collapsed', !this.isOpen);
-    this.root.setAttribute('aria-hidden', String(!this.isOpen));
+    this.root.classList.toggle('collapsed', !this.isShown);
+    this.root.classList.toggle('overlay', this.narrow.matches);
+    this.root.setAttribute('aria-hidden', String(!this.isShown));
   }
 }
 

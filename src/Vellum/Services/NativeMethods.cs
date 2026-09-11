@@ -17,6 +17,13 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+    public const int NameDisplay = 3;
+
+    /// <summary>The signed-in user's display name (e.g. "Pankaj Manhas"); fails for accounts without one.</summary>
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetUserNameExW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetUserNameEx(int nameFormat, System.Text.StringBuilder nameBuffer, ref uint size);
+
     /// <summary>Tells Explorer that file associations changed so icons and "Open with" refresh.</summary>
     [DllImport("shell32.dll")]
     public static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);

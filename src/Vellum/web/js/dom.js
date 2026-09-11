@@ -45,6 +45,34 @@ export function truncate(text, max) {
   return clean.length > max ? clean.slice(0, max - 1) + '…' : clean;
 }
 
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const UNITS = [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]];
+
+const shortDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
+
+/** "3 hours ago", "yesterday", "just now"; compact: "5m ago", "2h ago", "3d ago", "4 Sep". */
+export function timeAgo(iso, { compact = false } = {}) {
+  const seconds = (new Date(iso) - Date.now()) / 1000;
+  if (compact) {
+    const age = -seconds;
+    if (age < 60) return 'just now';
+    if (age < 3600) return `${Math.round(age / 60)}m ago`;
+    if (age < 86400) return `${Math.round(age / 3600)}h ago`;
+    if (age < 7 * 86400) return `${Math.round(age / 86400)}d ago`;
+    return shortDate.format(new Date(iso));
+  }
+  for (const [unit, size] of UNITS) {
+    if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit);
+  }
+  return 'just now';
+}
+
+/** How a shortcut is shown: "Ctrl+Shift+T", "→", "Page Down". */
+export function prettyKeys(combo) {
+  const names = { ArrowRight: '→', ArrowLeft: '←', ArrowUp: '↑', ArrowDown: '↓', PageDown: 'Page Down', PageUp: 'Page Up', Delete: 'Del' };
+  return combo.split('+').map((k) => names[k] ?? k).join('+');
+}
+
 /** Tooltip text for a command, e.g. "Zoom in (Ctrl++)". */
 export function commandTitle(command) {
   const hint = command.hint ?? command.keys?.[0];

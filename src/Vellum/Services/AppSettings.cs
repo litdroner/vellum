@@ -9,7 +9,9 @@ public sealed class AppSettings
 {
     private string _path = "";
 
-    public string Theme { get; set; } = "dark";
+    public string Theme { get; set; } = "light";
+    /// <summary>The appearance follows Windows' light/dark setting (Theme is then what it resolved to).</summary>
+    public bool FollowSystemTheme { get; set; }
     /// <summary>The theme's background colour (#rrggbb), painted behind the page while it loads.</summary>
     public string? Background { get; set; }
 

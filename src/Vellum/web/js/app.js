@@ -1,10 +1,11 @@
 import { bridge } from './bridge.js';
 import { loadPdfjs } from './pdfjs.js';
-import { h, truncate, debounce } from './dom.js';
+import { truncate, debounce } from './dom.js';
 import { DocumentView } from './document-view.js';
 import { createCommands, copySelection, copyText } from './commands.js';
 import { installShortcuts } from './shortcuts.js';
 import { Toolbar } from './ui/toolbar.js';
+import { ViewBar } from './ui/viewbar.js';
 import { Sidebar } from './ui/sidebar.js';
 import { FindBar } from './ui/findbar.js';
 import { StartScreen } from './ui/start.js';
@@ -15,13 +16,24 @@ import { openMenu } from './ui/menu.js';
 import { promptPassword, showDialog, toast } from './ui/dialogs.js';
 import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
+import { showSettings } from './ui/settings.js';
+import { CommandPalette } from './ui/palette.js';
 import { createPageActions } from './pages/actions.js';
 import { Updates } from './ui/updates.js';
+import { captureCover } from './recent-covers.js';
+import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
+
+// The composition root: creates the app and wires the features together. Features live in their own
+// modules; everything a user can do is a command (commands.js).
 
 // Diagnostics hook read by tools/cdp.mjs during development.
 window.__vellum = { errors: [] };
 window.addEventListener('error', (e) => window.__vellum.errors.push(String(e.message)));
 window.addEventListener('unhandledrejection', (e) => window.__vellum.errors.push(String(e.reason?.stack ?? e.reason)));
+
+// Appearance first, so the seeds on screen always match this version's theme definitions.
+let appearance = loadAppearance();
+applyAppearance(appearance);
 
 const libs = await loadPdfjs();
 const session = { user: '', version: '' };
@@ -64,13 +76,16 @@ class App extends EventTarget {
       this.#emit('viewready');
       if (view === this.active) view.focus();
     });
-    view.addEventListener('zoomed', () => { if (view === this.active) zoomHud.show(view.state.scale); });
+    view.addEventListener('zoomed', () => { if (view === this.active) ui.viewbar.pulseZoom(); });
     view.addEventListener('notice', (e) => toast(e.detail.message, { timeout: 6500 }));
     this.views.push(view);
     this.#emit('viewschange');
     this.activate(view);
     await view.load({ askPassword: promptPassword });
-    if (view.status === 'ready') bridge.send('recent.opened', { path: view.file.path });
+    if (view.status === 'ready') {
+      bridge.send('recent.opened', { path: view.file.path });
+      rememberCover(view);
+    }
     return view;
   }
 
@@ -97,7 +112,7 @@ class App extends EventTarget {
     this.#emit('viewschange');
   }
 
-  /** Closes a tab, asking about unsaved annotations first. Resolves false if the user cancels. */
+  /** Closes a tab, asking about unsaved changes first. Resolves false if the user cancels. */
   async requestClose(view) {
     if (view.annotations.dirty) {
       this.activate(view);
@@ -140,6 +155,17 @@ function rememberPosition(view) {
   bridge.send('recent.update', { path: view.file.path, page: s.pageNumber, scaleValue: String(s.scaleValue ?? ''), viewMode: s.viewMode });
 }
 
+/** A picture of the first page for the home screen, taken once the document has settled. */
+function rememberCover(view) {
+  view.firstRender.then(() => setTimeout(async () => {
+    if (view.status !== 'ready' || !view.pdf) return;
+    try {
+      const image = await captureCover(view.pdf);
+      bridge.send('recent.cover', { path: view.file.path, image, pages: view.pdf.numPages });
+    } catch { /* the home screen shows an icon instead */ }
+  }, 1200));
+}
+
 async function askToSave(views) {
   const one = views.length === 1;
   const choice = await showDialog({
@@ -151,7 +177,7 @@ async function askToSave(views) {
   return choice ?? 'cancel';
 }
 
-/** Saves a document's annotations into its file (or a new file for Save As). Resolves true on success. */
+/** Saves a document's annotations and page changes into its file (or a new file for Save As). Resolves true on success. */
 async function saveView(view, { saveAs = false } = {}) {
   if (view.status !== 'ready') return false;
   if (!saveAs && !view.annotations.dirty) return true;
@@ -183,39 +209,31 @@ async function saveView(view, { saveAs = false } = {}) {
   return true;
 }
 
-/** Brief "125%" readout while zooming. */
-const zoomHud = {
-  el: h('div', { class: 'zoom-hud ui', 'aria-hidden': 'true' }),
-  timer: 0,
-  show(scale) {
-    this.el.textContent = `${Math.round(scale * 100)}%`;
-    this.el.classList.add('visible');
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.el.classList.remove('visible'), 850);
-  },
-};
-
 const stage = document.getElementById('stage');
 const app = new App(stage);
+const ui = {};
 
 async function openAll(files) {
   for (const file of files) await app.open(file);
 }
 
-const currentTheme = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+// ---- appearance ----------------------------------------------------------------------------
 
-/** Switches theme with a brief colour cross-fade, remembers it, and tells the host (window frame colours). */
-function applyTheme(theme, { animate = false } = {}) {
-  const root = document.documentElement;
-  if (animate) {
-    root.classList.add('theme-switching');
-    setTimeout(() => root.classList.remove('theme-switching'), 350);
-  }
-  root.dataset.theme = theme;
-  try { localStorage.setItem('vellum.theme', theme); } catch { /* storage unavailable */ }
-  bridge.send('window.setTheme', { theme });
-  ui.titlebar?.syncTheme();
+/** Shows an appearance, remembers it, and tells the host (window frame colour, Chromium's own controls). */
+function setAppearance(patch = {}, { origin } = {}) {
+  appearance = { ...appearance, ...patch };
+  const applied = (mode) => {
+    const background = toHex(getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#edf1f0');
+    bridge.send('window.setTheme', { theme: mode, system: appearance.mode === 'system', background });
+    ui.titlebar?.syncTheme();
+    document.dispatchEvent(new Event('appearancechange'));
+  };
+  if (origin) switchAppearance(appearance, { origin, onApplied: applied });
+  else applied(applyAppearance(appearance));
 }
+onSystemModeChange(() => {
+  if (appearance.mode === 'system') setAppearance({}, { origin: originOf(ui.titlebar?.themeBtn) });
+});
 
 // Page tone: how pages themselves are coloured (separate from the app theme). Pure CSS filters,
 // so switching is instant and nothing is re-rendered.
@@ -227,6 +245,8 @@ function setPageTone(tone) {
   try { localStorage.setItem('vellum.pageTone', tone); } catch { /* storage unavailable */ }
   ui.toolbar?.update();
 }
+
+// ---- actions -------------------------------------------------------------------------------
 
 const actions = {
   cyclePageTone() {
@@ -283,8 +303,17 @@ const actions = {
   showInFolder() {
     if (app.active) bridge.request('showInFolder', { path: app.active.file.path });
   },
-  toggleTheme() {
-    applyTheme(currentTheme() === 'light' ? 'dark' : 'light', { animate: true });
+  /** Light ↔ dark. From a click the new colours grow out of the pointer; from a key, out of the button. */
+  toggleTheme(e) {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    const origin = e?.clientX ? [e.clientX, e.clientY] : originOf(ui.titlebar.themeBtn);
+    setAppearance({ mode: dark ? 'light' : 'dark' }, { origin });
+  },
+  palette() {
+    ui.palette.open();
+  },
+  settings(section) {
+    showSettings(settingsContext, typeof section === 'string' ? section : undefined);
   },
   about() {
     showAbout({ version: session.version, updates: ui.updates });
@@ -310,8 +339,21 @@ const actions = {
 
 actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
 
-const ui = {};
 const commands = createCommands(app, ui, actions);
+
+const settingsContext = {
+  appearance: () => appearance,
+  setAppearance,
+  pageTone: currentPageTone,
+  setPageTone,
+  updates: () => ui.updates,
+  version: () => session.version,
+  commands: () => commands,
+  setDefault: () => actions.setDefault(),
+};
+
+// ---- UI --------------------------------------------------------------------------------------
+
 ui.titlebar = new TitleBar(document.getElementById('titlebar'), app, { bridge, commands });
 ui.tabs = new TabStrip(ui.titlebar.tabHost, app, { onNew: () => actions.openDialog(), onClose: (view) => app.requestClose(view) });
 ui.toolbar = new Toolbar(document.getElementById('toolbar'), app, commands);
@@ -319,9 +361,10 @@ ui.toolbar.pageTones = PAGE_TONES;
 ui.toolbar.onPageTone = setPageTone;
 ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages);
 ui.findbar = new FindBar(stage, app);
+ui.viewbar = new ViewBar(stage, app, commands);
 ui.start = new StartScreen(stage, { bridge, onOpenDialog: () => actions.openDialog(), onOpenRecent: (p) => actions.openRecent(p) });
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
-stage.append(zoomHud.el);
+ui.palette = new CommandPalette({ app, commands, bridge, onOpenRecent: (p) => actions.openRecent(p) });
 installShortcuts(commands);
 
 // Files dropped on the page thumbnails are inserted there; anywhere else they open as tabs.
@@ -352,7 +395,7 @@ installDropZone({
 
 bridge.on('open-files', ({ files }) => openAll(files));
 
-// Window title (taskbar) follows the active document; a dot marks unsaved annotations.
+// Window title (taskbar) follows the active document; a dot marks unsaved changes.
 let lastTitle = '';
 const updateTitle = () => {
   const view = app.active;
@@ -398,7 +441,7 @@ bridge.on('close-requested', async () => {
 
 const menuItem = (id, iconName, extra = {}) => {
   const c = commands[id];
-  return { label: c.label, icon: iconName, shortcut: c.hint ?? c.keys?.[0], action: () => c.run(), ...extra };
+  return { label: c.label, icon: iconName ?? c.icon, shortcut: c.hint ?? c.keys?.[0], action: () => c.run(), ...extra };
 };
 
 // "More" menu in the toolbar.
@@ -409,25 +452,23 @@ ui.toolbar.onMenu = async (anchor) => {
   const recent = entries.filter((e) => e.exists && !openPaths.has(e.path.toLowerCase())).slice(0, 6);
   const ready = app.active?.status === 'ready';
   openMenu([
-    menuItem('file.open', 'folder-open'),
+    menuItem('file.open'),
     ...(recent.length ? ['-', ...recent.map((e) => ({ label: e.path.slice(e.path.lastIndexOf('\\') + 1), icon: 'clock', action: () => actions.openRecent(e.path) }))] : []),
     '-',
-    menuItem('file.save', 'save', { disabled: !ready || !app.active.annotations.dirty }),
-    menuItem('file.saveAs', 'save-all', { disabled: !ready }),
-    menuItem('file.print', 'printer', { disabled: !ready }),
-    menuItem('file.showInFolder', 'folder-open', { disabled: !app.active }),
-    menuItem('file.close', 'x', { disabled: !app.active }),
+    menuItem('file.save', null, { disabled: !ready || !app.active.annotations.dirty }),
+    menuItem('file.saveAs', null, { disabled: !ready }),
+    menuItem('file.print', null, { disabled: !ready }),
+    menuItem('file.showInFolder', null, { disabled: !app.active }),
+    menuItem('file.close', null, { disabled: !app.active }),
     '-',
-    menuItem('pages.insert', 'files', { disabled: !app.active?.canEditPages }),
-    menuItem('pages.extract', 'file-output', { disabled: !app.active?.canEditPages }),
-    menuItem('pages.split', 'scissors', { disabled: !app.active?.canEditPages }),
+    menuItem('pages.insert', null, { disabled: !app.active?.canEditPages }),
+    menuItem('pages.extract', null, { disabled: !app.active?.canEditPages }),
+    menuItem('pages.split', null, { disabled: !app.active?.canEditPages }),
     '-',
-    currentTheme() === 'light'
-      ? menuItem('view.theme', 'moon', { label: 'Dark theme' })
-      : menuItem('view.theme', 'sun', { label: 'Light theme' }),
-    menuItem('app.setDefault', 'file-text'),
-    menuItem('app.checkUpdates', 'refresh-cw'),
-    menuItem('app.about', 'info'),
+    menuItem('app.palette'),
+    menuItem('app.settings'),
+    menuItem('app.checkUpdates'),
+    menuItem('app.about'),
   ], { anchor, align: 'end' });
 };
 
@@ -435,7 +476,7 @@ ui.toolbar.onMenu = async (anchor) => {
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const view = app.active;
-  if (!view || view.status !== 'ready' || !stage.contains(e.target) || e.target.closest('.findbar, .vl-pop, .vl-note-editor')) return;
+  if (!view || view.status !== 'ready' || !stage.contains(e.target) || e.target.closest('.findbar, .viewbar, .vl-pop, .vl-note-editor')) return;
   const layer = view.annotLayer;
   const selected = view.getSelectedText();
   const hit = selected ? null : layer.hitAt(e.clientX, e.clientY);
@@ -494,13 +535,11 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 try {
-  const { files, theme, user, version, updatedFrom } = await bridge.request('ready');
+  const { files, user, name, version, updatedFrom } = await bridge.request('ready');
   session.user = user ?? '';
   session.version = version ?? '';
-  // localStorage is the page's source of truth; fall back to the host's copy if it was cleared.
-  let stored = null;
-  try { stored = localStorage.getItem('vellum.theme'); } catch { /* storage unavailable */ }
-  applyTheme(stored ? currentTheme() : (theme === 'light' ? 'light' : 'dark'));
+  setAppearance(); // tells the host the saved appearance (window frame, Chromium controls)
+  ui.start.setName(name ?? '');
   if (updatedFrom) ui.updates.announce(version);
   if (files.length) await openAll(files);
   else ui.start.refresh();
@@ -512,3 +551,5 @@ try {
 
 window.__vellum.app = app;
 window.__vellum.actions = actions;
+window.__vellum.ui = ui;
+window.__vellum.setAppearance = setAppearance;

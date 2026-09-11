@@ -67,6 +67,14 @@ public partial class MainWindow : Window
     private IntPtr Handle => new WindowInteropHelper(this).Handle;
     private bool IsDark => _settings.Theme != "light";
 
+    /// <summary>
+    /// What the page sees as prefers-color-scheme. "Follow Windows" needs the real system setting;
+    /// otherwise the app's own choice, so Chromium's scrollbars and form controls match it.
+    /// </summary>
+    private CoreWebView2PreferredColorScheme PreferredScheme => _settings.FollowSystemTheme
+        ? CoreWebView2PreferredColorScheme.Auto
+        : IsDark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
+
     /// <summary>Files handed over by a second launch (see SingleInstance).</summary>
     public void OpenFromOtherInstance(string[] paths)
     {
@@ -129,7 +137,7 @@ public partial class MainWindow : Window
         settings.AreDevToolsEnabled = false;
 #endif
         // Chromium's own UI (print dialog, scrollbars, form controls) follows the app theme.
-        core.Profile.PreferredColorScheme = IsDark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
+        core.Profile.PreferredColorScheme = PreferredScheme;
 
         _server = new AppResourceServer(core, env, Path.Combine(AppContext.BaseDirectory, "web"));
         _bridge = new BridgeHost(core);
@@ -176,7 +184,7 @@ public partial class MainWindow : Window
                 _settings.Save();
             }
             // The Windows user name signs annotations (the PDF "author" field).
-            return Done(new { files, theme = _settings.Theme, user = Environment.UserName, version, updatedFrom });
+            return Done(new { files, theme = _settings.Theme, user = Environment.UserName, name = GreetingName(), version, updatedFrom });
         });
 
         // ---- files --------------------------------------------------------
@@ -218,9 +226,19 @@ public partial class MainWindow : Window
         bridge.Register("recent.list", _ => Done(new
         {
             entries = _recent.Entries
-                .Select(e => new { e.Path, e.OpenedAt, e.Page, exists = File.Exists(e.Path) })
+                .Select(e => new { e.Path, e.OpenedAt, e.Page, e.Pages, exists = File.Exists(e.Path), cover = _recent.CoverDataUrl(e.Path) })
                 .ToArray(),
         }));
+        // The page sends a small JPEG of an open file's first page for the home screen.
+        bridge.Register("recent.cover", request =>
+        {
+            const string prefix = "data:image/jpeg;base64,";
+            var path = RequiredString(request, "path");
+            var image = RequiredString(request, "image");
+            if (!image.StartsWith(prefix, StringComparison.Ordinal) || image.Length > 600_000) throw new ArgumentException("Invalid cover image.");
+            _recent.SetCover(path, Convert.FromBase64String(image[prefix.Length..]), OptionalInt(request, "pages"));
+            return Done();
+        });
         bridge.Register("recent.opened", request =>
         {
             var path = RequiredString(request, "path");
@@ -381,12 +399,12 @@ public partial class MainWindow : Window
         bridge.Register("window.setTheme", request =>
         {
             _settings.Theme = RequiredString(request, "theme") == "light" ? "light" : "dark";
+            _settings.FollowSystemTheme = request.Payload.TryGetProperty("system", out var system) && system.ValueKind == JsonValueKind.True;
             _settings.Background = OptionalString(request, "background") is { } background && HexColor.IsMatch(background) ? background : null;
             _settings.Save();
             ApplyThemeColors();
             WindowEffects.ApplyTheme(Handle, IsDark);
-            Web.CoreWebView2.Profile.PreferredColorScheme =
-                IsDark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
+            Web.CoreWebView2.Profile.PreferredColorScheme = PreferredScheme;
             return Done();
         });
 
@@ -397,7 +415,8 @@ public partial class MainWindow : Window
 
     private void ApplyThemeColors()
     {
-        var (r, g, b) = IsDark ? ((byte)0x1D, (byte)0x1A, (byte)0x17) : ((byte)0xEC, (byte)0xE6, (byte)0xDB);
+        // Until the page reports its theme: Mist, dark (obsidian) or light.
+        var (r, g, b) = IsDark ? ((byte)0x12, (byte)0x16, (byte)0x17) : ((byte)0xED, (byte)0xF1, (byte)0xF0);
         // The page reports its theme's own background, so a coloured theme doesn't flash grey on start.
         if (_settings.Background is { } hex && HexColor.IsMatch(hex))
         {
@@ -472,6 +491,20 @@ public partial class MainWindow : Window
     }
 
     private static Task<object?> Done(object? result = null) => Task.FromResult(result);
+
+    /// <summary>First name for the home screen's greeting, from the account's display name; empty if there is none.</summary>
+    private static string GreetingName()
+    {
+        try
+        {
+            uint size = 256;
+            var buffer = new System.Text.StringBuilder((int)size);
+            if (NativeMethods.GetUserNameEx(NativeMethods.NameDisplay, buffer, ref size))
+                return buffer.ToString().Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+        }
+        catch (Exception) { /* no display name: greet without one */ }
+        return "";
+    }
 
     /// <summary>A file name in `folder` that doesn't exist yet: "name.pdf", then "name (2).pdf", …</summary>
     private static string FreePath(string folder, string requested, HashSet<string> taken)

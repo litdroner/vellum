@@ -157,6 +157,7 @@ export class ThumbnailPanel {
       const entry = plan?.[n - 1];
       const id = entry?.id ?? `page-${n}`;
       const frame = h('div', { class: 'thumb-frame', style: { aspectRatio: ratio } });
+      frame.style.setProperty('--r', String(vp.width / vp.height)); // caps very tall pages (see CSS)
       const el = h('div', { class: 'thumb', role: 'option', title: `Page ${n}`, dataset: { page: n, id } },
         frame, h('span', { class: 'thumb-num', text: String(n) }));
       const baseKey = `${id}:${entry?.rotate ?? 0}`;
@@ -164,6 +165,7 @@ export class ThumbnailPanel {
       const cached = this.cache.get(item.key);
       if (cached) {
         frame.style.aspectRatio = cached.ratio;
+        frame.style.setProperty('--r', cached.r);
         frame.replaceChildren(cached.canvas);
         item.rendered = true;
       }
@@ -229,10 +231,12 @@ export class ThumbnailPanel {
     if (this.#abort.signal.aborted) return;
     this.view.paintAnnotations(canvas.getContext('2d'), item.n, viewport);
     const ratio = `${viewport.width} / ${viewport.height}`;
+    const r = String(viewport.width / viewport.height);
     item.frame.style.aspectRatio = ratio;
+    item.frame.style.setProperty('--r', r);
     item.frame.replaceChildren(canvas);
     item.rendered = true;
-    this.cache.set(item.key, { canvas, ratio });
+    this.cache.set(item.key, { canvas, ratio, r });
     if (this.cache.size > CACHE_LIMIT) this.cache.delete(this.cache.keys().next().value);
   }
 
