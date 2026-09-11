@@ -568,6 +568,58 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ].join('\n'), { Font: { F0: one.ref, F1: cjk } });
   });
 
+  // 18. A tagged PDF: a structure tree over marked content (MCIDs), and an artifact.
+  await build('tagged', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const ctx = b.ctx;
+    const page = b.page(PageSizes.Letter, [
+      `/H1 <</MCID 0>> BDC ${text('F1', 18, 72, 700, 'A tagged heading')} EMC`,
+      `/P <</MCID 1>> BDC ${text('F1', 12, 72, 670, 'A tagged paragraph of text.')} EMC`,
+      `/Artifact BMC ${text('F1', 9, 72, 40, 'Page 1')} EMC`,
+    ].join('\n'), { Font: { F1 } });
+    const root = ctx.register(ctx.obj({ Type: 'StructTreeRoot' }));
+    const document = ctx.register(ctx.obj({ Type: 'StructElem', S: 'Document', P: root }));
+    const heading = ctx.register(ctx.obj({ Type: 'StructElem', S: 'H1', P: document, Pg: page.ref, K: 0 }));
+    const paragraph = ctx.register(ctx.obj({ Type: 'StructElem', S: 'P', P: document, Pg: page.ref, K: 1 }));
+    ctx.lookup(document).set(PDFName.of('K'), ctx.obj([heading, paragraph]));
+    ctx.lookup(root).set(PDFName.of('K'), document);
+    ctx.lookup(root).set(PDFName.of('ParentTree'), ctx.obj({ Nums: [0, ctx.obj([heading, paragraph])] }));
+    page.node.set(PDFName.of('StructParents'), ctx.obj(0));
+    b.doc.catalog.set(PDFName.of('StructTreeRoot'), root);
+    b.doc.catalog.set(PDFName.of('MarkInfo'), ctx.obj({ Marked: true }));
+  });
+
+  // 19. A PDF/A-2B claim (XMP metadata) over text in an embedded subset font.
+  await build('pdfa', async (b) => {
+    const LS = b.trueTypeSimple('LiberationSans-Regular.ttf', { subsetTag: 'PDFAAA' });
+    b.page(PageSizes.Letter, text('LS', 14, 72, 700, 'Archived text in an embedded font'), { Font: { LS } });
+    const xmp = [
+      '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>',
+      '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
+      '<rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">',
+      '<pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>',
+      '</rdf:Description></rdf:RDF></x:xmpmeta>', '<?xpacket end="w"?>',
+    ].join('\n');
+    b.doc.catalog.set(PDFName.of('Metadata'), b.ctx.register(b.ctx.stream(xmp, { Type: 'Metadata', Subtype: 'XML' })));
+  });
+
+  // 20–21. Signed PDFs — the SHAPE of a signature (not a cryptographically valid one): a signature
+  // field whose value has /ByteRange and /Contents; with and without the SignaturesExist flag.
+  for (const [name, flags] of [['signed', 3], ['signed-noflags', null]]) {
+    await build(name, async (b) => {
+      const F1 = b.std(StandardFonts.Helvetica);
+      const ctx = b.ctx;
+      const page = b.page(PageSizes.Letter, text('F1', 14, 72, 700, 'A signed agreement'), { Font: { F1 } });
+      const value = ctx.register(ctx.obj({
+        Type: 'Sig', Filter: 'Adobe.PPKLite', SubFilter: 'adbe.pkcs7.detached',
+        ByteRange: [0, 100, 200, 100], Contents: PDFHexString.of('00'.repeat(64)), M: PDFString.fromDate(new Date(0)),
+      }));
+      const widget = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Widget', FT: 'Sig', T: PDFString.of('Signature1'), V: value, Rect: [72, 600, 272, 640], F: 132, P: page.ref }));
+      page.node.set(PDFName.of('Annots'), ctx.obj([widget]));
+      b.doc.catalog.set(PDFName.of('AcroForm'), ctx.obj(flags === null ? { Fields: [widget] } : { Fields: [widget], SigFlags: flags }));
+    });
+  }
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

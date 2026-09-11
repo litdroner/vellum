@@ -12,7 +12,6 @@ export class TextEditing {
   #view;
   #sources = new Map(); // src → Promise<PdfSource>
   #pages = new Map(); // `${src}:${index}` → verified analysis
-  #signed = null;
 
   constructor(view) {
     this.#view = view;
@@ -70,9 +69,15 @@ export class TextEditing {
       return Boolean(item.edit);
     }
     const source = await this.#source(entry.src);
-    const record = planTextEdit({ run: item.run, text: next, entry: entry.id, glyphs: source.glyphs, id: item.edit?.id });
+    const record = planTextEdit({ run: item.run, text: next, entry: entry.id, glyphs: source.glyphs, id: item.edit?.id, ...(await this.#constraints()) });
     store.applyEdit(item.edit, record);
     return true;
+  }
+
+  /** What the whole document requires of an edit (PDF/A: embedded fonts only). */
+  async #constraints() {
+    const profile = await this.#view.profile().catch(() => null);
+    return { embeddedFontsOnly: Boolean(profile?.pdfa) };
   }
 
   /**
@@ -84,8 +89,9 @@ export class TextEditing {
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) return { ok: false, message: 'That text isn’t on this page any more.' };
     const source = await this.#source(entry.src);
+    const constraints = await this.#constraints();
     try {
-      const record = planTextEdit({ run: item.run, text, entry: entry.id, glyphs: source.glyphs });
+      const record = planTextEdit({ run: item.run, text, entry: entry.id, glyphs: source.glyphs, ...constraints });
       return { ok: true, mode: record.encoding.mode, font: record.encoding.font ?? null, missing: record.encoding.missing ?? [] };
     } catch (err) {
       if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };
@@ -93,16 +99,9 @@ export class TextEditing {
     }
   }
 
-  /** True when the file is digitally signed (any change invalidates the signature). */
+  /** True when the file is digitally signed (any change invalidates the signature). See DocumentView.profile(). */
   signed() {
-    this.#signed ??= (async () => {
-      const source = await this.#source('base');
-      const { PDFName, PDFDict, PDFNumber } = source.lib;
-      const form = source.doc.catalog.lookup(PDFName.of('AcroForm'));
-      const flags = form instanceof PDFDict ? form.lookup(PDFName.of('SigFlags')) : null;
-      return flags instanceof PDFNumber && (flags.asNumber() & 1) === 1; // SignaturesExist
-    })().catch(() => false);
-    return this.#signed;
+    return this.#view.profile().then((p) => p.signed, () => false);
   }
 
   async #analysis(entry, pageNumber) {

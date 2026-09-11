@@ -4,7 +4,8 @@ import { icon } from './icons.js';
 import { documentAssetOptions } from './pdfjs.js';
 import { AnnotationStore } from './annotations/model.js';
 import { AnnotationLayer } from './annotations/layer.js';
-import { extractAnnotations, composeDocument, countPages } from './annotations/persist.js';
+import { extractAnnotations, composeDocument, countPages, loadPdfLib } from './annotations/persist.js';
+import { inspectDocument } from './editing/source.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
 import { newId } from './annotations/model.js';
 import {
@@ -73,6 +74,8 @@ export class DocumentView extends EventTarget {
   #resolveFirstRender;
   /** Bytes of the opened file, fetched once when first needed; page plans refer to its pages. */
   #base = null;
+  /** What kind of file it is (see profile()). */
+  #profile = null;
   /** The plan the pages on screen were built from (the store's plan runs ahead while rebuilding). */
   #shownPlan = null;
   #rebuildQueued = false;
@@ -144,6 +147,20 @@ export class DocumentView extends EventTarget {
 
   /** Bytes of the file as it is on disk (read once). */
   baseBytes() { return this.#baseBytes(); }
+
+  /**
+   * What kind of file this is, for decisions about the whole document:
+   * { encrypted, signed, certified, tagged, pdfa } (see editing/source.js inspectDocument). Read once
+   * from the original file, which isn't kept in memory just for this.
+   */
+  profile() {
+    this.#profile ??= (async () => inspectDocument(await loadPdfLib(), this.#base ?? (await this.#readFile())))()
+      .catch((err) => {
+        this.#profile = null; // e.g. the file was moved: try again next time
+        throw err;
+      });
+    return this.#profile;
+  }
 
   /** Changes whenever a page's content edits change (for caches such as thumbnails). */
   editVersion(entryId) { return editSignature(this.annotations.edits, entryId); }
@@ -539,12 +556,14 @@ export class DocumentView extends EventTarget {
   }
 
   async #baseBytes() {
-    if (!this.#base) {
-      const response = await fetch(this.file.url);
-      if (!response.ok) throw new Error('The original file couldn’t be read. It may have been moved or deleted.');
-      this.#base = new Uint8Array(await response.arrayBuffer());
-    }
+    this.#base ??= await this.#readFile();
     return this.#base;
+  }
+
+  async #readFile() {
+    const response = await fetch(this.file.url);
+    if (!response.ok) throw new Error('The original file couldn’t be read. It may have been moved or deleted.');
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /**

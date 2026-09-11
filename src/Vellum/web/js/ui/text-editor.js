@@ -64,6 +64,7 @@ export class TextEditor {
   #previewTimer = 0;
   #announcer;
   #warnedSigned = false;
+  #warnedTagged = false;
 
   constructor(view, { notify }) {
     this.#view = view;
@@ -396,6 +397,16 @@ export class TextEditor {
     input.focus({ preventScroll: true });
     input.select();
     this.#preview();
+    if (item.run.tagged) this.#warnTagged();
+  }
+
+  /** Tagged PDFs (an accessibility structure): said once, the first time tagged text is opened. */
+  async #warnTagged() {
+    if (this.#warnedTagged) return;
+    const profile = await this.#view.profile().catch(() => null);
+    if (!profile?.tagged || this.#warnedTagged) return;
+    this.#warnedTagged = true;
+    this.#notify('This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
   }
 
   async #commit() {

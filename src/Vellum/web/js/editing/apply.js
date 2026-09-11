@@ -9,7 +9,7 @@
 // nothing is written (EditError) rather than guessing.
 
 import { PdfName, PdfString } from './content/lexer.js';
-import { PdfSource } from './source.js';
+import { PdfSource, pdfaClaim } from './source.js';
 import { analyzePage } from './runs.js';
 import { EditError } from './edits.js';
 
@@ -25,6 +25,10 @@ export function applyTextEdits({ lib, doc, pages, plan, edits }) {
     byEntry.set(e.entry, list);
   }
   if (!byEntry.size) return { changed: 0 };
+  // PDF/A needs every font embedded; the standard fonts Vellum substitutes aren't.
+  if (edits.some((e) => e.kind === 'text' && e.encoding?.mode === 'standard') && pdfaClaim(lib, doc)) {
+    throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; a change that uses a substitute font would break it, so nothing was changed.');
+  }
   const source = new PdfSource(lib, doc);
   let changed = 0;
   plan.forEach((entry, i) => {

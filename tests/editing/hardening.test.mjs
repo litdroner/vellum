@@ -4,10 +4,11 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { analyzeFile, describeRuns, engine, webModule } from './harness.mjs';
+import { analyzeFile, describeRuns, engine, loadPdfLib, webModule } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { planTextEdit, EditError } = await engine('edits.js');
+const { inspectDocument } = await engine('source.js');
 const { composeDocument } = await webModule('annotations/persist.js');
 const { identityPlan } = await webModule('pages/plan.js');
 
@@ -62,4 +63,47 @@ test('edited transparent text keeps its opacity and blend mode', async () => {
   assert.deepEqual([multiplied.editable, multiplied.first.blend], [true, 'Multiply']);
   // The masked line is untouched and still refused.
   assert.deepEqual(describeRuns(reopened.result.pages[0]).find((r) => r.text === 'Masked text').reasons, ['soft-mask']);
+});
+
+// ---- document profile: signatures, tags, PDF/A ----------------------------------------------
+
+test('document profile: signed, tagged and PDF/A files are recognised; ordinary and protected files too', async () => {
+  const lib = await loadPdfLib();
+  const profile = (name) => inspectDocument(lib, read(name));
+  assert.deepEqual(await profile('simple'), { encrypted: false, signed: false, certified: false, tagged: false, pdfa: null });
+  assert.deepEqual(await profile('annotations'), { encrypted: false, signed: false, certified: false, tagged: false, pdfa: null }, 'a form without signatures');
+  assert.equal((await profile('signed')).signed, true, 'signature value and SignaturesExist flag');
+  assert.equal((await profile('signed-noflags')).signed, true, 'a signature value without the SignaturesExist flag');
+  assert.equal((await profile('tagged')).tagged, true);
+  assert.deepEqual((await profile('pdfa')).pdfa, { part: 2, conformance: 'B' });
+  assert.equal((await profile('encrypted-open')).encrypted, true);
+  // XMP written with attributes instead of elements.
+  const doc = await lib.PDFDocument.create();
+  doc.addPage();
+  const xmp = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" pdfaid:part="1" pdfaid:conformance="a"/></rdf:RDF></x:xmpmeta>';
+  doc.catalog.set(lib.PDFName.of('Metadata'), doc.context.register(doc.context.stream(xmp, { Type: 'Metadata', Subtype: 'XML' })));
+  assert.deepEqual((await inspectDocument(lib, await doc.save())).pdfa, { part: 1, conformance: 'A' });
+});
+
+test('tagged PDFs: tagged text is marked (so the editor can warn), artifacts are not', async () => {
+  const d = await open(read('tagged'));
+  assert.deepEqual([runOf(d, 0, 'A tagged heading').tagged, runOf(d, 0, 'A tagged heading').editable], [true, true]);
+  assert.equal(runOf(d, 0, 'A tagged paragraph of text.').tagged, true);
+  assert.deepEqual([runOf(d, 0, 'Page 1').tagged, runOf(d, 0, 'Page 1').first.artifact], [false, true]);
+});
+
+test('PDF/A: a change that needs a substitute (non-embedded) font is refused; one in the embedded font is fine', async () => {
+  const d = await open(read('pdfa'));
+  const from = 'Archived text in an embedded font';
+  const ok = plan(d, 0, from, 'Archived text', { embeddedFontsOnly: true });
+  assert.equal(ok.encoding.mode, 'font');
+  assert.throws(() => plan(d, 0, from, 'Quartz', { embeddedFontsOnly: true }), (e) => e instanceof EditError && e.kind === 'pdfa' && /PDF\/A/.test(e.message));
+  // Without the PDF/A constraint the same change would use a standard font…
+  const substitute = plan(d, 0, from, 'Quartz');
+  assert.equal(substitute.encoding.mode, 'standard');
+  // …and the writer refuses such a record for a PDF/A file too: nothing is written.
+  await assert.rejects(compose(d, [substitute]), (e) => e instanceof EditError && e.kind === 'pdfa');
+  // An edit in the embedded font saves, and the PDF/A metadata is kept.
+  const saved = await compose(d, [ok]);
+  assert.deepEqual((await inspectDocument(await loadPdfLib(), saved)).pdfa, { part: 2, conformance: 'B' });
 });

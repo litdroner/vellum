@@ -17,6 +17,79 @@ export class SourceError extends Error {
 
 let glyphData = null;
 
+/**
+ * What kind of document a file is, for decisions about the whole file (read once):
+ *   encrypted  protected: Vellum can't rewrite it (the rest is then unknown and false)
+ *   signed     it carries a digital signature: a signature value (/ByteRange + /Contents), or the
+ *              AcroForm's SignaturesExist flag. Saving any change invalidates it.
+ *   certified  a certification signature says which changes the author allows (/Perms /DocMDP)
+ *   tagged     it has an accessibility structure (/MarkInfo /Marked, or a /StructTreeRoot)
+ *   pdfa       { part, conformance } when its XMP metadata claims PDF/A, else null
+ */
+export async function inspectDocument(lib, bytes) {
+  let doc;
+  try {
+    doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
+  } catch (err) {
+    if (/encrypt/i.test(String(err?.message ?? err))) return { encrypted: true, signed: false, certified: false, tagged: false, pdfa: null };
+    throw err;
+  }
+  return readProfile(lib, doc);
+}
+
+export function readProfile(lib, doc) {
+  const { PDFName, PDFDict, PDFNumber, PDFBool } = lib;
+  const catalog = doc.catalog;
+  const lookup = (v) => (v ? doc.context.lookup(v) : undefined);
+  const form = lookup(catalog.get(PDFName.of('AcroForm')));
+  const flags = form instanceof PDFDict ? lookup(form.get(PDFName.of('SigFlags'))) : null;
+  let signed = flags instanceof PDFNumber && (flags.asNumber() & 1) === 1;
+  if (!signed) {
+    for (const [, obj] of doc.context.enumerateIndirectObjects()) {
+      if (obj instanceof PDFDict && isSignatureValue(lib, obj)) {
+        signed = true;
+        break;
+      }
+    }
+  }
+  const perms = lookup(catalog.get(PDFName.of('Perms')));
+  const markInfo = lookup(catalog.get(PDFName.of('MarkInfo')));
+  const marked = markInfo instanceof PDFDict ? lookup(markInfo.get(PDFName.of('Marked'))) : null;
+  return {
+    encrypted: false,
+    signed,
+    certified: perms instanceof PDFDict && perms.has(PDFName.of('DocMDP')),
+    tagged: (marked instanceof PDFBool && marked.asBoolean()) || catalog.has(PDFName.of('StructTreeRoot')),
+    pdfa: pdfaClaim(lib, doc),
+  };
+}
+
+/** A signature value dictionary: the byte range it signs and the signature itself. */
+function isSignatureValue({ PDFName, PDFArray, PDFString, PDFHexString }, dict) {
+  const range = dict.get(PDFName.of('ByteRange'));
+  const contents = dict.get(PDFName.of('Contents'));
+  return range instanceof PDFArray && (contents instanceof PDFHexString || contents instanceof PDFString);
+}
+
+/** { part, conformance } when the document's XMP metadata claims PDF/A conformance, else null. */
+export function pdfaClaim(lib, doc) {
+  const { PDFName, PDFRawStream, PDFStream } = lib;
+  const meta = doc.context.lookup(doc.catalog.get(PDFName.of('Metadata')));
+  if (!(meta instanceof PDFStream)) return null;
+  let xml;
+  try {
+    const bytes = meta instanceof PDFRawStream ? lib.decodePDFRawStream(meta).decode() : meta.getUnencodedContents();
+    xml = new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+  // Written either as elements (<pdfaid:part>2</pdfaid:part>) or as attributes (pdfaid:part="2").
+  const field = (name) => new RegExp(`pdfaid:${name}\\s*(?:=\\s*["']|>)\\s*([^"'<\\s]+)`, 'i').exec(xml)?.[1] ?? null;
+  const part = Number(field('part'));
+  if (!Number.isInteger(part) || part < 1) return null;
+  return { part, conformance: field('conformance')?.toUpperCase() ?? null };
+}
+
 /** Opens PDF bytes for analysis. Encrypted files are refused (pdf-lib can't decrypt them). */
 export async function openSource(lib, bytes) {
   let doc;
