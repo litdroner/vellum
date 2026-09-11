@@ -15,8 +15,21 @@ namespace Vellum;
 
 public partial class MainWindow : Window
 {
-    private static readonly string DataFolder = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Vellum");
+    private static readonly string DataFolder = ResolveDataFolder();
+
+    /// <summary>
+    /// Where settings, recent files and annotations for protected PDFs live: %LOCALAPPDATA%\Vellum.
+    /// Debug builds can be pointed at another folder (VELLUM_DATA_DIR) so automated tests never touch
+    /// a person's own settings, recent files or WebView2 profile. Release builds ignore it.
+    /// </summary>
+    private static string ResolveDataFolder()
+    {
+#if DEBUG
+        var test = Environment.GetEnvironmentVariable("VELLUM_DATA_DIR");
+        if (!string.IsNullOrWhiteSpace(test) && Path.IsPathFullyQualified(test)) return test;
+#endif
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Vellum");
+    }
 
     private readonly List<string> _pendingFiles;
     private readonly RecentFiles _recent = new(DataFolder);

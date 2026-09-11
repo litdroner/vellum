@@ -120,12 +120,23 @@ bridge partial. Nothing else should need to change; if it does, that coupling is
 
 ## Testing
 
-End-to-end checks drive the real app over DevTools (`tools/cdp-client.mjs`) on copies of PDFs.
+Two suites, both on fixtures generated from the vendored libraries and fonts — never on anyone's own
+files.
+
+**The engine, in Node**: `node --test "tests/editing/*.test.mjs"` covers the text-editing engine and
+PDF writing, against the app's own pdf.js build and pdf-lib. Fixtures are generated into a temp
+folder (`tests/editing/fixtures.mjs`); saved files are re-read independently (pdf-lib for structure,
+pdf.js for what's drawn). `VELLUM_TEST_PDFS="a.pdf;b.pdf"` adds real files, read only.
+
+**The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
+build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in
+`tests/e2e/suites`: `text-editor`, `regression` (annotations, search, rotation), `editing-store`,
+`phase0` (signed, tagged and PDF/A documents, soft masks, layers, thumbnails), and — only when named
+— `performance` (`VELLUM_PERF_PDF=<file>` measures a real document; it is copied first, never
+changed). It stops if Vellum is already open (it's single-instance, so a test would drive that copy)
+and runs the app with a throwaway data folder: `VELLUM_DATA_DIR`, honoured by Debug builds only, so a
+person's settings, recent files and WebView2 profile are never touched. Everything lands in a temp
+folder, printed as the run starts.
+
 Updates are tested with a loopback release feed (`VELLUM_UPDATE_FEED`) and a test installer with its
 own AppId, never against a real install.
-
-The text-editing engine and PDF writing are tested in Node, against the app's own pdf.js build and
-pdf-lib: `node --test "tests/editing/*.test.mjs"`. Fixtures are generated into a temp folder from the
-vendored libraries and fonts (`tests/editing/fixtures.mjs`); saved files are re-read independently
-(pdf-lib for structure, pdf.js for what's drawn). `VELLUM_TEST_PDFS="a.pdf;b.pdf"` adds real files,
-read only.

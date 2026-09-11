@@ -21,6 +21,7 @@ node tools\cdp.mjs eval "expr"               # evaluate in the running page (als
 tools\publish.ps1                            # Release build + dist\Vellum-Setup.exe (Inno Setup 6)
 tools\release.ps1 -NotesFile notes.md        # GitHub release; ONLY when the user asks
 node --test "tests/editing/*.test.mjs"       # text-editing engine + PDF writing tests (Node, no app)
+node tests\e2e\run.mjs                       # the app itself over DevTools (Debug build; close Vellum first)
 ```
 
 `tools/cdp-client.mjs` drives the app (keys, mouse, drag, screenshots) for end-to-end checks.
