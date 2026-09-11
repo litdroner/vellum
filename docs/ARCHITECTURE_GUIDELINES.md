@@ -48,6 +48,62 @@ never imports UI modules. The host knows nothing about the UI beyond named bridg
   Group related handlers in their own `MainWindow.<Feature>.cs` partial.
 - Rendering the UI never re-renders PDF pages: themes and page colours are CSS only.
 
+## Offline and privacy
+
+Vellum is local-first: PDF documents are processed locally and Vellum does not upload document data.
+Vellum's own network activity is limited to the GitHub update service, while the Microsoft WebView2
+runtime may make independent Microsoft connections.
+
+User-facing wording (use this, or wording with exactly the same meaning):
+
+> Vellum processes your documents entirely on your computer: no document, file name or document content
+> leaves your PC. Vellum itself goes online only to check for updates, from GitHub. Its display engine,
+> Microsoft Edge WebView2 (part of Windows), makes its own connections to Microsoft, such as SmartScreen
+> security checks and component updates, as it does in every app that uses it.
+
+Never claim that Vellum makes no network traffic at all, that GitHub is the only traffic of the running
+app (its WebView2 runtime included), or that WebView2 is offline. The evidence is in
+`docs/WEBVIEW2_NETWORK_AUDIT.md`: a runtime measurement of what Vellum and WebView2 do on the network.
+
+- Every PDF feature runs locally and keeps working with Wi-Fi and Ethernet off: reading, rendering,
+  editing, annotations, pages, merging and splitting, and later conversion, compression, OCR,
+  metadata, security, redaction, forms, signing, batch processing and workflows.
+- No cloud processing, document uploads, cloud storage, online AI APIs, API keys, cloud sign-in,
+  telemetry, analytics or third-party SaaS. Libraries and fonts are vendored (`web/vendor`,
+  `web/fonts`); the page loads nothing from the internet (pdf.js's worker, CMaps, standard fonts,
+  wasm and ICC profiles all come from `https://app.vellum`, see `pdfjs.js`).
+- The page can't leave the app: navigating anywhere else is cancelled, and http(s)/mailto links in a
+  PDF open in the user's browser (`NavigationStarting` in MainWindow).
+- Vellum's only network code is the updater (`Services/Updater.cs`): it asks GitHub for the latest
+  release and downloads the installer, sending no document data (just the version, in the User-Agent).
+  The daily check is a setting ("Check once a day") and fails quietly; checking by hand and "What's
+  new" after an update also ask GitHub.
+- The WebView2 runtime connects to Microsoft on its own whatever Vellum does: SmartScreen checks
+  Vellum's start page, plus Edge configuration, component updates (downloaded through Windows BITS) and
+  other Microsoft services. It also looks up the hostname `app.vellum` in DNS at launch. None of this carries
+  document data, and Vellum works without it. It stays as it is: SmartScreen stays on, no unsupported
+  browser switches, no Windows settings changed. Re-run the audit after changing the WebView2 setup, the
+  updater, or anything else that could touch the network.
+- A future feature that needs the internet must be opt-in, behind an explicit setting the user
+  controls, must say plainly what leaves the device, and must leave everything else working without
+  it. No hidden requests, and never for PDF processing.
+
+## Vellum Intelligence (future)
+
+AI isn't in Vellum yet, and no AI UI may appear until a real provider exists. When it's added, it
+goes behind one provider abstraction, so choosing local, cloud or hybrid stays a separate decision:
+
+```
+AIProvider              the interface features call (what it can do, whether it's available, requests)
+├── LocalAIProvider     models running on the user's own hardware
+└── CloudAIProvider     future: interface only, not implemented; no API keys, no cloud sign-in
+```
+
+- Features ask for the provider and work normally when there is none: their AI entry points simply
+  don't appear.
+- No document is sent to an external service. A cloud provider, if ever chosen, is its own opt-in
+  decision and follows "Offline and privacy" above.
+
 ## Adding a feature
 
 1. Put its logic in its own module (`js/<feature>/` or `js/ui/<feature>.js`).

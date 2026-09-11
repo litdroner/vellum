@@ -54,7 +54,7 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 | Feature | Status | Where |
 |---|---|---|
 | Custom title bar, single instance, file association, jump list | done | C# host |
-| In-app updates from GitHub releases (verified by SHA-256) | done | Services/Updater.cs, ui/updates.js |
+| In-app updates from GitHub releases (verified by SHA-256); Vellum's only network feature, daily check can be switched off (WebView2's own traffic: WEBVIEW2_NETWORK_AUDIT.md) | done | Services/Updater.cs, ui/updates.js |
 | Colour themes (7) in Light / Obsidian dark / System, custom accent | done | themes.js, app.css |
 | Settings window (Appearance, Reading, Updates, Shortcuts, About) | done | ui/settings.js |
 | Command palette (Ctrl+K): all commands + recent files | done | ui/palette.js |
@@ -72,5 +72,12 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 - Password protection: add / change / remove (with the correct password).
 - OCR, compare, compress, metadata editing, text/image extraction, batch processing.
 - Autosave and crash recovery of unsaved edits.
-- Vellum Intelligence (AI). No AI UI until there is a real, configured backend.
-- Cloud, shared and starred files.
+- Vellum Intelligence (AI): local-first, behind the `AIProvider` abstraction (ARCHITECTURE_GUIDELINES.md).
+  No AI UI until there is a real provider; no cloud provider, API keys or uploads.
+- Starred files (kept on this computer).
+
+## Out of scope while Vellum is local-first
+
+Cloud processing, document uploads, cloud storage and shared files, online AI APIs, API keys and cloud
+sign-in, telemetry, analytics, mandatory internet connections, third-party SaaS. See "Offline and
+privacy" in ARCHITECTURE_GUIDELINES.md.

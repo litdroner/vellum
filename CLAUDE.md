@@ -11,6 +11,7 @@ Continue the existing code. Never start over, never add a second system for some
 - `docs/FEATURE_REGISTRY.md` — what exists, what is partial, what is planned (and must not be faked)
 - `docs/ARCHITECTURE_GUIDELINES.md` — layers, feature boundaries, how to add or remove a feature
 - `docs/DESIGN_SYSTEM.md` — themes, materials, tokens, components, motion
+- `docs/WEBVIEW2_NETWORK_AUDIT.md` — measured network activity of Vellum and its WebView2 runtime
 
 ## Build, run, test
 
@@ -32,4 +33,10 @@ node --test "tests/editing/*.test.mjs"       # text-editing engine + PDF writing
 - Do not commit, push or publish a release unless the user asks. Never rewrite history.
 - Password-protected PDFs: open with the correct password only. No cracking, bypass or recovery.
 - Don't fake features (AI, cloud, signatures, OCR…): only real functionality gets UI.
+- Local-first: every PDF feature runs locally and works with no network; document data is never
+  uploaded. No cloud processing, cloud storage, online AI, API keys, telemetry or analytics. Vellum's
+  own network activity is only the GitHub updater. The WebView2 runtime makes its own Microsoft
+  connections: leave it as it is (SmartScreen on, no unsupported switches, no Windows settings changed).
+  Never claim zero traffic or an offline WebView2. Use the privacy wording in "Offline and privacy" in
+  ARCHITECTURE_GUIDELINES.md. AI, when it comes, goes behind `AIProvider` (local first; cloud interface only).
 - Keep the PDF the visual focus and the UI light: see the performance rules in DESIGN_SYSTEM.md.
