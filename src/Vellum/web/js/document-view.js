@@ -10,6 +10,8 @@ import { newId } from './annotations/model.js';
 import {
   identityPlan, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, followPages,
 } from './pages/plan.js';
+import { followEdits, editSignature } from './editing/edits.js';
+import { TextEditing } from './editing/session.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
 // (page, zoom, rotation, layout, search) and reports changes with a 'change' event.
@@ -87,8 +89,10 @@ export class DocumentView extends EventTarget {
     this.#libs = libs;
     this.firstRender = new Promise((resolve) => { this.#resolveFirstRender = resolve; });
     this.annotations = new AnnotationStore({ author });
+    /** Finding and changing text on the pages (engine in editing/, no UI). */
+    this.textEditing = new TextEditing(this);
     this.annotations.addEventListener('change', (e) => {
-      if (e.detail.plan) this.#rebuild();
+      if (e.detail.plan || e.detail.edits) this.#rebuild();
       this.#changed();
       const fileKey = this.docKey ?? this.file.path;
       if (this.encrypted && this.annotations.dirty && !warnedProtected.has(fileKey)) {
@@ -134,6 +138,15 @@ export class DocumentView extends EventTarget {
 
   /** The page plan the pages currently on screen were built from. */
   get shownPlan() { return this.#shownPlan; }
+
+  /** The pdf.js library this view renders with. */
+  get pdfjsLib() { return this.#libs.pdfjsLib; }
+
+  /** Bytes of the file as it is on disk (read once). */
+  baseBytes() { return this.#baseBytes(); }
+
+  /** Changes whenever a page's content edits change (for caches such as thumbnails). */
+  editVersion(entryId) { return editSignature(this.annotations.edits, entryId); }
 
   get signal() { return this.#abort.signal; }
 
@@ -435,7 +448,8 @@ export class DocumentView extends EventTarget {
       return;
     }
     const bytes = await composeDocument({
-      base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources, annotations: this.annotations.all,
+      base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources,
+      annotations: this.annotations.all, edits: this.annotations.edits,
     });
     await this.writeFile(target, bytes);
     this.annotations.markSaved();
@@ -465,7 +479,10 @@ export class DocumentView extends EventTarget {
       this.#notice('A PDF needs at least one page, so the last page can’t be deleted.');
       return false;
     }
-    this.annotations.applyPlan(plan, followPages(this.annotations.all, before, plan, copies));
+    this.annotations.applyPlan(plan, [
+      ...followPages(this.annotations.all, before, plan, copies),
+      ...followEdits(this.annotations.edits, plan, copies),
+    ]);
     return true;
   }
 
@@ -518,7 +535,7 @@ export class DocumentView extends EventTarget {
       const page = position.get(current[a.page - 1]?.id);
       if (page) annotations.push({ ...a, page });
     }
-    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations });
+    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations, edits: this.annotations.edits });
   }
 
   async #baseBytes() {
@@ -549,13 +566,15 @@ export class DocumentView extends EventTarget {
         const plan = this.annotations.plan;
         const keepId = this.#shownPlan?.[this.viewer.currentPageNumber - 1]?.id;
         const keepIndex = this.viewer.currentPageNumber;
-        const bytes = await composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, clean: false });
+        const bytes = await composeDocument({
+          base: await this.#baseBytes(), plan, sources: this.sources, edits: this.annotations.edits, clean: false,
+        });
         if (this.#rebuildQueued) continue;
         const found = plan.findIndex((e) => e.id === keepId);
         await this.#swapDocument(bytes, plan, found >= 0 ? found + 1 : Math.min(keepIndex, plan.length));
       } while (this.#rebuildQueued);
     } catch (err) {
-      this.#notice(`The pages couldn’t be rearranged: ${err.message}`);
+      this.#notice(`The pages couldn’t be updated: ${err.message}`);
     } finally {
       this.rebuilding = false;
       this.el.classList.remove('rebuilding');

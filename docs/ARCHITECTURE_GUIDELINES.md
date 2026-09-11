@@ -17,6 +17,8 @@ src/Vellum/                       C# host (WPF + WebView2)
     js/commands.js                THE registry of user actions (label, keys, icon, group, run)
     js/document-view.js           one pdf.js viewer per document: navigation, zoom, layout, save
     js/annotations/               annotation model (undo/redo), SVG layer, pdf-lib persistence, painting
+    js/editing/                   text editing engine (no UI): content lexer + interpreter, fonts, runs
+                                  (cross-checked with pdf.js), edit records, apply (writing), session
     js/pages/                     page plan (pure functions) + page actions (dialogs, menus, toasts)
     js/themes.js                  colour themes and appearance (data + apply)
     js/ui/                        one module per piece of UI (title bar, toolbar, sidebar, dialogs…)
@@ -31,13 +33,17 @@ never imports UI modules. The host knows nothing about the UI beyond named bridg
 - **Every user action is a command** in `commands.js`. Toolbar buttons, menus, shortcuts and the
   command palette all call commands, so they can't drift apart. A command has `label`, optional
   `keys`, `icon`, `group` and `when`, and `run`.
-- **Feature state lives with the feature**: annotations in `AnnotationStore`, page plans in the
-  same store (one undo history), appearance in `themes.js` + localStorage, host settings in
-  `AppSettings`.
+- **Feature state lives with the feature**: annotations in `AnnotationStore`, page plans and text
+  edits in the same store (one undo history), appearance in `themes.js` + localStorage, host
+  settings in `AppSettings`.
 - **UI modules own their DOM** and talk to the rest through the app's events (`activechange`,
   `viewchange`, `tabchange`, `viewready`) and commands. No module reaches into another's DOM.
 - **PDF bytes are only written by `annotations/persist.js`** (`composeDocument`), and only the host
-  touches the file system (atomic saves via `/save/{token}`, paths registered by dialogs).
+  touches the file system (atomic saves via `/save/{token}`, paths registered by dialogs). Text edits
+  are applied inside `composeDocument` by `editing/apply.js`, which rewrites only edited pages.
+- **Editing never guesses.** Text is only offered for editing when the engine's reading of it agrees
+  glyph for glyph with pdf.js's (codes, text, widths, positions); anything else is refused with a
+  reason. Keep that rule for future editors (images, forms, redaction).
 - **The bridge is an allow-list**: each host call is a named handler that validates its input.
   Group related handlers in their own `MainWindow.<Feature>.cs` partial.
 - Rendering the UI never re-renders PDF pages: themes and page colours are CSS only.
@@ -59,5 +65,11 @@ bridge partial. Nothing else should need to change; if it does, that coupling is
 ## Testing
 
 End-to-end checks drive the real app over DevTools (`tools/cdp-client.mjs`) on copies of PDFs.
-Saved files are checked independently (pypdf). Updates are tested with a loopback release feed
-(`VELLUM_UPDATE_FEED`) and a test installer with its own AppId, never against a real install.
+Updates are tested with a loopback release feed (`VELLUM_UPDATE_FEED`) and a test installer with its
+own AppId, never against a real install.
+
+The text-editing engine and PDF writing are tested in Node, against the app's own pdf.js build and
+pdf-lib: `node --test "tests/editing/*.test.mjs"`. Fixtures are generated into a temp folder from the
+vendored libraries and fonts (`tests/editing/fixtures.mjs`); saved files are re-read independently
+(pdf-lib for structure, pdf.js for what's drawn). `VELLUM_TEST_PDFS="a.pdf;b.pdf"` adds real files,
+read only.

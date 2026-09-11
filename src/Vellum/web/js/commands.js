@@ -83,6 +83,7 @@ export function createCommands(app, ui, actions) {
       when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
+    'edit.text': { group: 'Edit', icon: 'type', doc: true, label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
     'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },

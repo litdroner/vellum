@@ -32,6 +32,11 @@ the SHA-256 GitHub publishes for it, installs it and reopens the documents you h
   a PDF onto the thumbnails), extract pages to a new file, split into several files. Page edits and
   annotations share one undo history, and annotations move with their pages. Deleted pages are
   removed from the saved file, not just hidden.
+- **Edit text** (E): click a line of text in the PDF and change it in place. Vellum writes it with the
+  document's own font when that font has every character, otherwise with a matching standard font (and
+  says so first). Only edited pages change, the old text is really removed from the file, and edits
+  undo, redo and save like everything else. Text Vellum can't change safely (scans, picture fonts,
+  symbol fonts, protected PDFs…) says why instead.
 - **Page colours**: normal, dark or sepia pages (Ctrl+Shift+D), independent of the app theme.
 - **Appearance**: seven colour themes (Mist, Ocean, Sage, Blush, Sand, Lavender, Graphite), each in
   Light and an Obsidian dark mode or following Windows, plus your own accent colour. Reduce motion and
@@ -61,6 +66,7 @@ file's contents). They come back whenever you open that PDF in Vellum; other app
 | Delete selected pages (in the Pages sidebar) | Del |
 | Sidebar | F4 |
 | Tools: select, highlight, underline, note, draw | V, H, U, N, D (H/U mark selected text directly) |
+| Edit text: keep / cancel / next / previous | E, then Enter / Esc / Tab / Shift+Tab |
 | Delete annotation / undo / redo | Del / Ctrl+Z / Ctrl+Y |
 | Print | Ctrl+P |
 | Command palette / Settings | Ctrl+K / Ctrl+, |
@@ -92,12 +98,14 @@ src/Vellum/
     js/app.js              tabs/app state, commands wiring, save + close flows
     js/document-view.js    one pdf.js viewer per document
     js/annotations/        model (undo/redo), geometry, SVG layer, pdf-lib persistence, print painting
+    js/editing/            text editing engine: reads page content, checks it against pdf.js, writes edits
     js/ui/                 title bar, tabs, toolbar, sidebar, find bar, menus, dialogs, start screen
     js/themes.js           colour themes and appearance (seed colours; CSS derives the rest)
     css/app.css            the design system (tokens, glass / clay / paper materials)
     vendor/                pdf.js 6.3, pdf-lib 1.17, Jost font — all local, nothing loaded from the network
 installer/Vellum.iss       Inno Setup script
 tools/                     run, publish, release, icon, DevTools helpers
+tests/editing/             text-editing engine tests (node --test "tests/editing/*.test.mjs")
 docs/                      design system, architecture guidelines, feature registry
 ```
 
@@ -109,5 +117,8 @@ WebView2 profile) and is kept on uninstall.
 - Annotations on encrypted PDFs are kept by Vellum, not inside the file (see above), and their pages
   can't be rearranged.
 - Page colours are a display setting only: printing and saved files are unchanged.
-- Planned next: form filling, then redaction, then editing existing text. Not planned: OCR,
-  e-signatures, cloud sync.
+- Text editing changes one line at a time (no paragraph reflow, moving or resizing yet). New
+  characters must exist in the document's font or in the standard Latin fonts; other scripts are
+  refused with a message. Protected (encrypted) PDFs can't be edited, and saving any change to a
+  digitally signed PDF invalidates its signature (Vellum warns about this).
+- Planned next: form filling, then redaction. Not planned: OCR, e-signatures, cloud sync.

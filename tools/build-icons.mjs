@@ -18,6 +18,7 @@ const names = [
   'contrast', 'copy-plus', 'file-output', 'scissors', 'files', 'list-checks',
   'sparkles', 'refresh-cw', 'wifi-off',
   'monitor', 'settings', 'command', 'palette', 'arrow-right', 'keyboard', 'pipette', 'sliders-horizontal', 'zap',
+  'type',
 ];
 
 const icons = {};

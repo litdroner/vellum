@@ -1,5 +1,6 @@
-// Per-document edit store with undo/redo and "unsaved changes" tracking. It holds the annotations
-// and the page plan (see pages/plan.js), so one Ctrl+Z undoes either kind of edit.
+// Per-document edit store with undo/redo and "unsaved changes" tracking. It holds the annotations,
+// the page plan (see pages/plan.js) and content edits such as changed text (see editing/edits.js),
+// so one Ctrl+Z undoes any kind of edit.
 //
 // An annotation is plain data. Geometry is in PDF user space (points, y pointing up), so it's
 // independent of zoom and rotation and can be written straight into the file.
@@ -26,6 +27,7 @@ let opSeq = 0;
 
 export class AnnotationStore extends EventTarget {
   #items = new Map();
+  #edits = new Map();
   #plan = null;
   #undo = [];
   #redo = [];
@@ -47,6 +49,14 @@ export class AnnotationStore extends EventTarget {
     this.apply([{ plan: { before: this.#plan, after: plan } }, ...changes]);
   }
 
+  /** Content edits (changed text), in the order they were first made. */
+  get edits() { return [...this.#edits.values()]; }
+
+  /** Adds (before = null), replaces (same id) or removes (after = null) a content edit: one undo step. */
+  applyEdit(before, after) {
+    this.apply([{ edit: { before, after } }]);
+  }
+
   get all() { return [...this.#items.values()]; }
   get size() { return this.#items.size; }
   get canUndo() { return this.#undo.length > 0; }
@@ -65,6 +75,7 @@ export class AnnotationStore extends EventTarget {
   /** Replaces everything (e.g. annotations read from the file). Not undoable, not dirty. */
   load(list) {
     this.#items.clear();
+    this.#edits.clear();
     for (const a of list) this.#items.set(a.id, a);
     this.#undo = [];
     this.#redo = [];
@@ -131,6 +142,13 @@ export class AnnotationStore extends EventTarget {
         this.#plan = change.plan[side];
         continue;
       }
+      if (change.edit) {
+        const value = change.edit[side];
+        const id = (change.edit.after ?? change.edit.before).id;
+        if (value) this.#edits.set(id, value);
+        else this.#edits.delete(id);
+        continue;
+      }
       const value = change[side];
       const id = (change.after ?? change.before).id;
       if (value) this.#items.set(id, value);
@@ -141,16 +159,21 @@ export class AnnotationStore extends EventTarget {
   #emitFor(changes) {
     const pages = new Set();
     let plan = false;
+    let edits = false;
     for (const c of changes) {
       if (c.plan) plan = true;
+      if (c.edit) edits = true;
       if (c.before) pages.add(c.before.page);
       if (c.after) pages.add(c.after.page);
     }
-    this.#emit(pages, plan);
+    this.#emit(pages, plan, edits);
   }
 
-  /** detail.plan is true when the page list itself changed (the document must be rebuilt). */
-  #emit(pages, plan = false) {
-    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan } }));
+  /**
+   * detail.plan: the page list itself changed; detail.edits: page content changed. Either way the
+   * document must be rebuilt.
+   */
+  #emit(pages, plan = false, edits = false) {
+    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits } }));
   }
 }

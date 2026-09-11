@@ -18,6 +18,7 @@ import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
 import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
+import { TextEditor } from './ui/text-editor.js';
 import { createPageActions } from './pages/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
@@ -65,6 +66,7 @@ class App extends EventTarget {
     }
     const view = new DocumentView(file, libs, { author: session.user });
     view.mount(this.stage);
+    view.textEditor = new TextEditor(view, { notify: (message) => toast(message, { timeout: 6500 }) });
     view.onRequestClose = () => this.requestClose(view);
     const savePosition = debounce(() => rememberPosition(view), 800);
     view.addEventListener('change', () => {
@@ -114,6 +116,7 @@ class App extends EventTarget {
 
   /** Closes a tab, asking about unsaved changes first. Resolves false if the user cancels. */
   async requestClose(view) {
+    await view.textEditor?.commitPending(); // text still being typed counts as a change
     if (view.annotations.dirty) {
       this.activate(view);
       const choice = await askToSave([view]);
@@ -180,6 +183,8 @@ async function askToSave(views) {
 /** Saves a document's annotations and page changes into its file (or a new file for Save As). Resolves true on success. */
 async function saveView(view, { saveAs = false } = {}) {
   if (view.status !== 'ready') return false;
+  // Keep text that's still being typed; if it can't be kept, the editor says why and nothing is saved.
+  if (view.textEditor && !(await view.textEditor.commitPending())) return false;
   if (!saveAs && !view.annotations.dirty) return true;
   if (view.encrypted && saveAs) {
     await showDialog({
@@ -412,6 +417,7 @@ app.addEventListener('viewchange', updateTitle);
 
 /** Before quitting (closing the window, or restarting to update): offer to save unsaved changes. False if cancelled. */
 async function prepareToQuit() {
+  for (const view of app.views) await view.textEditor?.commitPending();
   const dirty = app.views.filter((v) => v.annotations.dirty);
   if (dirty.length) {
     if (dirty.length === 1) app.activate(dirty[0]);
@@ -476,7 +482,7 @@ ui.toolbar.onMenu = async (anchor) => {
 document.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   const view = app.active;
-  if (!view || view.status !== 'ready' || !stage.contains(e.target) || e.target.closest('.findbar, .viewbar, .vl-pop, .vl-note-editor')) return;
+  if (!view || view.status !== 'ready' || !stage.contains(e.target) || e.target.closest('.findbar, .viewbar, .vl-pop, .vl-note-editor, .vl-text-editor')) return;
   const layer = view.annotLayer;
   const selected = view.getSelectedText();
   const hit = selected ? null : layer.hitAt(e.clientX, e.clientY);

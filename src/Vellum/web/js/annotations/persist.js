@@ -1,5 +1,6 @@
 import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
+import { applyTextEdits } from '../editing/apply.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -11,6 +12,8 @@ import { isIdentity } from '../pages/plan.js';
 
 let libPromise = null;
 const pdfLib = () => (libPromise ??= import('../../vendor/pdf-lib/pdf-lib.esm.min.js'));
+/** pdf-lib, loaded once (the text-editing engine reads documents with it too). */
+export const loadPdfLib = pdfLib;
 
 export class AnnotationSaveError extends Error {}
 
@@ -43,9 +46,10 @@ export function writeAnnotations(bytes, annotations) {
  *   plan         page plan, or null for "the file's own pages, unchanged"
  *   sources      Map of sourceId → bytes, for pages inserted from other PDFs
  *   annotations  Vellum annotations to write; .page is the 1-based position in the plan
- *   clean        really remove deleted pages from the file (not just unlink them from the page list)
+ *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/apply.js
+ *   clean        really remove replaced and deleted content from the file (not just unlink it)
  */
-export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], clean = true }) {
+export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], clean = true }) {
   const lib = await pdfLib();
   const doc = await loadForWriting(lib, base);
   const ctx = doc.context;
@@ -56,12 +60,17 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   let dropped = null;
   if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
 
+  // Text edits rewrite only their own pages' content streams.
+  const { changed } = edits.length && plan ? applyTextEdits({ lib, doc, pages, plan, edits }) : { changed: 0 };
+
   for (const a of annotations) {
     const page = pages[a.page - 1];
     if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
   }
-  // After any rearrangement the old page tree (and any deleted pages) are left unreferenced.
-  if (clean && dropped) collectGarbage(ctx, lib, dropped);
+  // After a rearrangement the old page tree (and any deleted pages) are left unreferenced; after a
+  // text edit, the page's old content stream is. Removing them keeps deleted pages and replaced
+  // text from lingering, unseen, inside the saved file.
+  if (clean && (dropped || changed)) collectGarbage(ctx, lib, dropped ?? []);
   // Uncompressed object layout keeps the /VellumId marker findable by a quick byte scan on open.
   return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
 }

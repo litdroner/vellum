@@ -14,6 +14,7 @@ const TOOL_BUTTONS = [
   ['underline', 'underline', 'annot.underline', 'Underline'],
   ['note', 'sticky-note', 'annot.note', 'Note'],
   ['ink', 'pen-line', 'annot.ink', 'Draw'],
+  ['edit', 'type', 'edit.text', 'Edit'],
 ];
 const INK_WIDTHS = [[1, 'Fine pen'], [2, 'Medium pen'], [3.5, 'Bold pen']];
 const COLOR_NAMES = {
@@ -87,6 +88,11 @@ export class Toolbar {
     const ready = s?.status === 'ready';
     this.root.classList.toggle('no-doc', !this.app.active);
     for (const b of [this.sidebarBtn, this.searchBtn, this.printBtn, this.colorBtn, this.toneBtn, ...this.toolButtons]) b.disabled = !ready;
+    // Text editing isn't possible in some documents (protected ones): say why on the button.
+    const editBtn = this.toolButtons[TOOL_BUTTONS.findIndex(([tool]) => tool === 'edit')];
+    const blocked = ready ? this.app.active.textEditing?.unavailableReason : null;
+    if (blocked) editBtn.disabled = true;
+    editBtn.title = blocked ?? commandTitle(this.commands['edit.text']);
 
     const toolIndex = Math.max(0, TOOL_BUTTONS.findIndex(([tool]) => tool === s?.tool));
     this.toolSeg.style.setProperty('--seg-index', String(toolIndex));
@@ -110,7 +116,7 @@ export class Toolbar {
   /** The tool whose colour the swatch button shows (Select shows the highlighter's). */
   #colorTool() {
     const tool = this.app.active?.state.tool;
-    return !tool || tool === 'select' ? 'highlight' : tool;
+    return !tool || tool === 'select' || tool === 'edit' ? 'highlight' : tool;
   }
 
   #openPalette() {

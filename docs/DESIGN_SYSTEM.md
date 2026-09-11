@@ -60,7 +60,12 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
 - **View bar**: floating at the bottom of the document: page, zoom, fit, rotate, layout.
 - **Segmented control**: recessed track, raised knob that slides (260 ms spring).
 - **Contextual tools**: selected text → highlight colours / underline / copy; selected annotation →
-  colours / delete; selected pages → page bar (rotate, duplicate, extract, delete).
+  colours / delete; selected pages → page bar (rotate, duplicate, extract, delete); text being
+  edited → font, status (substitute font, what can't be written), Cancel / Done.
+- **Edit text**: editable text gets a quiet dashed accent outline (hover fills it, keyboard focus
+  thickens it, edited text uses `accent2`); text that can't be edited shows a dotted grey outline and
+  explains itself when clicked. The editor sits exactly on the text, in the page's own font and paper
+  colour (and follows page colours), ringed in the accent; the document itself is never tinted.
 - **Home**: date, greeting, Open card (dashed inner edge), paper illustration, recent covers.
 - **Settings**: left navigation (Appearance, Reading, Updates, Shortcuts, About), rows on surface.
 - **Command palette** (Ctrl+K): every command from the registry plus recent files.

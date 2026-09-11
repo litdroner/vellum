@@ -20,7 +20,8 @@ function svg(tag, attrs = {}) {
   return el;
 }
 
-export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink'];
+// 'edit' (changing the page's own text) is handled by ui/text-editor.js; this layer only draws its outlines.
+export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink', 'edit'];
 
 /** Tool colours and pen width: shared by every document and remembered between sessions. */
 export const toolPrefs = (() => {
@@ -43,7 +44,8 @@ export class AnnotationLayer extends EventTarget {
   tool = 'select';
   selectedId = null;
 
-  #pages = new Map(); // page number → { div, hl, marks, hlGroup, marksGroup, uiGroup, shapes, ready }
+  #pages = new Map(); // page number → { div, hl, marks, hlGroup, marksGroup, decorGroup, uiGroup, shapes, ready }
+  #decor = new Map(); // page number → shapes other tools asked to draw (see decorate)
   #observer;
   #stroke = null;
   #pendingNote = null;
@@ -107,7 +109,7 @@ export class AnnotationLayer extends EventTarget {
     this.view.el.dataset.tool = tool;
     this.select(null);
     this.#closePopover();
-    if (tool === 'ink' || tool === 'note') getSelection()?.removeAllRanges();
+    if (tool === 'ink' || tool === 'note' || tool === 'edit') getSelection()?.removeAllRanges();
     this.dispatchEvent(new Event('toolchange'));
   }
 
@@ -148,6 +150,22 @@ export class AnnotationLayer extends EventTarget {
       layer.marks.remove();
     }
     this.#pages.clear();
+    this.#decor.clear();
+  }
+
+  /**
+   * Draws shapes for another tool (e.g. text-editing outlines) on a page's overlay, above the
+   * annotations. Shapes are SVG elements in PDF user space; they come back whenever pdf.js
+   * re-renders the page. An empty list clears the page.
+   */
+  decorate(n, shapes) {
+    if (shapes.length) this.#decor.set(n, shapes);
+    else this.#decor.delete(n);
+    this.#pages.get(n)?.decorGroup.replaceChildren(...shapes);
+  }
+
+  clearDecorations() {
+    for (const n of [...this.#decor.keys()]) this.decorate(n, []);
   }
 
   /** Turns the current text selection into highlight / underline annotations. */
@@ -204,10 +222,12 @@ export class AnnotationLayer extends EventTarget {
       const marks = svg('svg', { class: 'vl-layer vl-marks', preserveAspectRatio: 'none' });
       const hlGroup = svg('g');
       const marksGroup = svg('g');
+      const decorGroup = svg('g', { class: 'vl-decor' });
       const uiGroup = svg('g');
       hl.append(hlGroup);
-      marks.append(marksGroup, uiGroup);
-      layer = { div: pageView.div, hl, marks, hlGroup, marksGroup, uiGroup, shapes: new Map(), ready: false };
+      marks.append(marksGroup, decorGroup, uiGroup);
+      decorGroup.replaceChildren(...(this.#decor.get(n) ?? []));
+      layer = { div: pageView.div, hl, marks, hlGroup, marksGroup, decorGroup, uiGroup, shapes: new Map(), ready: false };
       this.#pages.set(n, layer);
       this.#observer.observe(pageView.div, { childList: true });
     }
@@ -219,7 +239,7 @@ export class AnnotationLayer extends EventTarget {
     const matrix = `matrix(${unit.transform.join(' ')})`;
     layer.hl.setAttribute('viewBox', viewBox);
     layer.marks.setAttribute('viewBox', viewBox);
-    for (const g of [layer.hlGroup, layer.marksGroup, layer.uiGroup]) g.setAttribute('transform', matrix);
+    for (const g of [layer.hlGroup, layer.marksGroup, layer.decorGroup, layer.uiGroup]) g.setAttribute('transform', matrix);
     this.#render(n);
     layer.ready = true;
   }
@@ -353,7 +373,7 @@ export class AnnotationLayer extends EventTarget {
   }
 
   #onPointerUp(e) {
-    if (e.button !== 0 || this.tool === 'ink' || this.tool === 'note') return;
+    if (e.button !== 0 || this.tool === 'ink' || this.tool === 'note' || this.tool === 'edit') return;
     // Let the browser settle the selection first.
     setTimeout(() => {
       const selection = getSelection();
@@ -491,7 +511,10 @@ export class AnnotationLayer extends EventTarget {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       if (delta) {
+        // Ignore the click that ends this drag, but never a later one: the note is redrawn as it's
+        // dropped, so the browser often sends no click at all, and the flag would eat the next one.
         this.#suppressClick = true;
+        setTimeout(() => { this.#suppressClick = false; });
         this.store.update(a.id, { point: [a.point[0] + delta[0], a.point[1] + delta[1]] });
       }
     };

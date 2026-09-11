@@ -28,6 +28,18 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 | Undo / redo (shared with page edits) | done | annotations/model.js |
 | Strikethrough, shapes, stamps, text boxes, measure | planned | — |
 
+## Editing
+
+| Feature | Status | Where |
+|---|---|---|
+| Edit existing text, one line at a time: Edit tool (E), in place; Enter keeps, Esc cancels, Tab moves on | done | editing/, ui/text-editor.js |
+| Written with the text's own font when it has every character; otherwise a matching standard font (said before applying) | done | editing/fonts.js, editing/edits.js |
+| Only text pdf.js reads exactly the same way is offered; anything else says why (Type 3, symbol, vertical, forms, clipped, invisible, scans…) | done | editing/runs.js |
+| Undo / redo shared with annotations and page edits; edits follow moved, duplicated and deleted pages | done | annotations/model.js, editing/edits.js |
+| Saved into the page itself: only edited pages change; the replaced text is removed from the file | done | editing/apply.js, annotations/persist.js |
+| Protected (encrypted) PDFs: text editing unavailable, with the reason | done | editing/session.js |
+| Paragraph reflow, moving and resizing text, new characters outside Latin (WinAnsi) | planned | — |
+
 ## Pages
 
 | Feature | Status | Where |
@@ -53,7 +65,8 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 
 ## Planned — must not be faked
 
-- Editing existing text or images inside the PDF (prototype first; clearly limited).
+- Editing images; reflowing whole paragraphs; moving or resizing text; writing scripts the
+  document's fonts and the standard fonts don't have (e.g. Devanagari, CJK).
 - Fill & sign: form filling, signatures (draw / type / upload, place, resize).
 - Redaction (flatten-based; needs sign-off on rasterising).
 - Password protection: add / change / remove (with the correct password).

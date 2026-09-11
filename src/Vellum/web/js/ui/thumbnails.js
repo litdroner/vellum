@@ -160,7 +160,7 @@ export class ThumbnailPanel {
       frame.style.setProperty('--r', String(vp.width / vp.height)); // caps very tall pages (see CSS)
       const el = h('div', { class: 'thumb', role: 'option', title: `Page ${n}`, dataset: { page: n, id } },
         frame, h('span', { class: 'thumb-num', text: String(n) }));
-      const baseKey = `${id}:${entry?.rotate ?? 0}`;
+      const baseKey = `${id}:${entry?.rotate ?? 0}:${this.view.editVersion(id)}`; // edited text redraws its thumbnail
       const item = { n, id, baseKey, key: `${baseKey}:${this.#viewRotation}`, el, frame, rendered: false };
       const cached = this.cache.get(item.key);
       if (cached) {

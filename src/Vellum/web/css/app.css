@@ -432,6 +432,7 @@ body.maximized #window-edges { display: none; }
 .btn.primary { background: var(--clay-accent); box-shadow: var(--accent-shadow); color: var(--on-accent); }
 .btn.primary:hover { filter: brightness(1.05); }
 .btn.small { height: 30px; padding: 0 14px; border-radius: 9px; font-size: 12.5px; }
+.btn:disabled, .btn:disabled:hover, .btn:disabled:active { opacity: .45; filter: none; transform: none; cursor: default; }
 
 .link-btn { border: 0; padding: 4px 8px; border-radius: 8px; background: none; color: var(--accent-ink); font-size: 12px; font-weight: 500; transition: background-color var(--fast); }
 .link-btn:hover { background: var(--accent-soft); }
@@ -1196,6 +1197,60 @@ kbd {
 .vl-note-foot { display: flex; align-items: center; gap: 6px; margin-top: 11px; }
 .vl-note-swatches { display: flex; gap: 5px; }
 .vl-note-foot .spacer { flex: 1; }
+
+/* ---- text editing ------------------------------------------------------------------------ */
+/* Edit mode outlines what can be changed; the PDF itself is never tinted or blurred. The editor
+   sits over the text in the page's own font and paper colour, and follows the page colours. */
+
+.doc[data-tool="edit"] .textLayer,
+.doc[data-tool="edit"] .annotationLayer { pointer-events: none; }
+.doc[data-tool="edit"] .viewer-container { cursor: default; }
+.viewer-container.vl-edit-hover { cursor: text; }
+.viewer-container.vl-edit-locked { cursor: not-allowed; }
+.vl-edit-run {
+  fill: transparent;
+  stroke: color-mix(in srgb, var(--accent) 50%, transparent);
+  stroke-width: 1px;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+.vl-edit-run.edited { stroke: color-mix(in srgb, var(--accent-2) 85%, transparent); stroke-dasharray: none; }
+.vl-edit-run.hover { fill: color-mix(in srgb, var(--accent) 8%, transparent); stroke: var(--accent); stroke-dasharray: none; }
+.vl-edit-run.focus { fill: color-mix(in srgb, var(--accent) 11%, transparent); stroke: var(--accent); stroke-width: 2px; stroke-dasharray: none; }
+.vl-edit-run.locked { fill: none; stroke: color-mix(in srgb, var(--ink-3) 70%, transparent); stroke-dasharray: 1 3; }
+
+.vl-text-editor {
+  position: absolute;
+  z-index: 21;
+  transform-origin: 0 0;
+  border-radius: 3px;
+  box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 5px var(--accent-soft), var(--float-shadow);
+}
+.vl-text-paper { display: flex; height: 100%; border-radius: 3px; background: #fff; }
+.vl-text-input {
+  flex: 1 0 auto;
+  min-width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  field-sizing: content;
+  white-space: pre;
+  user-select: text;
+}
+.vl-text-editor.saving { box-shadow: 0 0 0 1.5px var(--accent-line), 0 0 0 5px var(--accent-soft); }
+.vl-text-editor.saving .vl-text-input { cursor: progress; }
+:root[data-page-tone="dark"] .vl-text-paper { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
+:root[data-page-tone="sepia"] .vl-text-paper { filter: url(#page-tone-sepia); }
+.vl-edit-bar { z-index: 22; max-width: min(560px, calc(100% - 24px)); }
+.vl-edit-font { flex: none; padding: 0 4px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+.vl-edit-status { flex: 1; min-width: 0; padding: 0 4px; color: var(--ink-3); font-size: 12px; line-height: 1.3; }
+.vl-edit-status:empty { display: none; }
+.vl-edit-status.warn { color: var(--ink); }
+.vl-edit-status.error { color: var(--danger); }
+.vl-edit-tip { z-index: 22; max-width: 320px; padding: 7px 11px 7px 7px; color: var(--ink-2); font-size: 12.5px; line-height: 1.35; }
+.vl-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* toolbar: annotation colour and save */
 .color-dot {
