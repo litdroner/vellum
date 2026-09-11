@@ -5,7 +5,7 @@ import { documentAssetOptions } from './pdfjs.js';
 import { AnnotationStore } from './annotations/model.js';
 import { AnnotationLayer } from './annotations/layer.js';
 import { extractAnnotations, composeDocument, countPages, loadPdfLib } from './annotations/persist.js';
-import { inspectDocument } from './editing/source.js';
+import { inspectDocument, mayBeSigned } from './editing/source.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
 import { newId } from './annotations/model.js';
 import {
@@ -60,6 +60,8 @@ export class DocumentView extends EventTarget {
   find = { query: '', caseSensitive: false, entireWord: false, current: 0, total: 0, state: null };
   /** Called when the view asks to be closed (e.g. "Close" on the error panel). Set by the app. */
   onRequestClose = null;
+  /** Asks the person whether to change a digitally signed PDF; resolves true to go ahead. Set by the app. */
+  onConfirmSignedChanges = null;
 
   #libs;
   #loadOptions = null;
@@ -76,6 +78,14 @@ export class DocumentView extends EventTarget {
   #base = null;
   /** What kind of file it is (see profile()). */
   #profile = null;
+  /** Known from the profile: whether the file is signed (null until read). */
+  #knownSigned = null;
+  /** The raw bytes proved the file can't be signed, so changes never need confirming. */
+  #surelyUnsigned = false;
+  /** Changes to this document were confirmed (or needed no confirmation). */
+  #changesAllowed = false;
+  #confirming = null;
+  #destroyed = false;
   /** The plan the pages on screen were built from (the store's plan runs ahead while rebuilding). */
   #shownPlan = null;
   #rebuildQueued = false;
@@ -92,6 +102,8 @@ export class DocumentView extends EventTarget {
     this.#libs = libs;
     this.firstRender = new Promise((resolve) => { this.#resolveFirstRender = resolve; });
     this.annotations = new AnnotationStore({ author });
+    // Every change passes here first: the first change to a signed PDF is confirmed.
+    this.annotations.guard = () => this.#mayChange();
     /** Finding and changing text on the pages (engine in editing/, no UI). */
     this.textEditing = new TextEditing(this);
     this.annotations.addEventListener('change', (e) => {
@@ -155,11 +167,47 @@ export class DocumentView extends EventTarget {
    */
   profile() {
     this.#profile ??= (async () => inspectDocument(await loadPdfLib(), this.#base ?? (await this.#readFile())))()
-      .catch((err) => {
+      .then((profile) => {
+        this.#knownSigned = profile.signed;
+        return profile;
+      }, (err) => {
         this.#profile = null; // e.g. the file was moved: try again next time
         throw err;
       });
     return this.#profile;
+  }
+
+  /**
+   * Before the first change to a digitally signed PDF: asks whether to go ahead, since saving will
+   * invalidate the signature. Resolves true when changes may be made (asks again next time if not).
+   */
+  confirmChanges() {
+    if (this.#changesFree()) return Promise.resolve(true);
+    this.#confirming ??= (async () => {
+      let signed = true; // if the file can't be checked, ask anyway
+      try {
+        signed = (await this.profile()).signed;
+      } catch { /* ask */ }
+      const ok = !signed || (await (this.onConfirmSignedChanges?.() ?? false)) === true;
+      if (ok) this.#changesAllowed = true;
+      return ok && !this.#destroyed; // a closed document takes no more changes
+    })().finally(() => { this.#confirming = null; });
+    return this.#confirming;
+  }
+
+  /** Changes need no confirmation: already confirmed, protected (never rewritten), or not signed. */
+  #changesFree() {
+    if (this.#changesAllowed || this.encrypted || this.#surelyUnsigned || this.#knownSigned === false) {
+      this.#changesAllowed = true;
+      return true;
+    }
+    return false;
+  }
+
+  /** The edit store's guard: true when a change may be applied now; otherwise the confirmation. */
+  #mayChange() {
+    if (this.#destroyed) return false;
+    return this.#changesFree() || this.confirmChanges();
   }
 
   /** Changes whenever a page's content edits change (for caches such as thumbnails). */
@@ -274,6 +322,8 @@ export class DocumentView extends EventTarget {
       this.#fail({ kind: 'empty', title: 'This file is empty', message: 'It contains no data. It may not have finished downloading or copying.' });
       return;
     }
+    // Most files can be seen not to be signed from their bytes alone (before pdf.js takes them).
+    this.#surelyUnsigned = !mayBeSigned(data);
 
     // Lift Vellum's own annotations out of the file into the editable layer, and give pdf.js a copy
     // without them (otherwise they'd be painted twice, and the painted copy couldn't be edited).
@@ -325,6 +375,10 @@ export class DocumentView extends EventTarget {
 
     this.#setStatus('ready');
     this.dispatchEvent(new Event('ready'));
+    // A file that may be signed: find out in idle time, so the first change doesn't wait for it.
+    if (!this.#surelyUnsigned && !this.encrypted) {
+      this.firstRender.then(() => requestIdleCallback(() => this.profile().catch(() => {}), { timeout: 4000 }));
+    }
   }
 
   retry() {
@@ -652,6 +706,7 @@ export class DocumentView extends EventTarget {
   }
 
   destroy() {
+    this.#destroyed = true;
     this.#resizeObserver?.disconnect();
     cancelAnimationFrame(this.#refitFrame);
     this.#abort.abort();

@@ -63,7 +63,6 @@ export class TextEditor {
   #hoverQueued = false;
   #previewTimer = 0;
   #announcer;
-  #warnedSigned = false;
   #warnedTagged = false;
 
   constructor(view, { notify }) {
@@ -113,12 +112,14 @@ export class TextEditor {
       view.setTool('select');
       return;
     }
+    // A digitally signed PDF: saving changes invalidates the signature, so ask first (once).
+    if (!(await view.confirmChanges())) {
+      if (this.active) view.setTool('select');
+      return;
+    }
+    if (!this.active) return;
     this.#announce('Edit text. Click text to change it, or press Tab to move between editable text.');
     for (const n of this.#renderedPages()) this.#showPage(n);
-    if (!this.#warnedSigned && (await view.textEditing.signed())) {
-      this.#warnedSigned = true;
-      this.#notify('This PDF is digitally signed. Saving changes to its text will invalidate the signature.');
-    }
   }
 
   #renderedPages() {

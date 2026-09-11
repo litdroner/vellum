@@ -40,45 +40,48 @@ function parseRanges(text, total) {
 }
 
 export function createPageActions({ onOpenFile }) {
-  const allowed = (view) => {
+  /** Can pages be taken from this document (for new files)? */
+  const usable = (view) => {
     if (view?.canEditPages) return true;
     toast(view?.encrypted ? 'This PDF is protected, so its pages can’t be changed.' : 'The document is still opening.', { kind: 'error' });
     return false;
   };
+  /** Can this document's pages be changed? A signed PDF asks first (saving invalidates its signature). */
+  const allowed = async (view) => usable(view) && view.confirmChanges();
   const undo = (view) => ({ label: 'Undo', run: () => view.annotations.undo() });
   const numbersOf = (view, ids) => ids.map((id) => view.annotations.plan.findIndex((e) => e.id === id) + 1).filter((n) => n > 0);
 
   const actions = {
-    rotate(view, ids, delta) {
-      if (allowed(view)) view.rotatePages(ids, delta);
+    async rotate(view, ids, delta) {
+      if (await allowed(view)) view.rotatePages(ids, delta);
     },
 
-    remove(view, ids) {
-      if (!allowed(view) || !ids.length) return;
+    async remove(view, ids) {
+      if (!ids.length || !(await allowed(view))) return;
       if (view.deletePages(ids)) toast(`Deleted ${plural(ids.length, 'page')}`, { action: undo(view) });
     },
 
-    duplicate(view, ids) {
-      if (allowed(view)) view.duplicatePages(ids);
+    async duplicate(view, ids) {
+      if (await allowed(view)) view.duplicatePages(ids);
     },
 
-    move(view, ids, index) {
-      if (allowed(view)) view.movePages(ids, index);
+    async move(view, ids, index) {
+      if (await allowed(view)) view.movePages(ids, index);
     },
 
-    insertBlank(view, index) {
-      if (allowed(view)) view.insertBlankPage(index);
+    async insertBlank(view, index) {
+      if (await allowed(view)) view.insertBlankPage(index);
     },
 
     async insertFromFile(view, index) {
-      if (!allowed(view)) return;
+      if (!(await allowed(view))) return;
       const { files } = await bridge.request('openDialog', { title: 'Insert pages from' });
       await actions.insertFiles(view, files, index);
     },
 
     /** files: described by the host (from the open dialog or a drop). */
     async insertFiles(view, files, index) {
-      if (!files?.length || !allowed(view)) return;
+      if (!files?.length || !(await allowed(view))) return;
       let at = index;
       for (const file of files) {
         try {
@@ -91,7 +94,7 @@ export function createPageActions({ onOpenFile }) {
     },
 
     async extract(view, ids) {
-      if (!allowed(view) || !ids.length) return;
+      if (!usable(view) || !ids.length) return;
       const numbers = numbersOf(view, ids);
       const name = `${baseName(view.file.name)} (${numbers.length === 1 ? 'page' : 'pages'} ${describePages(numbers).replaceAll('–', '-')}).pdf`;
       const { file } = await bridge.request('saveAsDialog', { path: view.file.path, name, title: 'Extract pages to' });
@@ -105,7 +108,7 @@ export function createPageActions({ onOpenFile }) {
     },
 
     async split(view, selectedIds = []) {
-      if (!allowed(view)) return;
+      if (!usable(view)) return;
       const plan = view.annotations.plan;
       const total = plan.length;
       if (total < 2) {

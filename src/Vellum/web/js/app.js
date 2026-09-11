@@ -68,6 +68,7 @@ class App extends EventTarget {
     view.mount(this.stage);
     view.textEditor = new TextEditor(view, { notify: (message) => toast(message, { timeout: 6500 }) });
     view.onRequestClose = () => this.requestClose(view);
+    view.onConfirmSignedChanges = () => confirmSignedChanges(view);
     const savePosition = debounce(() => rememberPosition(view), 800);
     view.addEventListener('change', () => {
       if (view === this.active) this.#emit('viewchange');
@@ -167,6 +168,19 @@ function rememberCover(view) {
       bridge.send('recent.cover', { path: view.file.path, image, pages: view.pdf.numPages });
     } catch { /* the home screen shows an icon instead */ }
   }, 1200));
+}
+
+/** Before the first change to a digitally signed PDF. Resolves true to go ahead. */
+async function confirmSignedChanges(view) {
+  app.activate(view);
+  const choice = await showDialog({
+    title: 'This PDF is digitally signed',
+    message: `If you change “${view.file.name}” and save it, its digital signature will no longer be valid: signature checks will show that the document was changed after it was signed. Nothing in the file changes until you save.`,
+    iconName: 'triangle-alert',
+    // The safe choice is the default (Enter).
+    buttons: [{ id: 'change', label: 'Make changes anyway' }, { id: 'cancel', label: 'Cancel', primary: true }],
+  });
+  return choice === 'change';
 }
 
 async function askToSave(views) {

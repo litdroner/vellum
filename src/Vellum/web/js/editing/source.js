@@ -64,6 +64,26 @@ export function readProfile(lib, doc) {
   };
 }
 
+/**
+ * Whether raw file bytes could hold a digital signature, without parsing them. False only when
+ * that's certain: no signature value (/ByteRange — never compressed, since the signature covers the
+ * bytes around it), no SignaturesExist flag (/SigFlags), and no object streams that could hide it.
+ */
+export function mayBeSigned(bytes) {
+  return containsAscii(bytes, '/ByteRange') || containsAscii(bytes, '/SigFlags') || containsAscii(bytes, '/ObjStm');
+}
+
+function containsAscii(bytes, text) {
+  const pattern = Uint8Array.from(text, (c) => c.charCodeAt(0));
+  const last = bytes.length - pattern.length;
+  for (let i = bytes.indexOf(pattern[0]); i !== -1 && i <= last; i = bytes.indexOf(pattern[0], i + 1)) {
+    let k = 1;
+    while (k < pattern.length && bytes[i + k] === pattern[k]) k++;
+    if (k === pattern.length) return true;
+  }
+  return false;
+}
+
 /** A signature value dictionary: the byte range it signs and the signature itself. */
 function isSignatureValue({ PDFName, PDFArray, PDFString, PDFHexString }, dict) {
   const range = dict.get(PDFName.of('ByteRange'));

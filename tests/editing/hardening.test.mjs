@@ -8,7 +8,8 @@ import { analyzeFile, describeRuns, engine, loadPdfLib, webModule } from './harn
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { planTextEdit, EditError } = await engine('edits.js');
-const { inspectDocument } = await engine('source.js');
+const { inspectDocument, mayBeSigned } = await engine('source.js');
+const { AnnotationStore } = await webModule('annotations/model.js');
 const { composeDocument } = await webModule('annotations/persist.js');
 const { identityPlan } = await webModule('pages/plan.js');
 
@@ -63,6 +64,59 @@ test('edited transparent text keeps its opacity and blend mode', async () => {
   assert.deepEqual([multiplied.editable, multiplied.first.blend], [true, 'Multiply']);
   // The masked line is untouched and still refused.
   assert.deepEqual(describeRuns(reopened.result.pages[0]).find((r) => r.text === 'Masked text').reasons, ['soft-mask']);
+});
+
+// ---- signed PDFs: confirming the first change ---------------------------------------------------
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const note = (store, x) => store.create({ type: 'note', page: 1, point: [x, x], color: '#ffd84d' });
+
+test('change guard: changes wait for confirmation, then apply in order as separate steps', async () => {
+  const store = new AnnotationStore();
+  let answer;
+  store.guard = () => new Promise((resolve) => { answer = resolve; });
+  store.add(note(store, 1));
+  store.add(note(store, 2)); // made while the first waits: joins the queue
+  assert.deepEqual([store.all.length, store.pending, store.dirty], [0, true, false]);
+  assert.equal(store.undo(), false, 'nothing to undo while changes wait');
+  answer(true);
+  await tick();
+  assert.deepEqual([store.all.length, store.pending, store.dirty], [2, false, true]);
+  // Confirmed once: the view's guard now says yes straight away.
+  store.guard = () => true;
+  store.add(note(store, 3));
+  assert.equal(store.all.length, 3);
+  store.undo();
+  store.undo();
+  assert.equal(store.all.length, 1, 'each waiting change became its own undo step');
+});
+
+test('change guard: a refused change is dropped and nothing is marked unsaved', async () => {
+  const store = new AnnotationStore();
+  store.guard = () => Promise.resolve(false);
+  store.add(note(store, 1));
+  await tick();
+  assert.deepEqual([store.all.length, store.pending, store.dirty, store.canUndo], [0, false, false, false]);
+  store.guard = () => false; // refused without asking
+  store.add(note(store, 2));
+  await tick();
+  assert.equal(store.all.length, 0);
+  store.guard = () => Promise.reject(new Error('dialog failed'));
+  store.add(note(store, 3));
+  await tick();
+  assert.equal(store.all.length, 0, 'an error while asking counts as no');
+});
+
+test('signature hint from the raw bytes: certain only when a file surely has no signature', async () => {
+  assert.equal(mayBeSigned(read('simple')), false);
+  assert.equal(mayBeSigned(read('tagged')), false);
+  assert.equal(mayBeSigned(read('signed')), true);
+  assert.equal(mayBeSigned(read('signed-noflags')), true);
+  // Compressed object streams could hide the SignaturesExist flag: then the file is checked properly.
+  const lib = await loadPdfLib();
+  const packed = await (await lib.PDFDocument.load(read('simple'))).save({ useObjectStreams: true });
+  assert.equal(mayBeSigned(packed), true);
+  assert.equal((await inspectDocument(lib, packed)).signed, false);
 });
 
 // ---- document profile: signatures, tags, PDF/A ----------------------------------------------

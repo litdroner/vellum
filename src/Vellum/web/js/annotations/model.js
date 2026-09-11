@@ -26,12 +26,20 @@ export function newId() {
 let opSeq = 0;
 
 export class AnnotationStore extends EventTarget {
+  /**
+   * Optional check before any change is applied: returns true to apply it now, or false / a promise.
+   * With a promise the change — and any made meanwhile, in order — waits, and is applied if it
+   * resolves true or dropped if not. DocumentView uses it to confirm the first change to a signed PDF.
+   */
+  guard = null;
+
   #items = new Map();
   #edits = new Map();
   #plan = null;
   #undo = [];
   #redo = [];
   #savedAt = 0;
+  #held = null;
 
   constructor({ author = '' } = {}) {
     super();
@@ -104,9 +112,31 @@ export class AnnotationStore extends EventTarget {
     if (before) this.apply([{ before, after: null }]);
   }
 
-  /** Applies a group of changes as one undo step. */
+  /** True while changes wait for the guard. */
+  get pending() { return this.#held !== null; }
+
+  /** Applies a group of changes as one undo step (after the guard, if there is one). */
   apply(changes) {
     if (!changes.length) return;
+    if (this.#held) {
+      this.#held.push(changes);
+      return;
+    }
+    const verdict = this.guard ? this.guard(changes) : true;
+    if (verdict === true) {
+      this.#commit(changes);
+      return;
+    }
+    this.#held = [changes];
+    Promise.resolve(verdict).catch(() => false).then((ok) => {
+      const held = this.#held ?? [];
+      this.#held = null;
+      if (ok === true) for (const group of held) this.#commit(group);
+      else this.#emit(new Set()); // nothing changed, but views may show that nothing is waiting any more
+    });
+  }
+
+  #commit(changes) {
     this.#write(changes, 'after');
     this.#undo.push({ seq: ++opSeq, changes });
     this.#redo.length = 0;
@@ -114,6 +144,7 @@ export class AnnotationStore extends EventTarget {
   }
 
   undo() {
+    if (this.#held) return false; // changes are waiting to be confirmed
     const entry = this.#undo.pop();
     if (!entry) return false;
     this.#write(entry.changes, 'before');
@@ -123,6 +154,7 @@ export class AnnotationStore extends EventTarget {
   }
 
   redo() {
+    if (this.#held) return false;
     const entry = this.#redo.pop();
     if (!entry) return false;
     this.#write(entry.changes, 'after');
