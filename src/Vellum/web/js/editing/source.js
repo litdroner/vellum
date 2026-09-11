@@ -233,14 +233,17 @@ export class PdfSource {
     let result = null;
     if (stream instanceof PDFStream) {
       const subtype = this.nameOf(stream.dict.get(PDFName.of('Subtype')));
+      const ocRaw = stream.dict.get(PDFName.of('OC'));
+      const oc = ocRaw ? this.optionalContent(ocRaw) : null;
       if (subtype === 'Image') {
-        result = { kind: 'image', key };
+        result = { kind: 'image', key, info: this.imageInfo(stream.dict), oc };
       } else if (subtype === 'Form') {
         const bbox = this.numbers(stream.dict.get(PDFName.of('BBox')));
         const resources = this.lookup(stream.dict.get(PDFName.of('Resources')));
         result = {
           kind: 'form',
           key,
+          oc,
           matrix: this.numbers(stream.dict.get(PDFName.of('Matrix'))) ?? IDENTITY,
           bbox: bbox?.length === 4 ? [Math.min(bbox[0], bbox[2]), Math.min(bbox[1], bbox[3]), Math.max(bbox[0], bbox[2]), Math.max(bbox[1], bbox[3])] : null,
           // A form without /Resources uses the resources of whatever draws it (older files rely on this).
@@ -260,6 +263,57 @@ export class PdfSource {
     // Forms without their own resources depend on the caller's, so they aren't shared by key.
     if (result?.kind !== 'form' || result.resources !== inheritedResources) this.xobjects.set(key, result);
     return result;
+  }
+
+  /** What an image XObject is: size, colour space, and whether it's a stencil mask or has its own transparency. */
+  imageInfo(dict) {
+    const { PDFName, PDFArray, PDFBool } = this.lib;
+    const get = (k) => this.lookup(dict.get(PDFName.of(k)));
+    const cs = get('ColorSpace');
+    const mask = get('ImageMask');
+    return {
+      width: this.numberOf(get('Width')),
+      height: this.numberOf(get('Height')),
+      bitsPerComponent: this.numberOf(get('BitsPerComponent')),
+      colorSpace: cs instanceof PDFName ? cs.decodeText() : cs instanceof PDFArray ? this.nameOf(cs.get(0)) : null,
+      imageMask: mask instanceof PDFBool ? mask.asBoolean() : false,
+      smask: dict.has(PDFName.of('SMask')),
+      mask: dict.has(PDFName.of('Mask')),
+    };
+  }
+
+  // ---- optional content (layers) -------------------------------------------------------------
+
+  /**
+   * An optional-content group: { key, hidden } — hidden in the document's default view. hidden is
+   * null when that can't be told here: a membership dictionary (OCMD, visibility by rules), or a
+   * group the file's /OCProperties don't describe.
+   */
+  optionalContent(raw) {
+    const { PDFRef, PDFDict, PDFName } = this.lib;
+    const key = raw instanceof PDFRef ? raw.toString() : null;
+    const dict = this.lookup(raw);
+    if (!key || !(dict instanceof PDFDict) || this.nameOf(dict.get(PDFName.of('Type'))) !== 'OCG') return { key, hidden: null };
+    const defaults = this.#ocDefaults();
+    if (!defaults) return { key, hidden: null };
+    return { key, hidden: defaults.base === 'OFF' ? !defaults.on.has(key) : defaults.off.has(key) };
+  }
+
+  #oc = undefined;
+
+  #ocDefaults() {
+    if (this.#oc !== undefined) return this.#oc;
+    const { PDFName, PDFDict, PDFArray } = this.lib;
+    const props = this.lookup(this.doc.catalog.get(PDFName.of('OCProperties')));
+    const d = props instanceof PDFDict ? this.lookup(props.get(PDFName.of('D'))) : null;
+    const refs = (value) => {
+      const list = this.lookup(value);
+      return new Set(list instanceof PDFArray ? list.asArray().map((r) => r.toString()) : []);
+    };
+    this.#oc = d instanceof PDFDict
+      ? { base: this.nameOf(d.get(PDFName.of('BaseState'))) ?? 'ON', on: refs(d.get(PDFName.of('ON'))), off: refs(d.get(PDFName.of('OFF'))) }
+      : null;
+    return this.#oc;
   }
 }
 
@@ -314,11 +368,18 @@ class Resolver {
     return out;
   }
 
+  /** A /Properties resource as marked content uses it: { mcid, actualText, oc } (oc: layers only). */
   properties(name) {
-    const { PDFDict } = this.source.lib;
-    const dict = this.source.lookup(this.#entry('Properties', name));
+    const { PDFName, PDFDict } = this.source.lib;
+    const raw = this.#entry('Properties', name);
+    const dict = this.source.lookup(raw);
     if (!(dict instanceof PDFDict)) return null;
-    return new Map(dict.entries().map(([k, v]) => [k.decodeText(), v]));
+    const type = this.source.nameOf(dict.get(PDFName.of('Type')));
+    return {
+      mcid: this.source.numberOf(dict.get(PDFName.of('MCID'))),
+      actualText: dict.has(PDFName.of('ActualText')),
+      oc: type === 'OCG' || type === 'OCMD' ? this.source.optionalContent(raw) : null,
+    };
   }
 }
 

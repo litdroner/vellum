@@ -11,6 +11,15 @@
 //   { code, unicode, width, byteStart, byteLength, el, origin, end, quad, advance }
 // where `el` is the index of the string inside a TJ array (0 for Tj), `origin`/`end` are the pen
 // position before and after the glyph (user space), and `quad` its box (ll, lr, ur, ul).
+//
+// Also recorded, read-only, for later object editing:
+//   images  { index, opIndex, stream, range, name, key, inline, info, ctm, quad, box, clip,
+//             ca, CA, blend, softMask, form, mcid, artifact, actualText, oc }
+//   paths   { index, opIndex, op, stream, paint, box, lineWidth, ctm, clip, …same context }
+//   forms   { index, key, name, depth, opIndex, stream, range, ctm, box, clip, error, …same context }
+// `stream` is 'page' or the key of the form whose content holds the operator; `range` its bytes in
+// that stream; `quad` the image's unit square in user space; `oc` { keys, hidden } for content in
+// optional-content groups (layers); `mcid` / `artifact` from marked content (tagged PDFs).
 
 import { PdfName, PdfString } from './lexer.js';
 import { IDENTITY, multiply, apply, boundsOf, intersect } from '../matrix.js';
@@ -21,7 +30,7 @@ const EPS = 1e-6;
 
 export function interpretContent(ops, { resources, ctm = IDENTITY }) {
   // unbalanced: a Q with nothing to restore; openStates / openText: what the page leaves unclosed.
-  const out = { shows: [], images: [], forms: [], issues: [], tainted: false, unbalanced: false, openStates: 0, openText: false };
+  const out = { shows: [], images: [], paths: [], forms: [], issues: [], tainted: false, unbalanced: false, openStates: 0, openText: false };
   const budget = { ops: 0 };
   run(ops, resources, initialState(ctm, null), 0, null, [], out, budget);
   return out;
@@ -45,10 +54,12 @@ const copyState = (gs) => ({ ...gs, fill: { ...gs.fill }, stroke: { ...gs.stroke
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const nums = (args, count) => (args.length >= count && args.slice(-count).every(isNum) ? args.slice(-count) : null);
 
-function run(ops, resources, startState, depth, form, formKeys, out, budget) {
+function run(ops, resources, startState, depth, form, formKeys, out, budget, outerMarked = []) {
   let gs = startState;
   const stack = [];
-  const marked = [];
+  // Marked content open around this stream (a form inherits what's open where it's drawn).
+  const marked = outerMarked.slice();
+  const outer = marked.length;
   let inText = false;
   let tm = IDENTITY;
   let tlm = IDENTITY;
@@ -65,6 +76,20 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
     tm = tlm;
     tmKnown = true;
   };
+  /** Where and how an image is drawn: operator and bytes, CTM (its unit square), clip, transparency, tags, layers. */
+  const imageRecord = (opIndex, info, fields, ownOc = null) => ({
+    index: out.images.length, opIndex, stream: form?.key ?? 'page', range: [ops[opIndex].start, ops[opIndex].end],
+    ...fields, info, ctm: gs.ctm, quad: unitQuad(gs.ctm), box: unitBox(gs.ctm), clip: gs.clip,
+    ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
+    form: form?.key ?? null, ...markedContext(marked, ownOc),
+  });
+  /** A painted path or shading: its bounds in user space and the state it was painted with. */
+  const pathRecord = (opIndex, op, paint, box) => ({
+    index: out.paths.length, opIndex, op, stream: form?.key ?? 'page', paint, box,
+    lineWidth: paint === 'shading' ? null : gs.lineWidth, ctm: gs.ctm, clip: gs.clip,
+    ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
+    form: form?.key ?? null, ...markedContext(marked),
+  });
 
   for (let opIndex = 0; opIndex < ops.length; opIndex++) {
     if (++budget.ops > MAX_OPS) {
@@ -161,6 +186,8 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
         pendingClip = true;
         break;
       case 'S': case 's': case 'f': case 'F': case 'f*': case 'B': case 'B*': case 'b': case 'b*': case 'n':
+        // 'n' only ends a path (usually a clipping path): nothing is painted.
+        if (op !== 'n' && path.points.length) out.paths.push(pathRecord(opIndex, op, PAINT[op], boundsOf(path.points)));
         if (pendingClip) gs.clip = addClip(gs.clip, path);
         pendingClip = false;
         path = newPath();
@@ -238,7 +265,7 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
           tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, tr: gs.tr, lineWidth: gs.lineWidth,
           fill: gs.fill, stroke: gs.stroke, gsNames: gs.gsNames.slice(), clip: gs.clip,
           ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
-          actualText: marked.some((m) => m.actualText),
+          ...markedContext(marked),
           ctm: gs.ctm, tmStart: tm, elements, glyphs: [], issues: [],
         };
         if (!inText) show.issues.push('outside-text-object');
@@ -257,22 +284,22 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
 
       // ---- marked content ----
       case 'BMC':
-        marked.push({ actualText: false });
+        marked.push(markOf(args[args.length - 1], null, resources));
         break;
-      case 'BDC': {
-        const props = args[args.length - 1];
-        let dict = props instanceof Map ? props : null;
-        if (!dict && props instanceof PdfName) dict = resources?.properties(props.name) ?? null;
-        marked.push({ actualText: Boolean(dict?.has('ActualText')) });
+      case 'BDC':
+        marked.push(markOf(args[args.length - 2], args[args.length - 1], resources));
         break;
-      }
       case 'EMC':
-        marked.pop();
+        if (marked.length > outer) marked.pop(); // never close what was opened outside this stream
         break;
 
-      // ---- images and form XObjects ----
+      // ---- shadings, images and form XObjects ----
+      case 'sh':
+        // A shading paints the whole clip region (null: the whole page).
+        out.paths.push(pathRecord(opIndex, op, 'shading', gs.clip ? gs.clip.box : null));
+        break;
       case 'BI':
-        out.images.push({ box: unitBox(gs.ctm), form: form?.key ?? null, inline: true });
+        out.images.push(imageRecord(opIndex, inlineInfo(args[0]), { name: null, key: null, inline: true }));
         break;
       case 'Do': {
         const name = args[args.length - 1] instanceof PdfName ? args[args.length - 1].name : null;
@@ -283,12 +310,17 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
           break;
         }
         if (xobject.kind === 'image') {
-          out.images.push({ box: unitBox(gs.ctm), form: form?.key ?? null, key: xobject.key });
+          out.images.push(imageRecord(opIndex, xobject.info ?? null, { name, key: xobject.key, inline: false }, xobject.oc ?? null));
           break;
         }
         if (xobject.kind !== 'form') break;
         const formCtm = multiply(xobject.matrix ?? IDENTITY, gs.ctm);
-        const record = { key: xobject.key, name, depth: depth + 1, box: xobject.bbox ? boxOf(xobject.bbox, formCtm) : null, error: xobject.error ?? null };
+        const record = {
+          index: out.forms.length, key: xobject.key, name, depth: depth + 1, opIndex, stream: form?.key ?? 'page',
+          range: [ops[opIndex].start, ops[opIndex].end], ctm: formCtm,
+          box: xobject.bbox ? boxOf(xobject.bbox, formCtm) : null, clip: gs.clip, error: xobject.error ?? null,
+          form: form?.key ?? null, ...markedContext(marked, xobject.oc ?? null),
+        };
         out.forms.push(record);
         if (xobject.error) {
           out.issues.push({ kind: 'form-unreadable', key: xobject.key, message: xobject.error });
@@ -306,7 +338,8 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
           addRect(clipPath, formCtm, x1, y1, x2 - x1, y2 - y1);
           inner.clip = addClip(gs.clip, clipPath);
         }
-        run(xobject.ops, xobject.resources ?? resources, inner, depth + 1, { key: xobject.key, name }, [...formKeys, xobject.key], out, budget);
+        const within = xobject.oc ? [...marked, { tag: null, mcid: null, actualText: false, oc: xobject.oc }] : marked;
+        run(xobject.ops, xobject.resources ?? resources, inner, depth + 1, { key: xobject.key, name }, [...formKeys, xobject.key], out, budget, within);
         break;
       }
 
@@ -413,6 +446,75 @@ function isRectangle(points, [x1, y1, x2, y2]) {
 }
 
 const unitBox = (ctm) => boundsOf([apply(ctm, 0, 0), apply(ctm, 1, 0), apply(ctm, 1, 1), apply(ctm, 0, 1)]);
+
+/** An image's unit square in user space, as a quad (ll, lr, ur, ul) like a text run's. */
+const unitQuad = (ctm) => [...apply(ctm, 0, 0), ...apply(ctm, 1, 0), ...apply(ctm, 1, 1), ...apply(ctm, 0, 1)];
+
+const PAINT = { S: 'stroke', s: 'stroke', f: 'fill', F: 'fill', 'f*': 'fill', B: 'fill-stroke', 'B*': 'fill-stroke', b: 'fill-stroke', 'b*': 'fill-stroke' };
+
+// ---- marked content ------------------------------------------------------------------
+
+/** A marked-content sequence: its tag, MCID, ActualText and — for /OC — its optional-content group. */
+function markOf(tag, props, resources) {
+  const name = tag instanceof PdfName ? tag.name : null;
+  let info = null;
+  if (props instanceof Map) {
+    const mcid = props.get('MCID');
+    info = { mcid: isNum(mcid) ? mcid : null, actualText: props.has('ActualText'), oc: null };
+  } else if (props instanceof PdfName) {
+    info = resources?.properties(props.name) ?? null;
+  }
+  return {
+    tag: name,
+    mcid: info?.mcid ?? null,
+    actualText: Boolean(info?.actualText),
+    oc: name === 'OC' ? (info?.oc ?? { key: null, hidden: null }) : null,
+  };
+}
+
+/**
+ * What the open marked-content sequences say about content drawn now: the innermost MCID, whether
+ * it's an artifact or has ActualText, and its layers — hidden when any is off in the default view,
+ * null when that can't be told (a membership dictionary, or a layer the file doesn't describe).
+ */
+function markedContext(marked, extraOc = null) {
+  let mcid = null;
+  let artifact = false;
+  let actualText = false;
+  const layers = [];
+  for (const m of marked) {
+    if (m.mcid !== null) mcid = m.mcid;
+    if (m.tag === 'Artifact') artifact = true;
+    if (m.actualText) actualText = true;
+    if (m.oc) layers.push(m.oc);
+  }
+  if (extraOc) layers.push(extraOc);
+  const oc = layers.length
+    ? { keys: layers.map((l) => l.key), hidden: layers.some((l) => l.hidden === true) ? true : layers.some((l) => l.hidden === null) ? null : false }
+    : null;
+  return { mcid, artifact, actualText, oc };
+}
+
+// ---- inline images -----------------------------------------------------------------
+
+const INLINE_COLOR_SPACES = { G: 'DeviceGray', RGB: 'DeviceRGB', CMYK: 'DeviceCMYK', I: 'Indexed' };
+
+/** An inline image's dictionary (abbreviated keys allowed) as the same info image XObjects get. */
+function inlineInfo(dict) {
+  const get = (...keys) => keys.map((k) => dict?.get(k)).find((v) => v !== undefined);
+  const cs = get('CS', 'ColorSpace');
+  const csName = cs instanceof PdfName ? cs.name : Array.isArray(cs) && cs[0] instanceof PdfName ? cs[0].name : null;
+  const num = (v) => (isNum(v) ? v : null);
+  return {
+    width: num(get('W', 'Width')),
+    height: num(get('H', 'Height')),
+    bitsPerComponent: num(get('BPC', 'BitsPerComponent')),
+    colorSpace: csName ? INLINE_COLOR_SPACES[csName] ?? csName : null,
+    imageMask: get('IM', 'ImageMask') === true,
+    smask: false,
+    mask: dict?.has('Mask') ?? false,
+  };
+}
 
 function boxOf([x1, y1, x2, y2], m) {
   return boundsOf([apply(m, x1, y1), apply(m, x2, y1), apply(m, x2, y2), apply(m, x1, y2)]);

@@ -185,6 +185,58 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
         }));
         return { ref, encode: (s) => hex([...s].map((ch) => tt.glyphOf(ch.codePointAt(0)))) };
       },
+      /** Type 0 over a TrueType font with an EMBEDDED CMap: one-byte codes (ASCII) → CIDs (= glyph ids). */
+      trueTypeCMapped(file, text) {
+        const bytes = new Uint8Array(fs.readFileSync(path.join(STANDARD_FONTS, file)));
+        const tt = readTrueType(bytes);
+        const base = `CMAPPD+${path.basename(file, '.ttf')}`;
+        const chars = [...new Set(text)];
+        const code = (ch) => ch.charCodeAt(0);
+        const header = (name, type) => ['/CIDInit /ProcSet findresource begin', '12 dict begin', 'begincmap',
+          `/CIDSystemInfo << /Registry (Adobe) /Ordering (${type === 1 ? 'Identity' : 'UCS'}) /Supplement 0 >> def`,
+          `/CMapName /${name} def`, `/CMapType ${type} def`, '1 begincodespacerange', '<00> <FF>', 'endcodespacerange'];
+        const footer = ['endcmap', 'CMapName currentdict /CMap defineresource pop', 'end', 'end'];
+        const encoding = [...header('Vellum-OneByte', 1), `${chars.length} begincidchar`,
+          ...chars.map((ch) => `${hex([code(ch)], 1)} ${tt.glyphOf(code(ch))}`), 'endcidchar', ...footer].join('\n');
+        const toUnicode = [...header('Vellum-OneByte-UCS', 2), `${chars.length} beginbfchar`,
+          ...chars.map((ch) => `${hex([code(ch)], 1)} <${code(ch).toString(16).padStart(4, '0')}>`), 'endbfchar', ...footer].join('\n');
+        const gids = [...new Set(chars.map((ch) => tt.glyphOf(code(ch))))].sort((a, b) => a - b);
+        const w = [];
+        for (const g of gids) w.push(g, [tt.width(g)]);
+        const file2 = ctx.register(ctx.flateStream(bytes, { Length1: bytes.length }));
+        const descriptor = ctx.register(ctx.obj({
+          Type: 'FontDescriptor', FontName: base, Flags: 32, FontBBox: tt.bbox, ItalicAngle: 0,
+          Ascent: tt.ascent, Descent: tt.descent, CapHeight: 700, StemV: 80, FontFile2: file2,
+        }));
+        const system = { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Identity'), Supplement: 0 };
+        const cid = ctx.register(ctx.obj({
+          Type: 'Font', Subtype: 'CIDFontType2', BaseFont: base, CIDSystemInfo: system,
+          FontDescriptor: descriptor, W: w, DW: 1000, CIDToGIDMap: 'Identity',
+        }));
+        const ref = ctx.register(ctx.obj({
+          Type: 'Font', Subtype: 'Type0', BaseFont: base, DescendantFonts: [cid],
+          Encoding: ctx.register(ctx.flateStream(encoding, { Type: 'CMap', CMapName: 'Vellum-OneByte', CIDSystemInfo: system })),
+          ToUnicode: ctx.register(ctx.flateStream(toUnicode)),
+        }));
+        return { ref, encode: (s) => hex([...s].map(code), 1) };
+      },
+      /** Type 0 with a predefined CJK CMap named in the file (supported for display, not for editing). */
+      trueTypePredefined(file, cmapName) {
+        const bytes = new Uint8Array(fs.readFileSync(path.join(STANDARD_FONTS, file)));
+        const tt = readTrueType(bytes);
+        const base = path.basename(file, '.ttf');
+        const file2 = ctx.register(ctx.flateStream(bytes, { Length1: bytes.length }));
+        const descriptor = ctx.register(ctx.obj({
+          Type: 'FontDescriptor', FontName: base, Flags: 4, FontBBox: tt.bbox, ItalicAngle: 0,
+          Ascent: tt.ascent, Descent: tt.descent, CapHeight: 700, StemV: 80, FontFile2: file2,
+        }));
+        const cid = ctx.register(ctx.obj({
+          Type: 'Font', Subtype: 'CIDFontType2', BaseFont: base,
+          CIDSystemInfo: { Registry: PDFString.of('Adobe'), Ordering: PDFString.of('Japan1'), Supplement: 6 },
+          FontDescriptor: descriptor, DW: 1000, CIDToGIDMap: 'Identity',
+        }));
+        return ctx.register(ctx.obj({ Type: 'Font', Subtype: 'Type0', BaseFont: `${base}-${cmapName}`, Encoding: cmapName, DescendantFonts: [cid] }));
+      },
       /** A Type 1 font embedded as a bare CFF program (FontFile3 /Type1C), with WinAnsi and Times widths. */
       cff(file, { subsetTag = null } = {}) {
         const program = new Uint8Array(fs.readFileSync(path.join(STANDARD_FONTS, file)));
@@ -444,6 +496,76 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
         Multiply: { Type: 'ExtGState', BM: 'Multiply' },
       },
     });
+  });
+
+  // 15. Page objects for later editing phases (read-only analysis): images of every kind, shapes, a
+  // form, tagged and artifact content, and optional content (a visible and a hidden layer).
+  await build('objects', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const ctx = b.ctx;
+    const Im1 = b.image(8, 8);
+    const rgb = (extra = {}) => ctx.register(ctx.flateStream(new Uint8Array(8 * 8 * 3).fill(200), {
+      Type: 'XObject', Subtype: 'Image', Width: 8, Height: 8, ColorSpace: 'DeviceRGB', BitsPerComponent: 8, ...extra,
+    }));
+    const Mask = ctx.register(ctx.flateStream(new Uint8Array(8).fill(0xaa), { Type: 'XObject', Subtype: 'Image', Width: 8, Height: 8, ImageMask: true, BitsPerComponent: 1 }));
+    const alpha = ctx.register(ctx.flateStream(new Uint8Array(64).fill(128), { Type: 'XObject', Subtype: 'Image', Width: 8, Height: 8, ColorSpace: 'DeviceGray', BitsPerComponent: 8 }));
+    const Im2 = rgb({ SMask: alpha });
+    const on = ctx.register(ctx.obj({ Type: 'OCG', Name: PDFHexString.fromText('Visible layer') }));
+    const off = ctx.register(ctx.obj({ Type: 'OCG', Name: PDFHexString.fromText('Hidden layer') }));
+    b.doc.catalog.set(PDFName.of('OCProperties'), ctx.obj({ OCGs: [on, off], D: { ON: [on], OFF: [off], Order: [on, off] } }));
+    const Im3 = rgb({ OC: on });
+    const Fm1 = ctx.register(ctx.flateStream('q 50 0 0 50 0 0 cm /Im1 Do Q', {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 50, 50], Matrix: [1, 0, 0, 1, 400, 100], Resources: { XObject: { Im1 } },
+    }));
+    b.page(PageSizes.Letter, [
+      'q 100 0 0 50 72 650 cm /Im1 Do Q', // 0 plain
+      'q 0 60 -40 0 300 650 cm /Im1 Do Q', // 1 rotated 90°
+      'q 0 0 1 rg 40 0 0 40 72 560 cm /Mask Do Q', // 2 stencil mask
+      'q /Half gs 40 0 0 40 150 560 cm /Im2 Do Q', // 3 own soft mask, half opacity
+      'q 200 540 60 60 re W n 80 0 0 80 190 530 cm /Im1 Do Q', // 4 clipped
+      '/Artifact BMC q 30 0 0 30 300 560 cm /Im1 Do Q EMC', // 5 artifact
+      '/Figure <</MCID 3>> BDC q 30 0 0 30 350 560 cm /Im1 Do Q EMC', // 6 tagged
+      '/OC /L1 BDC q 30 0 0 30 400 560 cm /Im1 Do Q EMC', // 7 visible layer
+      '/OC /L2 BDC q 30 0 0 30 450 560 cm /Im1 Do Q EMC', // 8 hidden layer
+      'q 30 0 0 30 500 560 cm /Im3 Do Q', // 9 the image's own /OC
+      'q 20 0 0 10 72 480 cm BI /W 2 /H 1 /CS /RGB /BPC 8 ID ABCDEF EI Q', // 10 inline
+      '/Fm1 Do', // 11 inside a form
+      'q 0.9 g 72 400 200 40 re f Q',
+      'q 0 G 2 w 72 380 m 272 380 l S Q',
+      'q 300 370 200 30 re W n /Sh0 sh Q',
+      `/P /MC0 BDC ${text('F1', 12, 72, 300, 'Tagged paragraph')} EMC`,
+      `/Artifact BMC ${text('F1', 12, 72, 280, 'Artifact text')} EMC`,
+      `/OC /L1 BDC ${text('F1', 12, 72, 260, 'Text on a visible layer')} EMC`,
+      `/OC /L2 BDC ${text('F1', 12, 72, 240, 'Text on a hidden layer')} EMC`,
+      text('F1', 12, 72, 220, 'Ordinary text'),
+    ].join('\n'), {
+      Font: { F1 },
+      XObject: { Im1, Mask, Im2, Im3, Fm1 },
+      Properties: { MC0: { MCID: 5 }, L1: on, L2: off },
+      ExtGState: { Half: { Type: 'ExtGState', ca: 0.5, CA: 0.5 } },
+      Shading: { Sh0: { ShadingType: 2, ColorSpace: 'DeviceGray', Coords: [300, 385, 500, 385], Function: { FunctionType: 2, Domain: [0, 1], C0: [0], C1: [1], N: 1 } } },
+    });
+  });
+
+  // 16. A crop box that doesn't start at the origin.
+  await build('cropbox', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const page = b.page(PageSizes.Letter, [
+      text('F1', 14, 120, 600, 'Inside an offset crop box'),
+      text('F1', 14, 120, 150, 'Near the bottom of the crop'),
+    ].join('\n'), { Font: { F1 } });
+    page.setCropBox(100, 100, 400, 592);
+  });
+
+  // 17. CMaps: an embedded one-byte CMap (editable) and a predefined CJK CMap by name (refused).
+  await build('cmaps', async (b) => {
+    const words = 'One byte codes through an embedded CMap';
+    const one = b.trueTypeCMapped('LiberationSans-Regular.ttf', words);
+    const cjk = b.trueTypePredefined('LiberationSans-Regular.ttf', 'UniJIS-UCS2-H');
+    b.page(PageSizes.Letter, [
+      `BT /F0 14 Tf 72 700 Td ${one.encode(words)} Tj ET`,
+      'BT /F1 14 Tf 72 670 Td <00480069> Tj ET', // "Hi" as UCS-2 codes
+    ].join('\n'), { Font: { F0: one.ref, F1: cjk } });
   });
 
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user

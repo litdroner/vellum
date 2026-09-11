@@ -36,6 +36,7 @@ export const REASONS = {
   structure: 'This page’s drawing instructions are unbalanced, so Vellum won’t risk rewriting it.',
   'font-resource': 'This text’s font is chosen in an unusual way, so Vellum can’t write with it.',
   'soft-mask': 'This text is drawn through a transparency mask (a soft mask) that Vellum can’t reproduce exactly, so it won’t risk changing it.',
+  layer: 'This text is on a layer that can be shown or hidden (optional content). Vellum can’t keep changed text on its layer yet.',
 };
 
 export const PAGE_KINDS = {
@@ -69,7 +70,7 @@ export function analyzePage(page) {
   const runs = groupRuns(result.shows);
   const analysis = {
     page: page.index, box: page.box, bytes, ops,
-    shows: result.shows, runs, images: result.images, forms: result.forms, issues: result.issues,
+    shows: result.shows, runs, images: result.images, paths: result.paths, forms: result.forms, issues: result.issues,
     tainted: result.tainted, unbalanced: result.unbalanced, openStates: result.openStates, openText: result.openText,
     verified: false, summary: null,
   };
@@ -80,7 +81,7 @@ export function analyzePage(page) {
 
 function unreadablePage(page, err) {
   return {
-    page: page.index, box: page.box, bytes: null, ops: [], shows: [], runs: [], images: [], forms: [],
+    page: page.index, box: page.box, bytes: null, ops: [], shows: [], runs: [], images: [], paths: [], forms: [],
     issues: [{ kind: 'unreadable', message: err?.message ?? String(err) }], tainted: true, verified: false,
     summary: { kind: 'unreadable', runs: 0, editable: 0, visibleGlyphs: 0, invisibleGlyphs: 0, imageCoverage: 0 },
   };
@@ -188,6 +189,8 @@ function classify(analysis) {
   for (const run of runs) {
     const why = run.reasons;
     why.add('unverified');
+    // Tagged content (it has an MCID in the structure tree): editing it can affect accessibility.
+    run.tagged = run.shows.some((si) => shows[si].mcid !== null);
     if (analysis.tainted) why.add('unreadable');
     // New text is drawn after the page's content from a clean state; a stray Q would break that.
     if (analysis.unbalanced) why.add('structure');
@@ -201,6 +204,8 @@ function classify(analysis) {
       if (s.actualText) why.add('actual-text');
       // New text is drawn from a clean state; a soft mask replayed there would sit somewhere else.
       if (s.softMask) why.add('soft-mask');
+      // …and outside any layer, so it would stay visible when its layer is switched off.
+      if (s.oc) why.add('layer');
       for (const issue of s.issues) {
         if (issue === 'position' || issue === 'outside-text-object') why.add('position');
         else if (issue === 'metrics') why.add('metrics');
