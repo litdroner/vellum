@@ -10,6 +10,7 @@ const { parseCMap, readCharCode, IDENTITY_CMAP } = await engine('cmap.js');
 const { multiply, apply, invert } = await engine('matrix.js');
 const { createFont, standardFontName, fallbackFontFor, charactersOutsideWinAnsi } = await engine('fonts.js');
 const { buildGlyphData } = await engine('glyph-names.js');
+const { editSignature } = await engine('edits.js');
 
 const bytes = (s) => Uint8Array.from(Buffer.from(s, 'latin1'));
 const text = (u8) => Buffer.from(u8).toString('latin1');
@@ -87,6 +88,17 @@ test('lexer: malformed input throws instead of guessing', () => {
   assert.throws(() => lex(bytes('[1 2 Tj')), ContentSyntaxError);
   assert.throws(() => lex(bytes('1.2.3 Tw')), ContentSyntaxError);
   assert.throws(() => lex(bytes('[1 Tj]')), ContentSyntaxError);
+});
+
+test('editSignature: any change to a page’s edit records changes it (so thumbnails redraw)', () => {
+  const base = { id: 'a', kind: 'text', entry: 'p1', target: { key: '0:0', text: 'Hello', glyphs: [[0, 0]] }, text: 'Hi', encoding: { mode: 'font', items: [] } };
+  const signature = editSignature([base], 'p1');
+  assert.ok(signature);
+  assert.equal(editSignature([{ ...base }], 'p1'), signature, 'an identical record gives the same signature');
+  assert.notEqual(editSignature([{ ...base, transform: [1, 0, 0, 1, 10, 0] }], 'p1'), signature, 'moved, same text');
+  assert.notEqual(editSignature([{ ...base, encoding: { mode: 'standard', font: 'Helvetica' } }], 'p1'), signature, 'same text, another font');
+  assert.notEqual(editSignature([base, { ...base, id: 'b' }], 'p1'), signature, 'another edit on the page');
+  assert.equal(editSignature([base], 'p2'), '', 'a page without edits');
 });
 
 test('matrices: multiply, apply, invert', () => {
