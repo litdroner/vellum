@@ -300,6 +300,17 @@ class Resolver {
     }
     const lw = this.source.numberOf(dict.get(PDFName.of('LW')));
     if (lw !== null) out.lineWidth = lw;
+    // Transparency: fill / stroke opacity, blend mode, soft mask ('none' switches one off).
+    const ca = this.source.numberOf(dict.get(PDFName.of('ca')));
+    if (ca !== null) out.ca = ca;
+    const CA = this.source.numberOf(dict.get(PDFName.of('CA')));
+    if (CA !== null) out.CA = CA;
+    const bm = this.source.lookup(dict.get(PDFName.of('BM')));
+    const blend = bm instanceof PDFArray ? this.source.lookup(bm.get(0)) : bm;
+    if (blend instanceof PDFName) out.blend = blend.decodeText();
+    const smask = this.source.lookup(dict.get(PDFName.of('SMask')));
+    if (smask instanceof PDFName) out.softMask = smask.decodeText() === 'None' ? 'none' : 'mask';
+    else if (smask instanceof PDFDict) out.softMask = 'mask';
     return out;
   }
 

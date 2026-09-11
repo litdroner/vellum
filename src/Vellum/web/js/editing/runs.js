@@ -35,6 +35,7 @@ export const REASONS = {
   blank: 'There’s only white space here.',
   structure: 'This page’s drawing instructions are unbalanced, so Vellum won’t risk rewriting it.',
   'font-resource': 'This text’s font is chosen in an unusual way, so Vellum can’t write with it.',
+  'soft-mask': 'This text is drawn through a transparency mask (a soft mask) that Vellum can’t reproduce exactly, so it won’t risk changing it.',
 };
 
 export const PAGE_KINDS = {
@@ -198,6 +199,8 @@ function classify(analysis) {
       const s = shows[si];
       if (s.form) why.add('form');
       if (s.actualText) why.add('actual-text');
+      // New text is drawn from a clean state; a soft mask replayed there would sit somewhere else.
+      if (s.softMask) why.add('soft-mask');
       for (const issue of s.issues) {
         if (issue === 'position' || issue === 'outside-text-object') why.add('position');
         else if (issue === 'metrics') why.add('metrics');

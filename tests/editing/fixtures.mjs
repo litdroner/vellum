@@ -421,6 +421,31 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.page(PageSizes.Letter, `q 1 0 0 1 20 0 cm q BT /H 12 Tf 52 700 Td ${lit(ansi('Left open'))} Tj`, { Font: { H } });
   });
 
+  // 14. Transparency: a soft mask (refused), the mask switched off again, opacity and a blend mode (editable).
+  await build('transparency', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const ctx = b.ctx;
+    // A luminosity soft mask: a grey rectangle in its own transparency group.
+    const group = ctx.register(ctx.flateStream('0.5 g 0 0 612 792 re f', {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 612, 792], Group: { S: 'Transparency', CS: 'DeviceGray' }, Resources: {},
+    }));
+    b.page(PageSizes.Letter, [
+      `q /Mask gs ${text('F1', 14, 72, 700, 'Masked text')} Q`,
+      `q /Mask gs /NoMask gs ${text('F1', 14, 72, 670, 'Mask cleared again')} Q`,
+      `q /Half gs ${text('F1', 14, 72, 640, 'Half-transparent text')} Q`,
+      `q /Multiply gs ${text('F1', 14, 72, 610, 'Multiplied text')} Q`,
+      text('F1', 14, 72, 580, 'Plain text'),
+    ].join('\n'), {
+      Font: { F1 },
+      ExtGState: {
+        Mask: { Type: 'ExtGState', SMask: { Type: 'Mask', S: 'Luminosity', G: group } },
+        NoMask: { Type: 'ExtGState', SMask: 'None' },
+        Half: { Type: 'ExtGState', ca: 0.5, CA: 0.5 },
+        Multiply: { Type: 'ExtGState', BM: 'Multiply' },
+      },
+    });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

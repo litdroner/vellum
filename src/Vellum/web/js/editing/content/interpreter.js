@@ -6,7 +6,7 @@
 //
 // A show record:
 //   { index, opIndex, op, form, font, fontName, fontSize, tc, tw, th, ts, tr, lineWidth,
-//     fill, stroke, gsNames, clip, actualText, ctm, frame, elements, glyphs, issues }
+//     fill, stroke, gsNames, clip, ca, CA, blend, softMask, actualText, ctm, frame, elements, glyphs, issues }
 // A glyph:
 //   { code, unicode, width, byteStart, byteLength, el, origin, end, quad, advance }
 // where `el` is the index of the string inside a TJ array (0 for Tj), `origin`/`end` are the pen
@@ -34,6 +34,9 @@ function initialState(ctm, clip) {
     tc: 0, tw: 0, th: 1, tl: 0, tr: 0, ts: 0,
     fill: { space: null, color: null }, stroke: { space: null, color: null },
     lineWidth: 1, gsNames: [],
+    // Transparency set through ExtGState: opacity, blend mode, and the soft mask in effect (the name
+    // of the ExtGState that set it, or null).
+    ca: 1, CA: 1, blend: 'Normal', softMask: null,
   };
 }
 
@@ -100,6 +103,14 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
           gs.fontSize = ext.font.size;
         }
         if (ext && isNum(ext.lineWidth)) gs.lineWidth = ext.lineWidth;
+        if (ext) {
+          if (isNum(ext.ca)) gs.ca = ext.ca;
+          if (isNum(ext.CA)) gs.CA = ext.CA;
+          if (ext.blend) gs.blend = ext.blend;
+          // A soft mask is positioned by the CTM at the moment it's set, so it matters where it came from.
+          if (ext.softMask === 'none') gs.softMask = null;
+          else if (ext.softMask) gs.softMask = name;
+        }
         break;
       }
 
@@ -226,6 +237,7 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget) {
           font: gs.font, fontName: gs.fontName, fontSize: gs.fontSize,
           tc: gs.tc, tw: gs.tw, th: gs.th, ts: gs.ts, tr: gs.tr, lineWidth: gs.lineWidth,
           fill: gs.fill, stroke: gs.stroke, gsNames: gs.gsNames.slice(), clip: gs.clip,
+          ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
           actualText: marked.some((m) => m.actualText),
           ctm: gs.ctm, tmStart: tm, elements, glyphs: [], issues: [],
         };
