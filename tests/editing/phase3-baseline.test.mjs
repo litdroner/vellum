@@ -116,13 +116,18 @@ test('an edited page composed twice from the same base is byte-identical, record
   assert.deepEqual(Buffer.from(twice), Buffer.from(once), 'saving twice writes the same file');
 });
 
-// ---- 2. the verb matrix as it stands, frozen ----------------------------------------------------
-// Today exactly one cell in the whole model can be true: a text run's editText. Step 4 turns move,
-// scale, rotate and delete true where a writer exists. This is the diff that will show it.
+// ---- 2. the verb matrix as it stands ------------------------------------------------------------
+// Step 4 turned cells true, and this section is the record of exactly which. It was written at Step
+// 0 with every cell refused; the expected values below were updated once, here, when the writers
+// behind them existed. A `true` in this table is a promise the writer has already agreed to keep.
 
 const MATRIX_FIXTURES = ['images', 'objects', 'constructs', 'cropbox', 'transparency', 'tagged', 'pdfa', 'scanned', 'overlap'];
 
-test('capability baseline: every verb on every object is refused, except a text run’s editText', async () => {
+/** The cells Step 4 turned true, and the only ones any fixture may report as true. */
+const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete',
+  'image.move', 'image.scale', 'image.rotate', 'image.delete']);
+
+test('capability matrix: a verb is true only where a writer exists for that kind', async () => {
   const seen = new Map(); // `${kind}.${verb}` → the answers seen across every fixture
   for (const name of MATRIX_FIXTURES) {
     for (const analysis of (await analyzed(name)).pages) {
@@ -130,49 +135,57 @@ test('capability baseline: every verb on every object is refused, except a text 
         for (const verb of VERBS) {
           const answer = object.capabilities[verb];
           assert.ok(answer === true || Object.hasOwn(REASONS, answer), `${name} ${object.ref.key} ${verb} → ${answer}`);
-          if (answer === true) {
-            assert.deepEqual([object.kind, verb], ['text-run', 'editText'], `${name} ${object.ref.key}: the only true cell today`);
-          }
           const cell = `${object.kind}.${verb}`;
+          if (answer === true) assert.ok(WRITABLE.has(cell), `${name} ${object.ref.key}: ${cell} has no writer`);
           seen.set(cell, (seen.get(cell) ?? new Set()).add(answer));
         }
       }
     }
   }
-  // The four verbs Phase 3 is about are not writable on any kind today.
-  for (const kind of ['text-run', 'image', 'path', 'form']) {
-    for (const verb of ['move', 'scale', 'rotate', 'delete']) {
-      const answers = [...(seen.get(`${kind}.${verb}`) ?? [])];
-      assert.ok(answers.length, `no ${kind} was examined for ${verb}`);
-      assert.equal(answers.includes(true), false, `${kind}.${verb} is not writable today: ${answers.join(', ')}`);
-    }
+  // Text is never rotated, an image is never text-edited, and a path or a form is never anything.
+  for (const cell of ['text-run.rotate', 'image.editText',
+    ...['path', 'form'].flatMap((k) => VERBS.map((v) => `${k}.${v}`))]) {
+    const answers = [...(seen.get(cell) ?? [])];
+    assert.ok(answers.length, `no object was examined for ${cell}`);
+    assert.equal(answers.includes(true), false, `${cell} must not be writable: ${answers.join(', ')}`);
   }
-  // And the non-text kinds only ever refuse structurally or as unsupported — never in text's words.
+  // Every writable cell is really exercised by the fixtures, so this is not passing by finding none.
+  for (const cell of WRITABLE) {
+    assert.ok([...(seen.get(cell) ?? [])].includes(true), `${cell} is never true in any fixture`);
+  }
+  // And the non-text kinds still only ever refuse in structural words, plus the image gate's two.
+  const ALLOWED = ['unsupported', 'unreadable', 'structure', 'form', 'layer', 'soft-mask', 'clipped', 'degenerate'];
   for (const kind of ['image', 'path', 'form']) {
     for (const verb of VERBS) {
       for (const answer of seen.get(`${kind}.${verb}`) ?? []) {
-        assert.ok(['unsupported', 'unreadable', 'structure', 'form', 'layer', 'soft-mask'].includes(answer), `${kind}.${verb} answered ${answer}`);
+        assert.ok(answer === true || ALLOWED.includes(answer), `${kind}.${verb} answered ${answer}`);
       }
     }
   }
 });
 
-test('capability baseline: the refusals Phase 3 must keep, named exactly, on the objects fixture', async () => {
+test('capability matrix: the refusals Phase 3 must keep, named exactly, on the objects fixture', async () => {
   const images = imageObjects((await analyzed('objects')).pages[0]);
   assert.equal(images.length, 12, 'the fixture draws twelve images');
   const move = (i) => images[i].capabilities.move;
   // Indexes follow the fixture's own comments: 0 plain, 3 own soft mask, 4 clipped, 8 hidden layer,
   // 9 the image's own /OC, 10 inline, 11 inside a form.
-  assert.equal(move(0), 'unsupported', 'a plain image: nothing structural is wrong with it');
-  assert.equal(move(3), 'unsupported', 'an image with its OWN /SMask is not refused for it');
-  assert.equal(move(4), 'unsupported', 'a clipped image is not refused today — Step 4 refuses it as `clipped`');
+  assert.equal(move(0), true, 'a plain image: nothing structural is wrong with it');
+  assert.equal(move(3), true, 'an image with its OWN /SMask travels with its mask, so it is not refused');
+  assert.equal(move(4), 'clipped', 'a clip that does not already contain it would crop it differently');
   assert.equal(move(8), 'layer', 'on a switched-off layer');
   assert.equal(move(9), 'layer', 'the image’s own /OC');
-  assert.equal(move(10), 'unsupported', 'an inline image');
+  assert.equal(move(10), true, 'an inline image is wrapped without its data being touched');
   assert.equal(move(11), 'form', 'drawn by a Form XObject');
+  // The whole verb row moves together for an image, because one `cm` patch writes all four.
+  for (const i of [0, 3, 4, 8, 9, 10, 11]) {
+    assert.deepEqual(['scale', 'rotate', 'delete'].map((v) => images[i].capabilities[v]),
+      [move(i), move(i), move(i)], `image ${i}: the four verbs disagree`);
+    assert.notEqual(images[i].capabilities.editText, true, `image ${i} claims text`);
+  }
 });
 
-test('capability baseline: an unbalanced page refuses structurally, and PDF/A text is still editable', async () => {
+test('capability matrix: an unbalanced page refuses structurally, and PDF/A text moves', async () => {
   const strayQ = (await analyzed('constructs')).pages.find((p) => p.unbalanced);
   assert.ok(strayQ, 'the constructs fixture has a page with a stray Q');
   for (const object of objectsOf(strayQ)) {
@@ -180,7 +193,8 @@ test('capability baseline: an unbalanced page refuses structurally, and PDF/A te
   }
   const [run] = objectsOf((await analyzed('pdfa')).pages[0]).filter((o) => o.kind === 'text-run');
   assert.equal(run.capabilities.editText, true, 'PDF/A text in an embedded font is editable');
-  assert.equal(run.capabilities.move, 'unsupported', 'and will become movable in Step 4, embedding nothing');
+  assert.equal(run.capabilities.move, true, 'and movable: mode `original` redraws its own glyphs, embedding nothing');
+  assert.equal(run.capabilities.rotate, 'unsupported', 'a rotation would need the glyphs laid out again');
 });
 
 // ---- 3. the untransformed text writer, on the cases Phase 3 will extend -------------------------
@@ -360,11 +374,12 @@ test('the topmost object wins on a real page, whichever kind it is', async () =>
   assert.notEqual(left.ref.key, right.ref.key, 'identity is the draw, not the resource');
 });
 
-test('nothing on the overlap page is writable yet, so the contest has no consequence', async () => {
+test('everything the contest can pick on the overlap page is movable, so the winner matters', async () => {
+  // Hit-testing is what a manipulation gesture starts from, so what it picks must be actionable.
   for (const object of selectableObjects((await analyzed('overlap')).pages[0])) {
-    for (const verb of ['move', 'scale', 'rotate', 'delete']) {
-      assert.equal(object.capabilities[verb], 'unsupported', `${object.ref.key} ${verb}`);
-    }
+    assert.equal(object.capabilities.move, true, `${object.ref.key} move`);
+    assert.equal(object.capabilities.delete, true, `${object.ref.key} delete`);
+    assert.equal(object.capabilities.rotate, object.kind === 'image' ? true : 'unsupported', `${object.ref.key} rotate`);
   }
 });
 

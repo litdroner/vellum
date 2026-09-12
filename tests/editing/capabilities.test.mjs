@@ -92,14 +92,45 @@ test('every object answers the same five verbs, in the same order', async () => 
   }
 });
 
-test('no image, path or form is ever text-editable, and nothing else is writable yet', async () => {
-  // Today exactly one cell in the whole model can be true: a text run's editText.
+test('only the verbs with a writer are ever true, and only on the kinds that have one', async () => {
+  // Phase 3, Step 4 turned cells true, and this is the whole of what it turned true:
+  //   text-run   move, scale, editText, delete - never rotate (the glyphs would need re-laying out)
+  //   image      move, scale, rotate, delete   - never editText (a picture has no text)
+  //   path, form nothing: neither has a writer at all.
+  const trues = new Map();
   for await (const { name, page, o } of everyObject()) {
     for (const verb of VERBS) {
-      if (o.kind === 'text-run' && verb === 'editText') continue;
-      assert.notEqual(o.capabilities[verb], true,
+      if (o.capabilities[verb] !== true) continue;
+      assert.ok(['text-run', 'image'].includes(o.kind),
         `${name} page ${page} ${o.kind} ${o.ref.key}: ${verb} claims a permission no writer can honour`);
+      assert.notEqual(`${o.kind}.${verb}`, 'text-run.rotate', `${name} page ${page}: text cannot be rotated`);
+      assert.notEqual(`${o.kind}.${verb}`, 'image.editText', `${name} page ${page}: an image has no text`);
+      trues.set(`${o.kind}.${verb}`, (trues.get(`${o.kind}.${verb}`) ?? 0) + 1);
     }
+  }
+  assert.deepEqual([...trues.keys()].sort(),
+    ['image.delete', 'image.move', 'image.rotate', 'image.scale',
+      'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.scale'],
+    'the sweep must find every writable cell, and no other');
+});
+
+test('a text run move, scale and delete are its editText, exactly: one verdict, four verbs', async () => {
+  // They all go through the same writer, so they cannot disagree: text that cannot be edited cannot
+  // be moved, and refuses in the very same words.
+  for await (const { name, page, o } of everyObject()) {
+    if (o.kind !== 'text-run') continue;
+    for (const verb of ['move', 'scale', 'delete']) {
+      assert.equal(o.capabilities[verb], o.capabilities.editText,
+        `${name} page ${page} ${JSON.stringify(o.text)}: ${verb} disagrees with editText`);
+    }
+  }
+});
+
+test('an image four verbs answer together, because one patch writes all four', async () => {
+  for await (const { name, page, o } of everyObject()) {
+    if (o.kind !== 'image') continue;
+    const answers = new Set(['move', 'scale', 'rotate', 'delete'].map((v) => o.capabilities[v]));
+    assert.equal(answers.size, 1, `${name} page ${page} ${o.ref.key}: ${[...answers].join(', ')}`);
   }
 });
 
@@ -121,11 +152,15 @@ test('an object drawn inside a form, or on a layer, refuses for that reason and 
   // A visible layer refuses just as a hidden one does: edited content leaves the layer either way.
   assert.deepEqual([...new Set(layered.map((o) => o.record.oc.hidden))].sort(), [false, true]);
 
-  // Everything else on this page has no structural reason, so it says plainly that the verb has no
-  // writer yet rather than borrowing someone else's excuse.
+  // Everything else on this page has no structural reason, so it is answered by the image handler's
+  // own gate: movable, unless it is one of the two cases only that gate can see.
   const plain = images.filter((o) => o.ref.stream === 'page' && !o.record.oc);
   assert.ok(plain.length > 5);
-  for (const o of plain) assert.equal(o.capabilities.move, 'unsupported', o.ref.key);
+  const crops = (o) => Boolean(o.record.clip) && !(o.record.clip.exact
+    && o.record.clip.box[0] <= o.record.box[0] + 0.5 && o.record.clip.box[1] <= o.record.box[1] + 0.5
+    && o.record.clip.box[2] >= o.record.box[2] - 0.5 && o.record.clip.box[3] >= o.record.box[3] - 0.5);
+  for (const o of plain) assert.equal(o.capabilities.move, crops(o) ? 'clipped' : true, o.ref.key);
+  assert.equal(plain.filter(crops).length, 1, 'the fixture clips exactly one image');
 });
 
 test('the refusal rule itself: precedence, including branches no fixture draws', async () => {
@@ -133,16 +168,24 @@ test('the refusal rule itself: precedence, including branches no fixture draws',
   // tested here directly rather than by pretending a fixture covers it.
   const clean = { tainted: false, unbalanced: false };
   const onPage = { stream: 'page' };
+  const placed = { ctm: [100, 0, 0, 100, 50, 50], box: [50, 50, 150, 150], clip: null };
   const caps = (analysis, record, ref) => capabilitiesFor(analysis, 'image', record, ref).move;
 
-  assert.equal(caps(clean, { oc: null, softMask: { name: 'Mask' } }, onPage), 'soft-mask');
-  assert.equal(caps(clean, { oc: null, softMask: null }, onPage), 'unsupported');
+  assert.equal(caps(clean, { ...placed, oc: null, softMask: { name: 'Mask' } }, onPage), 'soft-mask');
+  assert.equal(caps(clean, { ...placed, oc: null, softMask: null }, onPage), true, 'nothing is wrong with it');
   // Object-level precedence: where it is drawn, then its layer, then its soft mask.
-  assert.equal(caps(clean, { oc: { hidden: false }, softMask: { name: 'Mask' } }, onPage), 'layer');
-  assert.equal(caps(clean, { oc: { hidden: false }, softMask: null }, { stream: '7 0 R' }), 'form');
+  assert.equal(caps(clean, { ...placed, oc: { hidden: false }, softMask: { name: 'Mask' } }, onPage), 'layer');
+  assert.equal(caps(clean, { ...placed, oc: { hidden: false }, softMask: null }, { stream: '7 0 R' }), 'form');
   // A page that can't be rewritten at all beats every object-level reason.
-  assert.equal(caps({ tainted: false, unbalanced: true }, { oc: { hidden: false } }, { stream: '7 0 R' }), 'structure');
-  assert.equal(caps({ tainted: true, unbalanced: false }, { oc: { hidden: false } }, { stream: '7 0 R' }), 'unreadable');
+  assert.equal(caps({ tainted: false, unbalanced: true }, { ...placed, oc: { hidden: false } }, { stream: '7 0 R' }), 'structure');
+  assert.equal(caps({ tainted: true, unbalanced: false }, { ...placed, oc: { hidden: false } }, { stream: '7 0 R' }), 'unreadable');
+  // And the two the image handler alone can see, after every structural reason and in its order.
+  const cut = { ...placed, oc: null, softMask: null, clip: { exact: true, box: [60, 60, 100, 100] } };
+  assert.equal(caps(clean, cut, onPage), 'clipped', 'a clip that would crop it differently once moved');
+  assert.equal(caps(clean, { ...cut, oc: { hidden: false } }, onPage), 'layer', 'but a layer is reported first');
+  assert.equal(caps(clean, { ...placed, oc: null, softMask: null, ctm: [0, 0, 0, 0, 10, 10] }, onPage), 'degenerate');
+  // A clip that already contains the whole image crops nothing, so it refuses nothing.
+  assert.equal(caps(clean, { ...placed, oc: null, softMask: null, clip: { exact: true, box: [0, 0, 300, 300] } }, onPage), true);
 });
 
 test('a page whose content is unbalanced refuses every verb on every object', async () => {

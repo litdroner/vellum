@@ -1,12 +1,20 @@
-// Text editing for one open document: finds the editable text on a page (from the page's original
-// content, confirmed against what pdf.js drew) and turns a change into an edit record in the
-// document's edit store — one undo step — after which the document view rebuilds to show it.
-// No UI here (see ui/text-editor.js).
+// Content editing for one open document: finds the editable text and the selectable objects on a
+// page (from the page's ORIGINAL content, confirmed against what pdf.js drew) and turns a change
+// into an edit record in the document's edit store — one undo step — after which the document view
+// rebuilds to show it. No UI here (see ui/text-editor.js).
+//
+// Everything is read from the original page, never from what a save produced: that is what lets one
+// { page, key } keep naming the same object across any number of edits, and it is why a record's
+// transform is ABSOLUTE. Where an object is NOW is its own quad plus its record's transform, which
+// is the caller's to work out (objects/geometry.js transformQuad) and never something kept here.
 
 import { openSource } from './source.js';
-import { analyzePage, verifyPage } from './runs.js';
+import { analyzePage, verifyPage, REASONS } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
 import { selectableObjects } from './objects/selection.js';
+import { planImageEdit } from './objects/image.js';
+import { IDENTITY, multiply } from './matrix.js';
+import { isIdentity, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
 
 export class TextEditing {
@@ -67,7 +75,28 @@ export class TextEditing {
     if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
     if (entry.src === 'blank') return { entry, kind: 'no-text', objects: [], analysis: null };
     const analysis = await this.#analysis(entry, pageNumber);
-    return { entry, kind: analysis.summary.kind, objects: selectableObjects(analysis), analysis };
+    return {
+      entry,
+      kind: analysis.summary.kind,
+      objects: selectableObjects(analysis),
+      analysis,
+      records: this.#recordsOf(entry),
+    };
+  }
+
+  /**
+   * This page's content edits, by the object-model key of what each one changes: `run:<key>` for
+   * text and `image:<stream>#<opIndex>` for a picture. One object has at most one record — that is
+   * what makes a second drag replace the first rather than pile up — so this is a plain map.
+   */
+  #recordsOf(entry) {
+    const records = new Map();
+    for (const e of this.#view.annotations.edits) {
+      if (e.entry !== entry.id) continue;
+      if (e.kind === 'text') records.set(`run:${e.target.key}`, e);
+      else if (e.kind === 'image') records.set(e.target.key, e);
+    }
+    return records;
   }
 
   /**
@@ -103,6 +132,88 @@ export class TextEditing {
     });
     store.applyEdit(item.edit, record);
     return true;
+  }
+
+  // ---- moving, scaling, turning, flipping and deleting one object ------------------------------
+  //
+  // Both kinds go through here, and both keep exactly one record per object. A gesture is given as
+  // a DELTA — "what this drag just did" — because that is what an interaction knows; the record
+  // keeps the ABSOLUTE transform, in the ORIGINAL page's user space, which is what the writers
+  // need and what makes a second gesture replace the first instead of stacking another record.
+
+  /** The object with this key on a page, and the page entry it belongs to. */
+  async #objectAt(pageNumber, key) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const { entry, objects, records } = await this.objects(pageNumber);
+    const object = objects.find((o) => o.ref.key === key);
+    if (!object) throw new EditError('missing', 'That object isn’t on this page any more.');
+    return { entry, object, record: records.get(key) ?? null };
+  }
+
+  /** Refuses a verb in the words the capability already answered with. */
+  #refuse(object, verb) {
+    const reason = object.capabilities[verb];
+    if (reason === true) return;
+    throw new EditError('not-editable', REASONS[reason] ?? REASONS.unsupported, { reason });
+  }
+
+  /**
+   * Applies `delta` — a page-space transform — to where an object is NOW: one undo step, one
+   * record, an absolute transform inside it. Returns false when nothing changed.
+   *
+   * `verb` is the capability the gesture claims ('move', 'scale' or 'rotate'), so a refusal is the
+   * one the object already published rather than a second opinion. `coalesce`, when given, joins
+   * this change to the previous one carrying the same token — an arrow-key burst is one gesture and
+   * so one undo (annotations/model.js).
+   *
+   * A delta that puts the object back exactly where the file has it removes the record altogether,
+   * so "move it and move it back" leaves the document as it found it.
+   */
+  async transformObject(pageNumber, key, delta, { verb = 'move', coalesce = null } = {}) {
+    const view = this.#view;
+    const { entry, object, record } = await this.#objectAt(pageNumber, key);
+    this.#refuse(object, verb);
+    const absolute = quantize(multiply(record?.transform ?? IDENTITY, delta));
+    if (!absolute) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
+    if (record && sameAs(record.transform, absolute)) return false;
+    if (!record && isIdentity(absolute)) return false;
+    const after = this.#plan(entry, object, record, absolute);
+    view.annotations.applyEdit(record, after, coalesce);
+    return true;
+  }
+
+  /** Deletes one object: text loses its glyphs, a picture loses its draw. One undo step. */
+  async removeObject(pageNumber, key) {
+    const view = this.#view;
+    const { entry, object, record } = await this.#objectAt(pageNumber, key);
+    this.#refuse(object, 'delete');
+    const after = object.kind === 'text-run'
+      // Empty text has always been how text is removed (encoding.mode 'none'); a placement stays
+      // on the record because it is not about the text, exactly as retyping keeps it.
+      ? planTextEdit({
+        run: object.record, text: '', entry: entry.id, glyphs: (await this.#source(entry.src)).glyphs,
+        id: record?.id, transform: record?.transform ?? null, ...(await this.#constraints()),
+      })
+      : planImageEdit({ object, removed: true, entry: entry.id, id: record?.id });
+    view.annotations.applyEdit(record, after);
+    return true;
+  }
+
+  /**
+   * The record for one absolute placement — or null when there is nothing left to say, which is
+   * what "back where it started" means. Text that was only ever moved has no record without its
+   * transform; text that was retyped keeps its own record, untransformed.
+   */
+  #plan(entry, object, record, absolute) {
+    if (object.kind !== 'text-run') {
+      if (isIdentity(absolute)) return null;
+      return planImageEdit({ object, transform: absolute, entry: entry.id, id: record?.id });
+    }
+    const next = planTextTransform({
+      run: record ? null : object.record, record, transform: absolute, entry: entry.id, id: record?.id,
+    });
+    return !next.transform && next.encoding?.mode === 'original' ? null : next;
   }
 
   /** What the whole document requires of an edit (PDF/A: embedded fonts only). */
@@ -172,6 +283,9 @@ export class TextEditing {
     return this.#sources.get(src);
   }
 }
+
+/** Are these the same stored placement? Both may be absent, which is also the same. */
+const sameAs = (a, b) => (!a && isIdentity(b)) || Boolean(a && b && a.every((v, i) => v === b[i]));
 
 /**
  * Notes pdf.js's own name for each run's font (run.loadedFont): pdf.js loads embedded fonts into

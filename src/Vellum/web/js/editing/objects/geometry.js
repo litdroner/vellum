@@ -7,6 +7,7 @@
 // page-space.js, and every comparison happens here in points.
 
 import { compareOrder } from './page-objects.js';
+import { apply, boundsOf } from '../matrix.js';
 
 // Below this a quad has no usable area: its own basis can't be solved for, so nothing is inside it.
 const MIN_AREA = 1e-9;
@@ -60,15 +61,45 @@ export function quadContains(quad, point, tol = 0) {
 export const objectContains = (object, point, tol = 0) => quadContains(object?.geometry?.quad, point, tol);
 
 /**
+ * A quad where a page-space transform puts it: the same four corners, each mapped through the
+ * transform. This is how an object that has been moved, scaled, turned or flipped is drawn and hit
+ * tested — the analysis always describes the ORIGINAL page (that is what makes identity stable), so
+ * where an object is NOW is its own quad plus the absolute transform its edit record holds.
+ *
+ * The quad comes back unchanged for a null transform, so "no record" and "a record that moves
+ * nothing" draw the same thing.
+ */
+export function transformQuad(quad, transform) {
+  if (!quad || quad.length < 8) return null;
+  if (!transform) return quad;
+  const out = [];
+  for (let i = 0; i < 8; i += 2) out.push(...apply(transform, quad[i], quad[i + 1]));
+  return out.every(Number.isFinite) ? out : null;
+}
+
+/** The axis-aligned bounds of a quad: [x1, y1, x2, y2], or null. */
+export function quadBox(quad) {
+  if (!quad || quad.length < 8) return null;
+  return boundsOf([[quad[0], quad[1]], [quad[2], quad[3]], [quad[4], quad[5]], [quad[6], quad[7]]]);
+}
+
+/** The centre of a quad — the mean of its four corners, which is its centre of symmetry. */
+export function quadCentre(quad) {
+  if (!quad || quad.length < 8) return null;
+  return [(quad[0] + quad[2] + quad[4] + quad[6]) / 4, (quad[1] + quad[3] + quad[5] + quad[7]) / 4];
+}
+
+/**
  * The eight points a resize handle would sit on, in PDF user space and in the quad's own frame:
  * the four corners (ll, lr, ur, ul), then the midpoints of the bottom, right, top and left edges.
  * Under rotation, mirroring or shear these follow the object, because they are built from its own
  * corners rather than from a bounding box.
  *
- * Phase 2 computes and tests these; nothing draws them. A handle promises a drag, and no verb can
- * honour one yet — move, scale and rotate all still answer `unsupported` in objects/capabilities.js
- * — so drawing one would be a picture of a feature rather than a feature. Phase 3 attaches the
- * behaviour to exactly these points.
+ * The first four — the corners — are what Edit mode draws and drags for a uniform scale, anchored
+ * at the corner opposite the one being pulled. The edge midpoints are computed but not drawn: a
+ * non-proportional resize needs a builder in the object's own axes that objects/transform.js does
+ * not have, and text could not be written that way at all, so an edge handle would promise a drag
+ * nothing can honour.
  */
 export function handlePoints(quad) {
   if (!quad || quad.length < 8) return null;

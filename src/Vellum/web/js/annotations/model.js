@@ -60,9 +60,16 @@ export class AnnotationStore extends EventTarget {
   /** Content edits (changed text), in the order they were first made. */
   get edits() { return [...this.#edits.values()]; }
 
-  /** Adds (before = null), replaces (same id) or removes (after = null) a content edit: one undo step. */
-  applyEdit(before, after) {
-    this.apply([{ edit: { before, after } }]);
+  /**
+   * Adds (before = null), replaces (same id) or removes (after = null) a content edit: one undo step.
+   *
+   * `coalesce` is a token that joins this change to the one before it when both carry the same
+   * token — the arrow-key nudges of one burst, which are one gesture and so must be one undo. It
+   * folds the two into a single entry that still goes back to where the burst started; it never
+   * makes a new kind of history, and any other change (a different token, or none) ends the run.
+   */
+  applyEdit(before, after, coalesce = null) {
+    this.apply([{ edit: { before, after } }], coalesce);
   }
 
   get all() { return [...this.#items.values()]; }
@@ -116,29 +123,38 @@ export class AnnotationStore extends EventTarget {
   get pending() { return this.#held !== null; }
 
   /** Applies a group of changes as one undo step (after the guard, if there is one). */
-  apply(changes) {
+  apply(changes, coalesce = null) {
     if (!changes.length) return;
     if (this.#held) {
-      this.#held.push(changes);
+      this.#held.push([changes, coalesce]);
       return;
     }
     const verdict = this.guard ? this.guard(changes) : true;
     if (verdict === true) {
-      this.#commit(changes);
+      this.#commit(changes, coalesce);
       return;
     }
-    this.#held = [changes];
+    this.#held = [[changes, coalesce]];
     Promise.resolve(verdict).catch(() => false).then((ok) => {
       const held = this.#held ?? [];
       this.#held = null;
-      if (ok === true) for (const group of held) this.#commit(group);
+      if (ok === true) for (const [group, token] of held) this.#commit(group, token);
       else this.#emit(new Set()); // nothing changed, but views may show that nothing is waiting any more
     });
   }
 
-  #commit(changes) {
+  #commit(changes, coalesce = null) {
     this.#write(changes, 'after');
-    this.#undo.push({ seq: ++opSeq, changes });
+    const last = this.#undo.at(-1);
+    if (coalesce && last?.coalesce === coalesce && last.changes.length === 1 && changes.length === 1
+      && last.changes[0].edit && changes[0].edit) {
+      // The same gesture, continued: one entry, still holding what the gesture started from. The
+      // sequence number moves on so that "unsaved changes" still notices the file has changed.
+      last.changes = [{ edit: { before: last.changes[0].edit.before, after: changes[0].edit.after } }];
+      last.seq = ++opSeq;
+    } else {
+      this.#undo.push({ seq: ++opSeq, changes, coalesce });
+    }
     this.#redo.length = 0;
     this.#emitFor(changes);
   }

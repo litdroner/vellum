@@ -1,16 +1,29 @@
 // What may be done to one object on a page, verb by verb. Derived from the analysis the engine has
-// already made (editing/runs.js) — it decides nothing new and parses nothing.
+// already made (editing/runs.js) and from the refusals each handler already publishes — it decides
+// nothing new and parses nothing.
 //
 //   capabilities = { move, scale, rotate, editText, delete }
 //
 // Each value is `true` (Vellum can do this today) or a key from the ONE reason vocabulary in
 // runs.js, which is what turns it into a sentence a person reads. There is no second table.
 //
-// Today exactly one cell can be true: a text run's `editText`, and only when the 0.4 engine already
-// found that run editable. Nothing else is true because nothing else is written: objects/registry.js
-// has one handler, for text. Move, scale, rotate and delete have no writer, so they say so rather
-// than claiming a permission that no code could honour — a wrong "no" costs a feature, a wrong
-// "yes" corrupts a file.
+// A verb is true only where a writer can honour it:
+//
+//   text    move, scale and delete follow `editText` exactly — the 0.4 engine's own verdict. Moved
+//           and scaled text is redrawn from the file's own glyphs (objects/text-run.js), and
+//           deleting is what writing empty text has always done. `rotate` is not offered: the
+//           glyphs would have to be laid out again, which Vellum can't do.
+//   images  move, scale, rotate and delete are true together, because one `cm` patch writes all
+//           four (objects/image.js). They are true when imageRefusal() — the handler's own gate,
+//           the same one the writer checks again before any byte is written — says nothing is
+//           wrong. `editText` is never true: an image has no text.
+//   paths
+//   forms   nothing: neither has a writer, and neither has an oriented outline to grab.
+//
+// A wrong "no" costs a feature; a wrong "yes" corrupts a file. So nothing here is true that the
+// writer would not accept, and the writer never trusts this module to have asked.
+
+import { imageRefusal } from './image.js';
 
 /** The verbs an object answers for, in this order. */
 export const VERBS = Object.freeze(['move', 'scale', 'rotate', 'editText', 'delete']);
@@ -57,11 +70,32 @@ const editTextOf = (run) => (run.editable ? true : [...run.reasons][0] ?? 'unver
  * use for this (tests/editing/capabilities.test.mjs keeps it out of that path).
  */
 export function capabilitiesFor(analysis, kind, record, ref) {
-  const refused = structural(analysis, kind, record, ref) ?? 'unsupported';
+  const blocked = structural(analysis, kind, record, ref);
   const capabilities = {};
-  for (const verb of VERBS) capabilities[verb] = refused;
-  // Only text can be text-edited. Every other kind keeps the refusal above: there is no path here
-  // by which an image, a path or a form could ever report true.
-  if (kind === 'text-run') capabilities.editText = editTextOf(record);
+  for (const verb of VERBS) capabilities[verb] = blocked ?? 'unsupported';
+  if (kind === 'text-run') {
+    // One verdict answers four verbs. Moving, scaling and deleting text all go through the same
+    // writer as retyping it, so text that can't be edited can't be moved either, and says so in
+    // the same words. A rotation has no writer at all, so it keeps the plain `unsupported`.
+    const verdict = editTextOf(record);
+    capabilities.editText = verdict;
+    capabilities.move = verdict;
+    capabilities.scale = verdict;
+    capabilities.delete = verdict;
+  } else if (kind === 'image') {
+    // The handler's own gate, asked once. It repeats the structural checks and adds the two only
+    // it can make — a clip that would crop the picture differently, and a placement with no
+    // invertible basis — so a `true` here is a promise the writer has already agreed to keep.
+    const reason = blocked ?? imageRefusal(record, ref);
+    if (!reason) {
+      capabilities.move = true;
+      capabilities.scale = true;
+      capabilities.rotate = true;
+      capabilities.delete = true;
+    } else {
+      for (const verb of VERBS) capabilities[verb] = reason;
+      capabilities.editText = reason; // an image has no text; the structural reason is still why
+    }
+  }
   return Object.freeze(capabilities);
 }
