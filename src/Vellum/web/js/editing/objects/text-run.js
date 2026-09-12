@@ -9,11 +9,23 @@
 //   3. draws the new text after the page's own content, from a clean graphics state that repeats
 //      the original's position, colour, spacing, transparency and font.
 //
+// A record may also carry a `transform` (editing/edits.js): an absolute affine transform in the
+// ORIGINAL page's user space, saying where the text ends up. Because the text is redrawn after the
+// page rather than patched in place, that is simply a different `cm` in step 3 — multiply(ctm, T)
+// where the original's own CTM used to go, so the transform happens AFTER the text's own placement
+// — and step 2 is unchanged: the original glyphs are neutralised where they were, as always. A
+// record without a transform writes the very same bytes it wrote before transforms existed.
+//
+// `encoding.mode: 'original'` belongs with it: a run that is only being moved or scaled is redrawn
+// from the codes the file already holds, so no font is looked up, nothing is re-encoded, no text
+// is reflowed and no glyph changes. Moved text is the same text.
+//
 // The page writer does the rest: splicing the patches in, closing what the page leaves open, and
 // making the new content stream.
 
-import { EditError } from '../edits.js';
+import { EditError, textTransformRefusal } from '../edits.js';
 import { pdfaClaim } from '../source.js';
+import { multiply } from '../matrix.js';
 import { num, hexString, pdfName, operand } from '../content/writer.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
@@ -41,6 +53,11 @@ export function write({ lib, doc, page, index, analysis, records }) {
     if (!run || run.text !== record.target.text || !sameGlyphs(run.glyphs, record.target.glyphs)) {
       throw new EditError('changed', `The text being edited on page ${index + 1} isn’t in the file as expected any more, so nothing was changed.`);
     }
+    // A transform is checked again here, after the planner, the way a PDF/A-breaking font change
+    // is: what goes into the file must not depend on the UI having asked the right question.
+    if (record.transform && textTransformRefusal(record.transform)) {
+      throw new EditError('content', `Text on page ${index + 1} is being moved or scaled in a way Vellum can’t write, so nothing was changed.`);
+    }
     for (const [si, gi] of run.glyphs) {
       const set = edited.get(si) ?? new Set();
       if (set.has(gi)) throw new EditError('changed', 'Two edits refer to the same text.');
@@ -63,8 +80,10 @@ export function write({ lib, doc, page, index, analysis, records }) {
       if (!standardFonts.has(name)) standardFonts.set(name, addStandardFont(lib, doc, page, name));
       fontName = standardFonts.get(name);
       items = encodeStandard(lib, name, record.text);
+    } else if (record.encoding.mode === 'original') {
+      items = originalItems(analysis, run);
     }
-    append.push(drawText(analysis, run, fontName, items));
+    append.push(drawText(analysis, run, fontName, items, record.transform ?? null));
   }
   return { patches, append };
 }
@@ -128,8 +147,54 @@ function neutralize(analysis, show, editedGlyphs) {
   return { start: op.start, end: op.end, text };
 }
 
-/** The new text, in a clean graphics state repeating the original's placement and style. */
-function drawText(analysis, run, fontName, items) {
+/**
+ * The run's own glyphs as TJ items: the codes the file already holds, with the displacement the
+ * original had between one glyph and the next written back as the number that produces it.
+ *
+ * This is all `encoding.mode: 'original'` means. The codes are the ones the page's own bytes
+ * decoded to, and write() has already checked this run glyph for glyph against the page, so they
+ * are provably the glyphs the record was made from — no font is consulted, nothing is re-encoded.
+ *
+ * The run is redrawn from its FIRST glyph's placement, as every other mode is: a run spread over
+ * several text operators keeps the spacing between them (each gap is measured and re-emitted) but
+ * not a baseline shift between them, which one TJ array cannot hold and this writer never kept.
+ */
+function originalItems(analysis, run) {
+  const first = analysis.shows[run.glyphs[0][0]];
+  const factor = -1000 / (first.fontSize * first.th); // the TJ number that moves the pen by one unit
+  if (!Number.isFinite(factor)) throw new EditError('content', 'Text with no size can’t be edited.');
+  const items = [];
+  let previous = null;
+  for (const [si, gi] of run.glyphs) {
+    const glyph = analysis.shows[si].glyphs[gi];
+    const adjust = previous ? gapBefore(previous, glyph) * factor : 0;
+    if (Math.abs(adjust) >= 5e-5) items.push({ adjust }); // below this num() would write a zero
+    items.push({ code: glyph.code, byteLength: glyph.byteLength });
+    previous = glyph;
+  }
+  return items;
+}
+
+/**
+ * How much further along the text `glyph` starts than `previous`'s own advance would have taken
+ * it, in text-space units: the TJ numbers and pen moves the original had between the two. Measured
+ * from the text matrices the interpreter recorded, along the text's own x axis; a component across
+ * that axis is a baseline shift, which a TJ number cannot express.
+ */
+function gapBefore(previous, glyph) {
+  const natural = multiply([1, 0, 0, 1, previous.advance, 0], previous.tm);
+  const [a, b] = previous.tm;
+  const length = a * a + b * b;
+  if (!length) return 0;
+  return ((glyph.tm[4] - natural[4]) * a + (glyph.tm[5] - natural[5]) * b) / length;
+}
+
+/**
+ * The new text, in a clean graphics state repeating the original's placement and style — and then
+ * `transform`, which is why it is applied to the CTM and not to the text matrix: multiply(ctm, T)
+ * is "the original placement, then T", and T is in the page's own user space.
+ */
+function drawText(analysis, run, fontName, items, transform = null) {
   const [si, gi] = run.glyphs[0];
   const show = analysis.shows[si];
   const first = show.glyphs[gi];
@@ -137,8 +202,9 @@ function drawText(analysis, run, fontName, items) {
   const lines = ['q', ...replay(show.fill)];
   if (show.tr === 1 || show.tr === 2) lines.push(...replay(show.stroke), `${num(show.lineWidth)} w`);
   for (const name of show.gsNames) lines.push(`${pdfName(name)} gs`);
+  const placed = transform ? multiply(show.ctm, transform) : show.ctm;
   lines.push(
-    `${show.ctm.map(num).join(' ')} cm`,
+    `${placed.map(num).join(' ')} cm`,
     'BT',
     `${pdfName(fontName)} ${num(show.fontSize)} Tf`,
     `${num(show.tc)} Tc ${num(show.tw)} Tw ${num(show.th * 100)} Tz ${num(show.ts)} Ts ${show.tr} Tr`,
@@ -154,10 +220,10 @@ function textArray(items) {
   const parts = [];
   let codes = '';
   for (const item of items) {
-    if (item.space) {
+    if (item.space || item.adjust !== undefined) {
       if (codes) parts.push(`<${codes}>`);
       codes = '';
-      parts.push(num(-SPACE_ADVANCE));
+      parts.push(num(item.space ? -SPACE_ADVANCE : item.adjust));
     } else {
       codes += item.code.toString(16).padStart(item.byteLength * 2, '0');
     }

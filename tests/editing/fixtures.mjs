@@ -620,6 +620,27 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     });
   }
 
+  // 22. Objects that genuinely overlap, so z-order can be tested through a real PDF rather than
+  // only over constructed quads. Three pairs, each drawn back-to-front in the content stream:
+  // an image under text, text under an image, and one image under another. Nothing else is on the
+  // page, so a hit test has exactly one right answer everywhere.
+  await build('overlap', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const Im1 = b.image(8, 8);
+    b.page(PageSizes.Letter, [
+      // 1. an image, then text across the middle of it: the text is on top.
+      'q 200 0 0 100 72 640 cm /Im1 Do Q',
+      text('F1', 24, 90, 680, 'Over the picture'),
+      // 2. text, then an image completely over it: the image is on top and the text is unreachable.
+      text('F1', 24, 90, 520, 'Under the picture'),
+      'q 230 0 0 100 72 480 cm /Im1 Do Q',
+      // 3. two draws of the same image resource, the second over the first: identity is the draw,
+      //    not the resource, so these are two objects and the later one wins.
+      'q 150 0 0 100 72 300 cm /Im1 Do Q',
+      'q 150 0 0 100 147 300 cm /Im1 Do Q',
+    ].join('\n'), { Font: { F1 }, XObject: { Im1 } });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

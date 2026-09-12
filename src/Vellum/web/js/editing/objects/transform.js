@@ -1,0 +1,144 @@
+// Building the affine transforms object manipulation is written with. Pure: it imports matrix.js
+// and nothing else — no DOM, no pdf.js, no viewport, no analysis, no object model, no edit store,
+// no writer. It must stay that way, because the image handler needs conjugate() while a document is
+// being composed, which puts this module inside the compose path.
+//
+// A transform is the PDF affine six-tuple [a b c d e f] matrix.js already speaks, and it is always
+// ABSOLUTE and in the ORIGINAL page's user space: "where this object ends up", not "how far it just
+// moved". One record holds one transform, so two drags of the same object compose into one.
+//
+// The two kinds of object then use it differently, and this is the distinction the whole design
+// rests on:
+//
+//   text    is redrawn after the page's content, so its transform is applied AFTER its original
+//           placement: the handler emits multiply(show.ctm, T) where it used to emit show.ctm.
+//   images  are patched in place, so a page-space T has to be expressed in the image's own basis
+//           first: conjugate(ctm, T) is the `cm` to insert before the operator.
+//
+// Composition, inversion, point application, the identity and translation are matrix.js's own
+// (multiply, invert, apply, IDENTITY, translate) and are used unwrapped — a second name for one of
+// them would be a second vocabulary. What is here is only what matrix.js does not have: the four
+// builders Phase 3 needs, and the checks that keep a transform safe to store and to write.
+
+import { IDENTITY, multiply, invert, translate } from '../matrix.js';
+
+/**
+ * Decimals a transform is kept to. The content-stream writer rounds every number it writes to four
+ * (num(), editing/content/writer.js), so a transform stored to the same precision is one the file
+ * can hold exactly: what is drawn on screen is then what ends up in the PDF.
+ */
+const PLACES = 4;
+
+/** A transform that can be stored and written: six finite numbers, nothing else. */
+export const isValid = (t) => Array.isArray(t) && t.length === 6 && t.every((v) => typeof v === 'number' && Number.isFinite(v));
+
+/** The determinant of the linear part: area scale, and sign. Zero means the basis has collapsed. */
+export const determinant = (m) => (isValid(m) ? m[0] * m[3] - m[1] * m[2] : NaN);
+
+/** Rounded to what the writer can hold, without a negative zero (which num() also refuses). */
+export function quantize(t) {
+  if (!isValid(t)) return null;
+  const factor = 10 ** PLACES;
+  return t.map((v) => {
+    const r = Math.round(v * factor) / factor;
+    return Object.is(r, -0) ? 0 : r;
+  });
+}
+
+/** Are these the same transform, to `tol`? Element by element; no element is allowed to differ. */
+export const sameTransform = (a, b, tol = 1e-9) => isValid(a) && isValid(b) && a.every((v, i) => Math.abs(v - b[i]) <= tol);
+
+/**
+ * Does this transform leave everything where it is? A record with an identity transform is a record
+ * that says nothing, so nothing should store one. Ask it of quantize()d values when the question is
+ * really "would this change the file?".
+ */
+export const isIdentity = (t, tol = 1e-9) => sameTransform(t, IDENTITY, tol);
+
+/**
+ * The scale factor of a transform that is a move, a uniform scale, or both — and null for anything
+ * else: a rotation, a mirror, a non-uniform scale or a skew, whose linear part is not a positive
+ * multiple of the identity. The factor comes back unjudged (it may be zero or negative); what
+ * counts as usable is the caller's to say.
+ *
+ * Text asks this before it is redrawn. An image can be wrapped in any transform at all, because its
+ * `cm` carries the whole matrix; text is redrawn glyph by glyph, from the codes the file already
+ * holds, and only a move and a uniform scale leave those glyphs reading as the same text on the
+ * same baseline. Ask it of quantize()d values, so that what is stored and what is written answer
+ * the same way.
+ */
+export function moveAndScaleOf(t, tol = 1e-9) {
+  if (!isValid(t)) return null;
+  const [a, b, c, d] = t;
+  return Math.abs(b) <= tol && Math.abs(c) <= tol && Math.abs(a - d) <= tol ? (a + d) / 2 : null;
+}
+
+/** A linear transform applied about a fixed point: move the point to the origin, act, move back. */
+const about = ([px, py], linear) => multiply(multiply(translate(-px, -py), linear), translate(px, py));
+
+/**
+ * Uniform scale by `factor` about `anchor`, which does not move. Phase 3 anchors a corner drag at
+ * the corner opposite it, so the two corners the person can see behave as they look: one follows
+ * the pointer, the other stays put.
+ *
+ * Uniform only. In an object's own orthogonal basis a uniform scale is also a similarity in page
+ * space, which is what keeps scaled text readable back as text rather than as something sheared;
+ * non-proportional image resize needs its own builder, in the object's axes, and is not here yet.
+ */
+export const scaleAbout = (anchor, factor) => (Number.isFinite(factor) ? about(anchor, [factor, 0, 0, factor, 0, 0]) : null);
+
+// Quarter turns counter-clockwise in PDF user space, where y points up: (1, 0) → (0, 1).
+const TURNS = Object.freeze([
+  Object.freeze([1, 0, 0, 1, 0, 0]),
+  Object.freeze([0, 1, -1, 0, 0, 0]),
+  Object.freeze([-1, 0, 0, -1, 0, 0]),
+  Object.freeze([0, -1, 1, 0, 0, 0]),
+]);
+
+/**
+ * `turns` quarter turns counter-clockwise about `centre` (negative for clockwise), in PAGE space
+ * rather than in the object's own basis: a quarter turn has to swap an object's width and height as
+ * they appear on the page, and a turn inside the unit square would instead squash the picture back
+ * into the footprint it started with.
+ *
+ * Which way a turn looks on screen depends on the sign of the object's determinant — a mirrored
+ * image turns the other way — so the caller decides the sign; this only builds what it is asked for.
+ */
+export function quarterTurn(centre, turns) {
+  if (!Number.isInteger(turns)) return null;
+  return about(centre, TURNS[((turns % 4) + 4) % 4]);
+}
+
+// Reflections of the unit square in its own axes: x → 1 − x, and y → 1 − y.
+const FLIPS = Object.freeze({
+  horizontal: Object.freeze([-1, 0, 0, 1, 1, 0]),
+  vertical: Object.freeze([1, 0, 0, -1, 0, 1]),
+});
+
+/**
+ * A reflection in the object's OWN axes, as a page-space transform: T = B⁻¹ · F · B, where `basis`
+ * maps the unit square onto the object (for an image, its CTM). Flipping a turned picture should
+ * mirror the picture, not the page, and only its own basis knows which way that is.
+ *
+ * null when the basis has collapsed and cannot be inverted, and for an axis that isn't one.
+ */
+export function flip(basis, axis) {
+  const local = FLIPS[axis];
+  const inverse = local ? invert(basis) : null;
+  return inverse ? multiply(multiply(inverse, local), basis) : null;
+}
+
+/**
+ * A page-space transform as the `cm` to insert before an operator drawn with `ctm`: C · T · C⁻¹.
+ *
+ * An image's unit square maps by C, and we want it to map by C and then T. Inserting `L cm` makes
+ * the CTM multiply(L, C), so L·C must equal C·T, which gives L = C·T·C⁻¹. Everything the page
+ * already did to that image — its clip, its transparency, the colour a stencil mask paints with,
+ * its place in the drawing order — is untouched, because only the geometry is wrapped.
+ *
+ * null when C cannot be inverted: a degenerate placement is refused rather than approximated.
+ */
+export function conjugate(ctm, transform) {
+  const inverse = isValid(ctm) && isValid(transform) ? invert(ctm) : null;
+  return inverse ? multiply(multiply(ctm, transform), inverse) : null;
+}

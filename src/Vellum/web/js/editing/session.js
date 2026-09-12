@@ -5,7 +5,7 @@
 
 import { openSource } from './source.js';
 import { analyzePage, verifyPage } from './runs.js';
-import { planTextEdit, EditError } from './edits.js';
+import { planTextEdit, planTextTransform, EditError } from './edits.js';
 import { selectableObjects } from './objects/selection.js';
 import { loadPdfLib } from '../annotations/persist.js';
 
@@ -84,12 +84,23 @@ export class TextEditing {
     const store = view.annotations;
     if (next === item.text) return false;
     if (next === item.run.text) {
-      // Back to exactly what the file says: the edit simply goes away.
-      if (item.edit) store.applyEdit(item.edit, null);
-      return Boolean(item.edit);
+      // Back to exactly what the file says: the edit simply goes away. A placement isn’t about
+      // the text, though, so a run that has also been moved keeps its one record — holding the
+      // file’s own glyphs again, which is what it would have had if it had only ever been moved.
+      if (!item.edit) return false;
+      const placed = item.edit.transform
+        ? planTextTransform({ run: item.run, transform: item.edit.transform, entry: entry.id, id: item.edit.id })
+        : null;
+      store.applyEdit(item.edit, placed);
+      return true;
     }
     const source = await this.#source(entry.src);
-    const record = planTextEdit({ run: item.run, text: next, entry: entry.id, glyphs: source.glyphs, id: item.edit?.id, ...(await this.#constraints()) });
+    // The run's placement is carried through: retyping text that has been moved must not move it
+    // back, and must not become a second record either.
+    const record = planTextEdit({
+      run: item.run, text: next, entry: entry.id, glyphs: source.glyphs,
+      id: item.edit?.id, transform: item.edit?.transform ?? null, ...(await this.#constraints()),
+    });
     store.applyEdit(item.edit, record);
     return true;
   }
