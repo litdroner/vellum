@@ -2,8 +2,8 @@
 //
 //   node tests/e2e/run.mjs [--no-build] [suite ...]
 //
-// Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0 by default; performance
-// only when named (VELLUM_PERF_PDF=<file> measures a real document — it's copied, never changed).
+// Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection by default;
+// performance only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed).
 //
 // Safety: stops if Vellum is already running (it's single-instance, so a test would talk to that
 // copy). The app runs with a throwaway data folder (VELLUM_DATA_DIR, honoured by Debug builds only),
@@ -21,7 +21,7 @@ import { createContext } from './lib.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EXE = path.join(ROOT, 'src', 'Vellum', 'bin', 'Debug', 'net10.0-windows', 'Vellum.exe');
-const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0'];
+const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0', 'selection'];
 
 const args = process.argv.slice(2);
 const named = args.filter((a) => !a.startsWith('--'));

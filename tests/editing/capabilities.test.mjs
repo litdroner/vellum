@@ -207,6 +207,11 @@ test('the compose path never reaches the object model or its capabilities', asyn
     for (const file of modules) {
       assert.ok(!file.endsWith('page-objects.js'), `${entry} reaches the object model via ${file}`);
       assert.ok(!file.endsWith('capabilities.js'), `${entry} reaches capability computation via ${file}`);
+      // Phase 2: selection is interaction, and none of it belongs on the path that writes bytes.
+      assert.ok(!file.endsWith(`objects${path.sep}selection.js`), `${entry} reaches the selection model via ${file}`);
+      assert.ok(!file.endsWith(`objects${path.sep}geometry.js`), `${entry} reaches object geometry via ${file}`);
+      assert.ok(!file.endsWith('page-space.js'), `${entry} reaches the viewer's coordinates via ${file}`);
+      assert.ok(!file.includes(`${path.sep}ui${path.sep}`), `${entry} reaches a UI module via ${file}`);
     }
   }
 });

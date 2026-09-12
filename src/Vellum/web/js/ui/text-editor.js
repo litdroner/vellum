@@ -2,14 +2,23 @@ import { h, clamp } from '../dom.js';
 import { icon } from '../icons.js';
 import { PAGE_KINDS, explainRun } from '../editing/runs.js';
 import { EditError } from '../editing/edits.js';
+import { quadArea, quadContains, hitTest } from '../editing/objects/geometry.js';
+import { pageViewAt, toPdfPoint, toClientQuad, tolerancePoints } from '../page-space.js';
 
-// Edit mode ("Edit text", E): shows which text on a page can be changed and edits it in place.
-// The engine (editing/) finds, checks and writes the text; this module is only the interaction:
+// Edit mode ("Edit text", E): shows what on a page can be selected and changed, and edits text in
+// place. The engine (editing/) finds, checks and writes the text; this module is only the
+// interaction:
 //   - outlines around editable text, drawn through the annotation layer's page overlays
+//   - selection: clicking a text run or an image selects that object, outlined where it is. The
+//     selection is identity alone ({ page, key }, editing/objects/selection.js); its geometry is
+//     resolved from the page's current analysis every time it is drawn, never remembered.
 //   - a floating editor over the text (in the scroll container, like the note editor), in the
 //     page's own font and paper colour, so what you type looks like the page
 //   - a small glass bar: which font the text will use, and Cancel / Done
 // Enter keeps the change, Escape cancels, Tab moves to the next text (Shift+Tab to the previous).
+//
+// Selecting an image is as far as Phase 2 goes: nothing moves, scales, rotates or deletes an
+// object yet, so nothing here offers to. Tab's itinerary is the editable text it has always been.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const STANDARD_CSS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
@@ -22,16 +31,8 @@ function svg(tag, attrs) {
 
 const quadPoints = (q) => `${q[0]},${q[1]} ${q[2]},${q[3]} ${q[4]},${q[5]} ${q[6]},${q[7]}`;
 
-/** Is a PDF-space point on the run (within `tol` points)? Measured along and across its text. */
-function runContains(run, [x, y], tol) {
-  const { dir, up } = run.frame;
-  const dx = x - run.origin[0];
-  const dy = y - run.origin[1];
-  const a = dx * dir[0] + dy * dir[1];
-  const u = dx * up[0] + dy * up[1];
-  const e = run.extent;
-  return a >= e.minA - tol && a <= e.maxA + tol && u >= e.minU - tol && u <= e.maxU + tol;
-}
+/** A text run's object key in the model: the one place the two namings meet. */
+const runKeyOf = (key) => `run:${key}`;
 
 /** The run's fill colour as CSS (DeviceGray / RGB / CMYK; anything else shows as ink). */
 function cssColor(fill) {
@@ -54,9 +55,8 @@ const quoteChars = (chars) => chars.map((c) => `“${c}”`).join(', ');
 export class TextEditor {
   #view;
   #notify;
-  #pages = new Map(); // page number → { n, data, error, loading }
+  #pages = new Map(); // page number → { n, data, objects, error, loading }
   #hover = null; // { n, key }
-  #focus = null; // { n, key } — where Tab has got to
   #editor = null; // { n, key, item, el, paper, input, bar, status, done, pending }
   #committing = null;
   #tip = null;
@@ -79,11 +79,16 @@ export class TextEditor {
     const c = view.container;
     c.addEventListener('pointermove', (e) => this.#onHover(e), { signal });
     c.addEventListener('click', (e) => this.#onClick(e), { signal });
-    c.addEventListener('keydown', (e) => this.#onKey(e), { signal });
+    // Captured, so Escape can clear a selection before AnnotationLayer's own handler reads it as
+    // "leave this tool". With nothing selected it falls through to that, exactly as it always did.
+    c.addEventListener('keydown', (e) => this.#onKey(e), { signal, capture: true });
     document.addEventListener('pointerdown', (e) => this.#onPointerDownAnywhere(e), { signal, capture: true });
   }
 
   get active() { return this.#view.annotLayer?.tool === 'edit'; }
+
+  /** The document's selection: identity only, and the single record of what Edit mode is on. */
+  get #selection() { return this.#view.objectSelection; }
 
   /** Keeps what's being typed (called before saving, closing or quitting). False if it can't be kept. */
   async commitPending() {
@@ -101,7 +106,7 @@ export class TextEditor {
       this.#closeEditor();
       this.#hideTip();
       this.#hover = null;
-      this.#focus = null;
+      this.#selection.clear();
       view.annotLayer.clearDecorations();
       view.container.classList.remove('vl-edit-hover', 'vl-edit-locked');
       return;
@@ -131,7 +136,10 @@ export class TextEditor {
   }
 
   #documentChanged() {
-    // The pages were rebuilt (an edit, undo, page changes): read them afresh as they render.
+    // The pages were rebuilt (an edit, undo, page changes): read them afresh as they render. The
+    // selection is two fields, so it survives this on its own terms — #showPage looks for its
+    // object in the new analysis and drops it if it has gone. A page change clears it outright,
+    // where the page plan changes (document-view.js).
     this.#pages.clear();
     this.#hover = null;
     this.#hideTip();
@@ -142,18 +150,30 @@ export class TextEditor {
 
   async #showPage(n) {
     const page = await this.#ensurePage(n);
-    if (page && this.active) this.#draw(page);
+    if (!page || !this.active) return;
+    if (this.#selection.page === n) this.#selection.reconcile(page.objects?.analysis ?? null);
+    this.#draw(page);
   }
 
   #ensurePage(n) {
     let page = this.#pages.get(n);
     if (!page) {
-      page = { n, data: null, error: null, loading: null };
+      page = { n, data: null, objects: null, error: null, loading: null };
       this.#pages.set(n, page);
     }
     if (page.data || page.error) return Promise.resolve(page);
-    page.loading ??= this.#view.textEditing.page(n)
-      .then((data) => { page.data = data; }, (err) => { page.error = err; })
+    // Both readings come from the one verified analysis the session keeps per page; asking for them
+    // one after the other lets the second find it already there. They are published together, at
+    // the end: `data` is what everything else tests for readiness, so a page must never be able to
+    // show its text while its objects are still on the way — a hit test would then run against no
+    // objects and find nothing.
+    page.loading ??= (async () => {
+      const data = await this.#view.textEditing.page(n);
+      const objects = await this.#view.textEditing.objects(n);
+      page.objects = objects;
+      page.data = data;
+    })()
+      .catch((err) => { page.error = err; })
       .then(() => (this.#pages.get(n) === page ? page : null));
     return page.loading;
   }
@@ -164,40 +184,78 @@ export class TextEditor {
       layer.decorate(page.n, []);
       return;
     }
+    const selectedKey = this.#selection.page === page.n ? this.#selection.key : null;
     const shapes = [];
     for (const item of page.data.runs) {
       const { run } = item;
       const hovered = this.#hover?.n === page.n && this.#hover.key === run.key;
-      const focused = this.#focus?.n === page.n && this.#focus.key === run.key;
+      const focused = selectedKey === runKeyOf(run.key);
       if (this.#editor?.n === page.n && this.#editor.key === run.key) continue; // the editor covers it
-      if (run.reasons.has('blank') || (!run.editable && !hovered)) continue;
+      if (run.reasons.has('blank') || (!run.editable && !hovered && !focused)) continue;
       const cls = ['vl-edit-run', !run.editable && 'locked', hovered && 'hover', focused && 'focus', item.edit && 'edited'].filter(Boolean).join(' ');
       shapes.push(svg('polygon', { class: cls, points: quadPoints(run.quad) }));
+    }
+    // Anything else selected — an image — outlined where it is NOW: its quad is read out of this
+    // page's current analysis on every draw, so zoom, rotation and a rebuild all take care of
+    // themselves, and nothing here remembers a coordinate between draws. Selected text is already
+    // drawn above, in the outline Edit mode has always used for it.
+    const object = selectedKey ? this.#selection.resolve(page.objects?.analysis) : null;
+    if (object && object.kind !== 'text-run') {
+      shapes.push(svg('polygon', { class: 'vl-object-sel', points: quadPoints(object.geometry.quad) }));
     }
     layer.decorate(page.n, shapes);
   }
 
-  /** The run under a point: { n, page, item } (item null over empty paper); null off the pages. */
+  /** Moves the selection and redraws whatever that changed. Only identity ever goes in. */
+  #select(to) {
+    const from = this.#selection.current;
+    const changed = to ? this.#selection.select(to.n, to.key) : this.#selection.clear();
+    if (!changed) return;
+    for (const n of new Set([from?.page, to?.n].filter(Boolean))) {
+      const page = this.#pages.get(n);
+      if (page) this.#draw(page);
+    }
+  }
+
+  /**
+   * What's under a point: { n, page, object, item } — `object` the topmost thing that can be
+   * selected there, `item` its run when it is text. Both null over empty paper; null off the pages.
+   *
+   * Hit-testing happens in PDF user space (editing/objects/geometry.js): the pointer is converted
+   * once, and nothing is measured on screen, so a rotated page, a turned image and a crop box that
+   * doesn't start at the origin all need no special case.
+   *
+   * When nothing selectable is there, the runs are searched again for one that can be EXPLAINED —
+   * the invisible text layer of a scanned page, or text used as a clipping shape. Neither is worth
+   * selecting, but Edit mode has always said why they can't be edited, and still does.
+   */
   async #hitAt(target, clientX, clientY) {
-    const div = target?.closest?.('.page');
-    if (!div || !this.#view.viewerEl.contains(div)) return null;
-    const n = Number(div.dataset.pageNumber);
-    const page = await this.#ensurePage(n);
-    const pageView = this.#view.viewer.getPageView(n - 1);
-    if (!page?.data || !pageView) return { n, page, item: null };
-    const box = pageView.div.getBoundingClientRect();
-    const vp = pageView.viewport;
-    const point = vp.convertToPdfPoint((clientX - box.left) * (vp.width / box.width), (clientY - box.top) * (vp.height / box.height));
-    const tol = 2 / vp.scale;
+    const at = pageViewAt(this.#view, target);
+    if (!at) return null;
+    const page = await this.#ensurePage(at.n);
+    if (!page?.data) return { n: at.n, page, object: null, item: null };
+    const point = toPdfPoint(at.pageView, clientX, clientY);
+    const tol = tolerancePoints(at.pageView, 2);
+    const object = hitTest(page.objects?.objects ?? [], point, tol);
+    if (object) {
+      const item = object.kind === 'text-run'
+        ? page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null
+        : null;
+      return { n: at.n, page, object, item };
+    }
+    return { n: at.n, page, object: null, item: this.#explainableAt(page, point, tol) };
+  }
+
+  /** The smallest run under a point that isn't blank, whether or not it can be selected or edited. */
+  #explainableAt(page, point, tol) {
     let best = null;
     for (const item of page.data.runs) {
       const { run } = item;
-      if (run.reasons.has('blank') || !runContains(run, point, tol)) continue;
-      const area = (run.extent.maxA - run.extent.minA) * (run.extent.maxU - run.extent.minU);
-      const better = !best || (run.editable && !best.item.run.editable) || (run.editable === best.item.run.editable && area < best.area);
-      if (better) best = { item, area };
+      if (run.reasons.has('blank') || !quadContains(run.quad, point, tol)) continue;
+      const area = quadArea(run.quad);
+      if (!best || area < best.area) best = { item, area };
     }
-    return { n, page, item: best?.item ?? null };
+    return best?.item ?? null;
   }
 
   // ---- pointer and keyboard ---------------------------------------------------------------
@@ -229,20 +287,25 @@ export class TextEditor {
     if (!this.active || e.button !== 0 || e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip')) return;
     const hit = await this.#hitAt(e.target, e.clientX, e.clientY);
     if (!hit) return;
-    if (!hit.item) {
-      if (!(await this.commitPending())) return;
-      this.#closeEditor();
-      const kind = hit.page?.data?.kind;
-      if (hit.page?.error) this.#showTip(e.clientX, e.clientY, hit.page.error.message);
-      else if (kind && kind !== 'text') this.#showTip(e.clientX, e.clientY, PAGE_KINDS[kind]);
+    // A click selects what it lands on, and clears the selection when it lands on nothing.
+    this.#select(hit.object ? { n: hit.n, key: hit.object.ref.key } : null);
+    if (hit.item) {
+      if (!hit.item.run.editable) {
+        this.#showTip(e.clientX, e.clientY, explainRun(hit.item.run)[0] ?? 'This text can’t be edited.');
+        return;
+      }
+      await this.#open(hit.n, hit.item.run.key);
       return;
     }
-    if (!hit.item.run.editable) {
-      this.#showTip(e.clientX, e.clientY, explainRun(hit.item.run)[0] ?? 'This text can’t be edited.');
-      return;
-    }
-    this.#focus = { n: hit.n, key: hit.item.run.key };
-    await this.#open(hit.n, hit.item.run.key);
+    // No text here — an image, or bare paper. Either way this is a click away from whatever was
+    // being typed, so it is kept, exactly as clicking bare paper always did.
+    if (!(await this.commitPending())) return;
+    this.#closeEditor();
+    // Edit mode is about text, so a page that has none still says so — selecting the picture on a
+    // scanned page answers a different question from the one the person asked by coming here.
+    const kind = hit.page?.data?.kind;
+    if (hit.page?.error) this.#showTip(e.clientX, e.clientY, hit.page.error.message);
+    else if (kind && kind !== 'text') this.#showTip(e.clientX, e.clientY, PAGE_KINDS[kind]);
   }
 
   #onKey(e) {
@@ -250,10 +313,34 @@ export class TextEditor {
     if (e.key === 'Tab') {
       e.preventDefault();
       this.#move(e.shiftKey ? -1 : 1);
-    } else if (e.key === 'Enter' && this.#focus) {
-      e.preventDefault();
-      this.#open(this.#focus.n, this.#focus.key);
+      return;
     }
+    if (e.key === 'Escape') {
+      // Clearing a selection first, then — with nothing selected — Escape means what it always
+      // meant, and AnnotationLayer's handler leaves Edit mode.
+      if (!this.#selection.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.#select(null);
+      return;
+    }
+    if (e.key === 'Enter') {
+      const run = this.#focusRun();
+      if (!run) return; // an image is selected: nothing can be done to one yet
+      e.preventDefault();
+      this.#open(run.n, run.key);
+    }
+  }
+
+  /**
+   * The selection as a run, when it is one. Tab's itinerary is the editable text it has always
+   * been, so everything that walks it speaks in run keys and stops here if the selection is not
+   * text.
+   */
+  #focusRun() {
+    const current = this.#selection.current;
+    if (!current || !current.key.startsWith('run:')) return null;
+    return { n: current.page, key: current.key.slice('run:'.length) };
   }
 
   #onPointerDownAnywhere(e) {
@@ -283,7 +370,7 @@ export class TextEditor {
   // ---- moving between texts (Tab) ------------------------------------------------------------
 
   async #move(delta, { edit = false } = {}) {
-    const from = this.#editor ? { n: this.#editor.n, key: this.#editor.key } : this.#focus;
+    const from = this.#editor ? { n: this.#editor.n, key: this.#editor.key } : this.#focusRun();
     // Find where to go first: at the last (or first) text there's nowhere to go, and an open
     // editor simply stays open.
     const target = await this.#neighbour(from, delta);
@@ -293,16 +380,11 @@ export class TextEditor {
     }
     if (this.#editor && !(await this.#commit())) return;
     await this.#settled();
-    const previous = this.#focus;
-    this.#focus = target;
+    this.#select({ n: target.n, key: runKeyOf(target.key) });
     this.#reveal(target);
     if (edit) {
       await this.#open(target.n, target.key);
       return;
-    }
-    for (const n of new Set([previous?.n, target.n].filter(Boolean))) {
-      const page = this.#pages.get(n);
-      if (page) this.#draw(page);
     }
     this.#announce(`Editable text: ${target.text}. Press Enter to change it.`);
   }
@@ -514,17 +596,7 @@ export class TextEditor {
   #screenQuad(n, run) {
     const pageView = this.#view.viewer.getPageView(n - 1);
     if (!pageView?.div) return null;
-    const vp = pageView.viewport;
-    const box = pageView.div.getBoundingClientRect();
-    if (!box.width) return null;
-    const sx = box.width / vp.width;
-    const sy = box.height / vp.height;
-    const pts = [];
-    for (let i = 0; i < 8; i += 2) {
-      const [vx, vy] = vp.convertToViewportPoint(run.quad[i], run.quad[i + 1]);
-      pts.push([box.left + vx * sx, box.top + vy * sy]);
-    }
-    return pts;
+    return toClientQuad(pageView, run.quad);
   }
 
   /** Sizes, rotates and styles the editor to sit exactly over its text. */

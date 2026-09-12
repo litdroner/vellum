@@ -13,6 +13,7 @@ import {
 } from './pages/plan.js';
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
+import { ObjectSelection } from './editing/objects/selection.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
 // (page, zoom, rotation, layout, search) and reports changes with a 'change' event.
@@ -106,6 +107,8 @@ export class DocumentView extends EventTarget {
     this.annotations.guard = () => this.#mayChange();
     /** Finding and changing text on the pages (engine in editing/, no UI). */
     this.textEditing = new TextEditing(this);
+    /** Which object on a page is selected, as identity alone: { page, key }. Geometry is never kept. */
+    this.objectSelection = new ObjectSelection();
     this.annotations.addEventListener('change', (e) => {
       if (e.detail.plan || e.detail.edits) this.#rebuild();
       this.#changed();
@@ -550,6 +553,10 @@ export class DocumentView extends EventTarget {
       this.#notice('A PDF needs at least one page, so the last page can’t be deleted.');
       return false;
     }
+    // A selection is a page number and a key. That is enough to find an object again after the
+    // page is rewritten, but not enough to tell a reordered page from where it used to be — so a
+    // plan change drops it rather than leaving it pointing somewhere plausible and wrong.
+    this.objectSelection.clear();
     this.annotations.applyPlan(plan, [
       ...followPages(this.annotations.all, before, plan, copies),
       ...followEdits(this.annotations.edits, plan, copies),

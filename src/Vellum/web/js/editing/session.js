@@ -6,6 +6,7 @@
 import { openSource } from './source.js';
 import { analyzePage, verifyPage } from './runs.js';
 import { planTextEdit, EditError } from './edits.js';
+import { selectableObjects } from './objects/selection.js';
 import { loadPdfLib } from '../annotations/persist.js';
 
 export class TextEditing {
@@ -48,6 +49,25 @@ export class TextEditing {
         return { run, edit, text: edit ? edit.text : run.text };
       }),
     };
+  }
+
+  /**
+   * The objects on a page that can be selected: { entry, kind, objects, analysis }, in drawing
+   * order. Read-only throughout — the object model derives this from the analysis and changes
+   * nothing — and it is the same verified analysis the text uses, because a page is analyzed once
+   * and not once per feature.
+   *
+   * `analysis` comes back so a caller can resolve a selection's geometry against the page as it is
+   * now; it is meant to be used and dropped, never stored.
+   */
+  async objects(pageNumber) {
+    const reason = this.unavailableReason;
+    if (reason) throw new EditError('document', reason);
+    const entry = this.#view.shownPlan?.[pageNumber - 1];
+    if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
+    if (entry.src === 'blank') return { entry, kind: 'no-text', objects: [], analysis: null };
+    const analysis = await this.#analysis(entry, pageNumber);
+    return { entry, kind: analysis.summary.kind, objects: selectableObjects(analysis), analysis };
   }
 
   /**

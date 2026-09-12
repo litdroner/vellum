@@ -1,6 +1,7 @@
 import { h, clamp } from '../dom.js';
 import { icon } from '../icons.js';
 import { copySelection } from '../commands.js';
+import { pageViewAt, toPdfPoint, tolerancePoints } from '../page-space.js';
 import { PALETTES } from './model.js';
 import { selectionToQuads, bounds, hitTest, inkPathD, simplify, underlineSegments, NOTE_SIZE } from './geometry.js';
 
@@ -327,23 +328,20 @@ export class AnnotationLayer extends EventTarget {
 
   // ---- coordinates ---------------------------------------------------------------
 
+  // Page ↔ PDF user space is page-space.js: one conversion, shared with text editing, so the two
+  // can never disagree about where a point on a rotated or cropped page is.
+
   #pageAt(element) {
-    const div = element?.closest?.('.page');
-    if (!div || !this.view.viewerEl.contains(div)) return null;
-    const n = Number(div.dataset.pageNumber);
-    const pageView = this.view.viewer.getPageView(n - 1);
-    return pageView ? { n, pageView } : null;
+    return pageViewAt(this.view, element);
   }
 
   #toPdf(pageView, clientX, clientY) {
-    const box = pageView.div.getBoundingClientRect();
-    const vp = pageView.viewport;
-    return vp.convertToPdfPoint((clientX - box.left) * (vp.width / box.width), (clientY - box.top) * (vp.height / box.height));
+    return toPdfPoint(pageView, clientX, clientY);
   }
 
   /** About 5 screen pixels, in PDF points at the current zoom. */
   #tolerance(pageView) {
-    return 5 / pageView.viewport.scale;
+    return tolerancePoints(pageView, 5);
   }
 
   /** Where an annotation currently is on screen. */
