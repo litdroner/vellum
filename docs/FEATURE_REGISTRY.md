@@ -41,7 +41,15 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 | Digitally signed PDFs: the first change is confirmed (saving invalidates the signature) | done | document-view.js, annotations/model.js, app.js |
 | Tagged PDFs: says once that accessibility tags aren't updated for changed text | done | ui/text-editor.js |
 | PDF/A: a change needing a substitute (non-embedded) font is refused, with the reason | done | editing/edits.js, editing/objects/text-run.js |
-| Paragraph reflow, moving and resizing text, new characters outside Latin (WinAnsi) | planned | — |
+| Select an object in Edit mode: a text run or a picture, outlined where it is; identity only ({ page, key }) | done | editing/objects/selection.js, ui/text-editor.js |
+| What may be done to an object, verb by verb, in the one reason vocabulary; a verb is true only where a writer exists | done | editing/objects/capabilities.js |
+| Move and uniformly scale text and pictures: drag the object, or drag a corner handle | done | ui/text-editor.js, editing/objects/transform.js |
+| Turn a picture a quarter turn ([ and ]) and mirror it in its own axes (Shift+H, Shift+V) | done | ui/text-editor.js, editing/objects/image.js |
+| Nudge with the arrow keys: one point, ten with Shift; a whole burst is one undo step | done | ui/text-editor.js, annotations/model.js |
+| Delete a selected run or picture (Delete / Backspace); a picture's XObject is released when provably unused | done | editing/session.js, editing/objects/image.js |
+| One object, one record, holding where it ends up: a second gesture replaces the first, and one gesture is one undo | done | editing/edits.js, editing/objects/image.js |
+| Refused rather than risked: a clipped or degenerate picture, one inside a form, on a layer or under a soft mask; text is never rotated, mirrored, sheared or scaled non-uniformly | done | editing/objects/capabilities.js, editing/objects/image.js, editing/edits.js |
+| Rotating text, non-proportional picture resize, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages
 

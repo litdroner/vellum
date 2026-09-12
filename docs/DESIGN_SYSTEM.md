@@ -66,6 +66,13 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
   thickens it, edited text uses `accent2`); text that can't be edited shows a dotted grey outline and
   explains itself when clicked. The editor sits exactly on the text, in the page's own font and paper
   colour (and follows page colours), ringed in the accent; the document itself is never tinted.
+- **Selected object**: a picture selected in Edit mode gets a solid accent outline on its own oriented
+  quad, not a bounding box, so a turned or mirrored picture is outlined as it looks. Four small white
+  corner handles appear only where a uniform scale can really be written — never on an object whose
+  capabilities refuse it, and never on the edge midpoints, which no writer could honour. A movable
+  picture takes the `move` cursor; text keeps the caret, because clicking text types rather than
+  moves. While a gesture is under way only the outline follows the pointer: the page is re-rendered
+  once, when the change is written, so nothing is dragged around at the cost of a repaint per frame.
 - **Home**: date, greeting, Open card (dashed inner edge), paper illustration, recent covers.
 - **Settings**: left navigation (Appearance, Reading, Updates, Shortcuts, About), rows on surface.
 - **Command palette** (Ctrl+K): every command from the registry plus recent files.
