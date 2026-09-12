@@ -1,50 +1,39 @@
-// Writes text edits into pages while a document is being composed (annotations/persist.js is the
-// only place PDF bytes are produced; it calls this). For each edited page:
-//   1. the edited run's original glyphs are taken out of their text operators and replaced by an
-//      equal advance ([n] TJ), so every other glyph on the page stays exactly where it was;
-//   2. the new text is drawn after the page's own content, from a clean graphics state that
-//      repeats the original's position, colour, spacing, transparency and font;
-//   3. the page gets one new content stream. Nothing else on the page is touched.
-// Each record is checked against the page first; if its text isn't there exactly as recorded,
-// nothing is written (EditError) rather than guessing.
+// The text handler for the page writer: everything about turning a text edit into content-stream
+// bytes. It is the only handler registered today (see registry.js).
+//
+// For one page it:
+//   1. checks each record against the page's ORIGINAL content — the run must still be there with
+//      exactly the text and glyphs the record was made from, or nothing is written at all;
+//   2. takes the edited glyphs out of their text operators, replacing each with the exact advance
+//      it had, so every other glyph on the page stays precisely where it was;
+//   3. draws the new text after the page's own content, from a clean graphics state that repeats
+//      the original's position, colour, spacing, transparency and font.
+//
+// The page writer does the rest: splicing the patches in, closing what the page leaves open, and
+// making the new content stream.
 
-import { PdfName, PdfString } from './content/lexer.js';
-import { PdfSource, pdfaClaim } from './source.js';
-import { analyzePage } from './runs.js';
-import { EditError } from './edits.js';
+import { EditError } from '../edits.js';
+import { pdfaClaim } from '../source.js';
+import { num, hexString, pdfName, operand } from '../content/writer.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
 
-/** Applies text edits to arranged pages. pages[i] shows plan[i]. Returns { changed } (pages rewritten). */
-export function applyTextEdits({ lib, doc, pages, plan, edits }) {
-  const byEntry = new Map();
-  for (const e of edits) {
-    if (e.kind !== 'text') continue;
-    const list = byEntry.get(e.entry) ?? [];
-    list.push(e);
-    byEntry.set(e.entry, list);
-  }
-  if (!byEntry.size) return { changed: 0 };
+/** The kind of edit record this handler writes. */
+export const kind = 'text';
+
+/** Checked once for the whole document, before anything is written. */
+export function precheck({ lib, doc, records }) {
   // PDF/A needs every font embedded; the standard fonts Vellum substitutes aren't.
-  if (edits.some((e) => e.kind === 'text' && e.encoding?.mode === 'standard') && pdfaClaim(lib, doc)) {
+  if (records.some((e) => e.encoding?.mode === 'standard') && pdfaClaim(lib, doc)) {
     throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; a change that uses a substitute font would break it, so nothing was changed.');
   }
-  const source = new PdfSource(lib, doc);
-  let changed = 0;
-  plan.forEach((entry, i) => {
-    const records = byEntry.get(entry.id);
-    if (!records || !pages[i]) return;
-    rewritePage(lib, doc, source, pages[i], i, records);
-    changed++;
-  });
-  return { changed };
 }
 
-function rewritePage(lib, doc, source, page, index, records) {
-  const analysis = analyzePage(source.pageFor(page, index));
-  if (analysis.summary.kind === 'unreadable' || analysis.tainted || analysis.unbalanced) {
-    throw new EditError('content', `Page ${index + 1}’s content couldn’t be read reliably, so it wasn’t changed.`);
-  }
+/**
+ * The changes one page's text edits make: byte patches into the page's own content, and the text
+ * to draw after it. Throws (and nothing is written) if a record no longer matches the file.
+ */
+export function write({ lib, doc, page, index, analysis, records }) {
   const targets = [];
   const edited = new Map(); // show index → Set of glyph indexes taken out
   for (const record of records) {
@@ -61,21 +50,9 @@ function rewritePage(lib, doc, source, page, index, records) {
     targets.push({ record, run });
   }
 
-  const patches = [...edited].map(([si, set]) => neutralize(analysis, analysis.shows[si], set)).sort((a, b) => a.start - b.start);
-  for (let i = 1; i < patches.length; i++) {
-    if (patches[i].start < patches[i - 1].end) throw new EditError('content', 'Overlapping text operators; the page wasn’t changed.');
-  }
+  const patches = [...edited].map(([si, set]) => neutralize(analysis, analysis.shows[si], set));
 
-  // The page's own content, wrapped in q … Q (closing anything it leaves open), then the new text.
-  const pieces = [ascii('q\n')];
-  let at = 0;
-  for (const p of patches) {
-    pieces.push(analysis.bytes.subarray(at, p.start), ascii(p.text));
-    at = p.end;
-  }
-  pieces.push(analysis.bytes.subarray(at));
-  pieces.push(ascii(`\n${analysis.openText ? 'ET\n' : ''}${'Q\n'.repeat(analysis.openStates)}Q\n`));
-
+  const append = [];
   const standardFonts = new Map();
   for (const { record, run } of targets) {
     if (record.encoding.mode === 'none') continue;
@@ -87,11 +64,9 @@ function rewritePage(lib, doc, source, page, index, records) {
       fontName = standardFonts.get(name);
       items = encodeStandard(lib, name, record.text);
     }
-    pieces.push(ascii(`${drawText(analysis, run, fontName, items)}\n`));
+    append.push(drawText(analysis, run, fontName, items));
   }
-
-  const ctx = doc.context;
-  page.node.set(lib.PDFName.of('Contents'), ctx.register(ctx.flateStream(concat(pieces))));
+  return { patches, append };
 }
 
 const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i) => s === b[i][0] && g === b[i][1]);
@@ -212,45 +187,4 @@ function addStandardFont(lib, doc, page, name) {
 function encodeStandard(lib, name, text) {
   const encoding = lib.StandardFontEmbedder.for(name).encoding;
   return [...text].map((ch) => ({ code: encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code, byteLength: 1 }));
-}
-
-// ---- writing operands ----------------------------------------------------------------------
-
-function num(v) {
-  if (!Number.isFinite(v)) throw new EditError('content', 'A number on the page couldn’t be written.');
-  const r = Math.round(v * 10000) / 10000;
-  return Object.is(r, -0) ? '0' : String(r);
-}
-
-const hexString = (bytes) => `<${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}>`;
-
-function pdfName(name) {
-  let out = '/';
-  for (const ch of name) {
-    const c = ch.charCodeAt(0);
-    out += c < 0x21 || c > 0x7e || '#()<>[]{}/%'.includes(ch) ? `#${c.toString(16).padStart(2, '0')}` : ch;
-  }
-  return out;
-}
-
-function operand(v) {
-  if (typeof v === 'number') return num(v);
-  if (v instanceof PdfName) return pdfName(v.name);
-  if (v instanceof PdfString) return hexString(v.bytes);
-  if (Array.isArray(v)) return `[${v.map(operand).join(' ')}]`;
-  if (v instanceof Map) return `<<${[...v].map(([k, x]) => `${pdfName(k)} ${operand(x)}`).join(' ')}>>`;
-  if (v === true || v === false) return String(v);
-  return 'null';
-}
-
-const ascii = (s) => Uint8Array.from(s, (c) => c.charCodeAt(0) & 0xff);
-
-function concat(parts) {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let at = 0;
-  for (const p of parts) {
-    out.set(p, at);
-    at += p.length;
-  }
-  return out;
 }

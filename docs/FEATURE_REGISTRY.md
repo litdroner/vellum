@@ -36,11 +36,11 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 | Written with the text's own font when it has every character; otherwise a matching standard font (said before applying) | done | editing/fonts.js, editing/edits.js |
 | Only text pdf.js reads exactly the same way is offered; anything else says why (Type 3, symbol, vertical, forms, clipped, invisible, scans, soft masks, layers…) | done | editing/runs.js |
 | Undo / redo shared with annotations and page edits; edits follow moved, duplicated and deleted pages | done | annotations/model.js, editing/edits.js |
-| Saved into the page itself: only edited pages change; the replaced text is removed from the file | done | editing/apply.js, annotations/persist.js |
+| Saved into the page itself: only edited pages change; the replaced text is removed from the file | done | editing/page-writer.js, annotations/persist.js |
 | Protected (encrypted) PDFs: text editing unavailable, with the reason | done | editing/session.js |
 | Digitally signed PDFs: the first change is confirmed (saving invalidates the signature) | done | document-view.js, annotations/model.js, app.js |
 | Tagged PDFs: says once that accessibility tags aren't updated for changed text | done | ui/text-editor.js |
-| PDF/A: a change needing a substitute (non-embedded) font is refused, with the reason | done | editing/edits.js, editing/apply.js |
+| PDF/A: a change needing a substitute (non-embedded) font is refused, with the reason | done | editing/edits.js, editing/objects/text-run.js |
 | Paragraph reflow, moving and resizing text, new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages

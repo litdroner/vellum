@@ -5,7 +5,8 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 
 - Baseline: 0.4.0 released (`f0bc670`, tag `v0.4.0`), documentation checkpoint `ae1f36c`.
 - Phase 0 (hardening and test infrastructure): done, see "Phase 0 record" below.
-- Phase 1 onwards: not started.
+- Phase 1 (object model and the unified page writer): done, see "Phase 1 record" below.
+- Phase 2 onwards: not started.
 
 ## 1. Approved direction
 
@@ -184,7 +185,58 @@ belong to later phases, which add the interaction.
 - The `performance` suite needs a real document supplied by hand (`VELLUM_PERF_PDF`); no personal
   file is stored in the repository.
 
-## 7. Next
+## 7. Phase 1 record (the object model and the unified page writer)
 
-Phase 1 — the object model and the unified page writer, with byte-identical output for existing text
-edits — has not been started. It begins only on approval.
+Four steps, each proved against the one before it. Nothing in the app behaves differently: no UI, no
+new edit kind, no change to the edit store, and the same bytes out of `composeDocument`.
+
+| Step | What | How it was proved |
+|---|---|---|
+| 0 | Characterization tests, taken before anything moved | 25 tests pinning composed content streams, which text is editable and why, object identity and z-order |
+| 1 | `editing/apply.js` split into `editing/page-writer.js` (finds edited pages, splices, assembles), `editing/objects/text-run.js` (everything about writing text) and `editing/objects/registry.js` (which handler writes which kind) | all 25 baselines unchanged, old writer versus new |
+| 2 | `editing/objects/page-objects.js`: one read-only view of everything drawn on a page — text runs, images, painted paths, form XObjects | identity, drawing order and text editability all pass through from the analysis unchanged |
+| 3 | `editing/objects/capabilities.js`: what may be done to an object, verb by verb | `editText` answers exactly what `run.editable` answers, in the same words the editor already shows |
+
+### Decisions worth keeping
+
+- **Identity.** A text object is `run:<run.key>`; everything else is `<kind>:<stream>#<opIndex>`. Where
+  an object is drawn cannot name a text run — one `TJ` operator can hold several columns, which read
+  as separate runs — and a resource key cannot name anything, since one image is drawn many times and
+  an inline image has no key at all.
+- **Z-order is a path**, not a number: `[57, 2]` is the 3rd operator inside the form that the page's
+  58th operator draws. A bare operator index sorts nested objects as though they were at the front of
+  the page.
+- **Objects are built on demand**, never inside `analyzePage()` and never while a document is composed.
+  A test walks the import graph from `annotations/persist.js` and `editing/page-writer.js` and fails if
+  either can reach the object model or capabilities, so the cost cannot drift onto every save.
+- **One reason vocabulary.** A capability is `true` or a key of `REASONS` in `editing/runs.js`; there is
+  no second table. Phase 1 added exactly one key, `unsupported`, for a verb that has no writer yet.
+  Today `true` appears in exactly one cell of the whole model: a text run's `editText`. Refusals name
+  the specific reason when there is one — `form`, `layer`, `soft-mask`, and page-wide `structure` or
+  `unreadable` — rather than a vaguer one.
+
+### Test results
+
+**Node engine suite** — `node --test "tests/editing/*.test.mjs"`: **113 tests, 111 pass, 2 skipped, 0
+fail** (Phase 0 left it at 62). The 2 skipped need personal PDFs (`VELLUM_TEST_PDFS`), by design. 51
+tests are new in Phase 1: `phase1-baseline.test.mjs` (25), `page-objects.test.mjs` (15),
+`capabilities.test.mjs` (11).
+
+**End-to-end**: not re-run for Steps 2 and 3, deliberately. `page-objects.js` and `capabilities.js`
+are referenced only by their own tests — nothing in the running app reaches them yet, so there is
+nothing for the app-level suites to observe. They run again when Phase 2 wires selection to the model.
+
+### Remaining Phase 1 work
+
+1. **An edit whose kind no handler claims is still dropped without a word** (`editing/page-writer.js`,
+   `editing/objects/registry.js`). It has to become an explicit refusal — a change a person made must
+   never vanish silently. `phase1-baseline.test.mjs` pins today's behaviour on purpose, so that fix
+   arrives as a deliberate, readable diff rather than something that slips through.
+2. **`text-block`** is in the object model's planned kinds but not built: only `text-run`, `image`,
+   `path` and `form` exist. Paragraph grouping is a "should have" and is gated on its own tests.
+3. **No end-to-end coverage of the object model yet**, for the reason given above.
+
+## 8. Next
+
+Phase 2 — selection: oriented bounding boxes, handles, z-aware hit-testing and same-page multi-select,
+built on the objects and capabilities above. It begins only on approval.

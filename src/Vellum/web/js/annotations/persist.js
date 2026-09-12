@@ -1,6 +1,6 @@
 import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
-import { applyTextEdits } from '../editing/apply.js';
+import { applyObjectEdits } from '../editing/page-writer.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -46,7 +46,7 @@ export function writeAnnotations(bytes, annotations) {
  *   plan         page plan, or null for "the file's own pages, unchanged"
  *   sources      Map of sourceId → bytes, for pages inserted from other PDFs
  *   annotations  Vellum annotations to write; .page is the 1-based position in the plan
- *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/apply.js
+ *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/page-writer.js
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
  */
 export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], clean = true }) {
@@ -61,7 +61,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
 
   // Text edits rewrite only their own pages' content streams.
-  const { changed } = edits.length && plan ? applyTextEdits({ lib, doc, pages, plan, edits }) : { changed: 0 };
+  const { changed } = edits.length && plan ? applyObjectEdits({ lib, doc, pages, plan, edits }) : { changed: 0 };
 
   for (const a of annotations) {
     const page = pages[a.page - 1];

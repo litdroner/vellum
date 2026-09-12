@@ -37,6 +37,7 @@ export const REASONS = {
   'font-resource': 'This text’s font is chosen in an unusual way, so Vellum can’t write with it.',
   'soft-mask': 'This text is drawn through a transparency mask (a soft mask) that Vellum can’t reproduce exactly, so it won’t risk changing it.',
   layer: 'This text is on a layer that can be shown or hidden (optional content). Vellum can’t keep changed text on its layer yet.',
+  unsupported: 'Vellum can’t do this to this object yet.',
 };
 
 export const PAGE_KINDS = {
