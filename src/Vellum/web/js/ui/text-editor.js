@@ -1,9 +1,11 @@
 import { h, clamp } from '../dom.js';
 import { icon } from '../icons.js';
-import { PAGE_KINDS, explainRun } from '../editing/runs.js';
+import { PAGE_KINDS, REASONS, explainRun } from '../editing/runs.js';
 import { EditError } from '../editing/edits.js';
-import { quadArea, quadContains, hitTest } from '../editing/objects/geometry.js';
-import { pageViewAt, toPdfPoint, toClientQuad, tolerancePoints } from '../page-space.js';
+import { quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints } from '../editing/objects/geometry.js';
+import { IDENTITY, multiply, translate } from '../editing/matrix.js';
+import { scaleAbout, quarterTurn, flip, isIdentity } from '../editing/objects/transform.js';
+import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints } from '../page-space.js';
 
 // Edit mode ("Edit text", E): shows what on a page can be selected and changed, and edits text in
 // place. The engine (editing/) finds, checks and writes the text; this module is only the
@@ -17,10 +19,32 @@ import { pageViewAt, toPdfPoint, toClientQuad, tolerancePoints } from '../page-s
 //   - a small glass bar: which font the text will use, and Cancel / Done
 // Enter keeps the change, Escape cancels, Tab moves to the next text (Shift+Tab to the previous).
 //
-// Selecting an image is as far as Phase 2 goes: nothing moves, scales, rotates or deletes an
-// object yet, so nothing here offers to. Tab's itinerary is the editable text it has always been.
+//   - manipulation: dragging a selected object moves it, a corner handle scales it uniformly, and
+//     the keyboard nudges, turns, flips and deletes it. Every gesture ends as ONE edit record with
+//     an ABSOLUTE transform, so one gesture is one undo and a second gesture replaces the first.
+//
+// Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
+//
+// Where an object IS matters here, and it is never remembered. The analysis always describes the
+// ORIGINAL page - that is what keeps a { page, key } naming the same object across any number of
+// edits - so an object that has been moved is drawn, hit-tested and dragged from its own quad with
+// its record's transform applied (#liveOf). Nothing in this module stores a coordinate between two
+// frames except the gesture currently under the pointer.
+//
+// Only what an object's capabilities allow is offered: a locked run is never dragged, a clipped
+// picture is never turned, and text is never rotated. The engine refuses all of that again anyway
+// (editing/edits.js, editing/objects/image.js) - the UI simply does not ask.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+/** Screen pixels the pointer may wander before a press becomes a drag rather than a click. */
+const DRAG_THRESHOLD = 3;
+/** Screen pixels around a corner handle that count as grabbing it. */
+const HANDLE_GRAB = 8;
+/** What one arrow key moves an object, in points; with Shift, ten times as far. */
+const NUDGE_STEP = 1;
+/** Bounds on a corner drag, so a slip of the hand can't collapse an object or throw it off the page. */
+const SCALE_LIMITS = [0.05, 20];
+let nudgeSeq = 0;
 const STANDARD_CSS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
 
 function svg(tag, attrs) {
@@ -30,6 +54,7 @@ function svg(tag, attrs) {
 }
 
 const quadPoints = (q) => `${q[0]},${q[1]} ${q[2]},${q[3]} ${q[4]},${q[5]} ${q[6]},${q[7]}`;
+const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 /** A text run's object key in the model: the one place the two namings meet. */
 const runKeyOf = (key) => `run:${key}`;
@@ -57,6 +82,11 @@ export class TextEditor {
   #notify;
   #pages = new Map(); // page number → { n, data, objects, error, loading }
   #hover = null; // { n, key }
+  #drag = null; // the gesture under the pointer: { n, key, mode, from, client, moved, ... }
+  #shownAt = null; // { n, key, quad } - where a pending or just-committed gesture puts an object
+  #nudge = null; // an arrow-key burst not yet written: { n, key, token, transform, flush, end }
+  #gesture = 0; // serial number: an async hit test whose gesture has moved on is dropped
+  #clickAfterDrag = false;
   #editor = null; // { n, key, item, el, paper, input, bar, status, done, pending }
   #committing = null;
   #tip = null;
@@ -77,7 +107,10 @@ export class TextEditor {
     view.eventBus.on('rotationchanging', () => requestAnimationFrame(() => this.#reposition()));
     view.addEventListener('documentchange', () => this.#documentChanged());
     const c = view.container;
+    c.addEventListener('pointerdown', (e) => this.#onPointerDown(e), { signal });
     c.addEventListener('pointermove', (e) => this.#onHover(e), { signal });
+    c.addEventListener('pointerup', (e) => this.#onPointerUp(e), { signal });
+    c.addEventListener('lostpointercapture', () => this.#cancelGesture(), { signal });
     c.addEventListener('click', (e) => this.#onClick(e), { signal });
     // Captured, so Escape can clear a selection before AnnotationLayer's own handler reads it as
     // "leave this tool". With nothing selected it falls through to that, exactly as it always did.
@@ -103,6 +136,8 @@ export class TextEditor {
     const view = this.#view;
     if (!this.active) {
       await this.commitPending();
+      this.#flushNudge();
+      this.#cancelGesture();
       this.#closeEditor();
       this.#hideTip();
       this.#hover = null;
@@ -123,7 +158,7 @@ export class TextEditor {
       return;
     }
     if (!this.active) return;
-    this.#announce('Edit text. Click text to change it, or press Tab to move between editable text.');
+    this.#announce('Edit. Click text to change it, drag an object to move it, or press Tab to move between editable text.');
     for (const n of this.#renderedPages()) this.#showPage(n);
   }
 
@@ -142,6 +177,7 @@ export class TextEditor {
     // where the page plan changes (document-view.js).
     this.#pages.clear();
     this.#hover = null;
+    this.#shownAt = null; // the rebuilt pages carry the change the preview was standing in for
     this.#hideTip();
     if (this.#editor) this.#closeEditor({ refocus: false });
   }
@@ -178,6 +214,47 @@ export class TextEditor {
     return page.loading;
   }
 
+  /**
+   * The page's selectable objects where they are NOW, in drawing order, and a quad for every one of
+   * them by key: its own quad with the absolute transform its edit record holds applied, or null
+   * when the record removed it altogether.
+   *
+   * This is the only place the original page and the edits made to it are put together. The
+   * analysis is always of the ORIGINAL content — which is exactly why { page, key } keeps naming
+   * the same object however often the file is rewritten — so an object that has been dragged is
+   * nowhere near its analysed quad, and drawing or hit-testing from that quad would point at where
+   * it used to be. Worked out once per page load and thrown away with it: a rebuild clears #pages.
+   */
+  #liveOf(page) {
+    if (page.live) return page.live;
+    const records = page.objects?.records ?? new Map();
+    const objects = [];
+    const quads = new Map();
+    for (const object of page.objects?.objects ?? []) {
+      const edit = records.get(object.ref.key) ?? null;
+      // A picture whose draw is gone, and text whose glyphs are gone, are not on the page to point at.
+      const removed = Boolean(edit?.removed) || edit?.encoding?.mode === 'none';
+      const quad = removed ? null : transformQuad(object.geometry.quad, edit?.transform ?? null);
+      quads.set(object.ref.key, quad);
+      if (quad) objects.push({ ...object, geometry: { ...object.geometry, quad, box: quadBox(quad) }, edit });
+    }
+    page.live = { objects, quads };
+    return page.live;
+  }
+
+  /** One live object by key, or null: what a gesture and the keyboard both act on. */
+  #liveObject(n, key) {
+    const page = this.#pages.get(n);
+    return page?.data ? this.#liveOf(page).objects.find((o) => o.ref.key === key) ?? null : null;
+  }
+
+  /** Where an object is drawn right now: a pending gesture's preview if it has one, else its quad. */
+  #shownQuad(page, key, fallback = null) {
+    if (this.#shownAt?.n === page.n && this.#shownAt.key === key) return this.#shownAt.quad;
+    const quads = this.#liveOf(page).quads;
+    return quads.has(key) ? quads.get(key) : fallback;
+  }
+
   #draw(page) {
     const layer = this.#view.annotLayer;
     if (!this.active || !page.data) {
@@ -188,20 +265,34 @@ export class TextEditor {
     const shapes = [];
     for (const item of page.data.runs) {
       const { run } = item;
+      const key = runKeyOf(run.key);
       const hovered = this.#hover?.n === page.n && this.#hover.key === run.key;
-      const focused = selectedKey === runKeyOf(run.key);
+      const focused = selectedKey === key;
       if (this.#editor?.n === page.n && this.#editor.key === run.key) continue; // the editor covers it
       if (run.reasons.has('blank') || (!run.editable && !hovered && !focused)) continue;
+      // Its own quad only for a run the object model doesn't offer (invisible or clipping text,
+      // which is still explained when it is hovered); everything else is drawn where it is now.
+      const quad = this.#shownQuad(page, key, run.quad);
+      if (!quad) continue; // its text has been removed: there is nothing there any more
       const cls = ['vl-edit-run', !run.editable && 'locked', hovered && 'hover', focused && 'focus', item.edit && 'edited'].filter(Boolean).join(' ');
-      shapes.push(svg('polygon', { class: cls, points: quadPoints(run.quad) }));
+      shapes.push(svg('polygon', { class: cls, points: quadPoints(quad) }));
     }
-    // Anything else selected — an image — outlined where it is NOW: its quad is read out of this
-    // page's current analysis on every draw, so zoom, rotation and a rebuild all take care of
-    // themselves, and nothing here remembers a coordinate between draws. Selected text is already
+    // Anything else selected — an image — outlined where it is NOW. Selected text is already
     // drawn above, in the outline Edit mode has always used for it.
-    const object = selectedKey ? this.#selection.resolve(page.objects?.analysis) : null;
-    if (object && object.kind !== 'text-run') {
-      shapes.push(svg('polygon', { class: 'vl-object-sel', points: quadPoints(object.geometry.quad) }));
+    const selected = selectedKey ? this.#liveObject(page.n, selectedKey) : null;
+    if (selected && selected.kind !== 'text-run') {
+      const quad = this.#shownQuad(page, selectedKey, selected.geometry.quad);
+      if (quad) shapes.push(svg('polygon', { class: 'vl-object-sel', points: quadPoints(quad) }));
+    }
+    // Corner handles, and only where a corner drag can really be honoured: they promise a uniform
+    // scale, so an object that can't be scaled is never given one to grab. Not while the text
+    // editor is open over the object, where they would sit under the editor's own frame.
+    if (selected?.capabilities.scale === true && !(this.#editor?.n === page.n && runKeyOf(this.#editor.key) === selectedKey)) {
+      const quad = this.#shownQuad(page, selectedKey, selected.geometry.quad);
+      const r = tolerancePoints(this.#view.viewer.getPageView(page.n - 1), 4);
+      for (const [x, y] of (handlePoints(quad) ?? []).slice(0, 4)) {
+        shapes.push(svg('circle', { class: 'vl-object-handle', cx: x, cy: y, r }));
+      }
     }
     layer.decorate(page.n, shapes);
   }
@@ -209,6 +300,7 @@ export class TextEditor {
   /** Moves the selection and redraws whatever that changed. Only identity ever goes in. */
   #select(to) {
     const from = this.#selection.current;
+    if (from && (!to || from.key !== to.key || from.page !== to.n)) this.#flushNudge();
     const changed = to ? this.#selection.select(to.n, to.key) : this.#selection.clear();
     if (!changed) return;
     for (const n of new Set([from?.page, to?.n].filter(Boolean))) {
@@ -230,20 +322,22 @@ export class TextEditor {
    * selecting, but Edit mode has always said why they can't be edited, and still does.
    */
   async #hitAt(target, clientX, clientY) {
-    const at = pageViewAt(this.#view, target);
+    // Where the pointer is, not what the event was aimed at: a captured pointer retargets its
+    // events to the element holding the capture, which is not the page the person is pointing at.
+    const at = pageViewAt(this.#view, target) ?? pageViewAt(this.#view, document.elementFromPoint(clientX, clientY));
     if (!at) return null;
     const page = await this.#ensurePage(at.n);
-    if (!page?.data) return { n: at.n, page, object: null, item: null };
+    if (!page?.data) return { n: at.n, page, object: null, item: null, pageView: at.pageView };
     const point = toPdfPoint(at.pageView, clientX, clientY);
     const tol = tolerancePoints(at.pageView, 2);
-    const object = hitTest(page.objects?.objects ?? [], point, tol);
+    const object = hitTest(this.#liveOf(page).objects, point, tol);
     if (object) {
       const item = object.kind === 'text-run'
         ? page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null
         : null;
-      return { n: at.n, page, object, item };
+      return { n: at.n, page, object, item, pageView: at.pageView };
     }
-    return { n: at.n, page, object: null, item: this.#explainableAt(page, point, tol) };
+    return { n: at.n, page, object: null, item: this.#explainableAt(page, point, tol), pageView: at.pageView };
   }
 
   /** The smallest run under a point that isn't blank, whether or not it can be selected or edited. */
@@ -261,7 +355,12 @@ export class TextEditor {
   // ---- pointer and keyboard ---------------------------------------------------------------
 
   #onHover(e) {
-    if (!this.active || this.#hoverQueued || e.buttons) return;
+    if (!this.active) return;
+    if (this.#drag) {
+      this.#onDragMove(e);
+      return;
+    }
+    if (this.#hoverQueued || e.buttons) return;
     this.#hoverQueued = true;
     const { clientX, clientY, target } = e;
     requestAnimationFrame(async () => {
@@ -274,6 +373,8 @@ export class TextEditor {
       const c = this.#view.container;
       c.classList.toggle('vl-edit-hover', Boolean(item?.run.editable));
       c.classList.toggle('vl-edit-locked', Boolean(item && !item.run.editable));
+      // A picture says "drag me"; text keeps the caret, because clicking it types rather than moves.
+      c.classList.toggle('vl-edit-move', hit?.object?.kind === 'image' && hit.object.capabilities.move === true);
       if (previous?.n === this.#hover?.n && previous?.key === this.#hover?.key) return;
       if (previous && previous.n !== hit?.n) {
         const old = this.#pages.get(previous.n);
@@ -284,6 +385,10 @@ export class TextEditor {
   }
 
   async #onClick(e) {
+    if (this.#clickAfterDrag) {
+      this.#clickAfterDrag = false; // the pointerup that ended a drag: it selected and moved already
+      return;
+    }
     if (!this.active || e.button !== 0 || e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip')) return;
     const hit = await this.#hitAt(e.target, e.clientX, e.clientY);
     if (!hit) return;
@@ -308,6 +413,327 @@ export class TextEditor {
     else if (kind && kind !== 'text') this.#showTip(e.clientX, e.clientY, PAGE_KINDS[kind]);
   }
 
+  // ---- moving, scaling, turning and deleting one object ------------------------------------------
+  //
+  // One gesture is one edit record and one undo step, and the record holds where the object ENDS UP
+  // rather than how far it just went — so dragging the same picture twice replaces the first record
+  // instead of stacking a second. The pointer is converted to PDF user space once (page-space.js)
+  // and every distance is measured there; the only thing measured on screen is the 3-pixel
+  // threshold, because "did the hand move?" is a question about the screen.
+  //
+  // Nothing is offered that the object's capabilities don't allow, and nothing is written that the
+  // engine wouldn't accept: it checks again, and would refuse, whatever this module asked.
+
+  async #onPointerDown(e) {
+    if (!this.active || e.button !== 0) return;
+    if (e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip')) return;
+    this.#clickAfterDrag = false;
+    const seq = ++this.#gesture;
+    // Something is being typed and the press is elsewhere on the page: keep it first, exactly as
+    // clicking away has always kept it. If it can't be kept, the editor stays open to be fixed and
+    // no gesture starts on top of it.
+    if (this.#editor) {
+      if (!(await this.commitPending())) return;
+      this.#closeEditor();
+    }
+    // A corner handle first: it sits on the object it scales, so hit-testing the object would win.
+    const start = this.#handleAt(e.clientX, e.clientY) ?? await this.#moveTargetAt(e);
+    if (!start || seq !== this.#gesture || !this.active || this.#editor) return;
+    this.#flushNudge(); // a keyboard burst and a drag are two gestures, and so two undo steps
+    // The pointer is NOT captured here. A press that turns out to be a click has to reach the page
+    // as a click on the page - that is what opens the text editor - and a captured pointer would
+    // send it to the container instead. Capture is taken when the drag actually starts.
+    this.#drag = { ...start, client: [e.clientX, e.clientY], moved: false, transform: IDENTITY, pointerId: e.pointerId };
+  }
+
+  /**
+   * A corner handle of the selected object under the pointer, as the start of a uniform scale: the
+   * corner opposite the one being pulled is the anchor, so the two corners a person can see behave
+   * as they look — one follows the pointer, the other stays exactly where it is.
+   */
+  #handleAt(clientX, clientY) {
+    const current = this.#selection.current;
+    const object = current && this.#liveObject(current.page, current.key);
+    if (!object || object.capabilities.scale !== true) return null;
+    const pageView = this.#view.viewer.getPageView(current.page - 1);
+    const page = this.#pages.get(current.page);
+    if (!pageView || !page) return null;
+    const quad = this.#shownQuad(page, current.key, object.geometry.quad);
+    const corners = quad ? handlePoints(quad).slice(0, 4) : null;
+    if (!corners) return null;
+    for (let i = 0; i < 4; i++) {
+      const at = toClientPoint(pageView, corners[i][0], corners[i][1]);
+      if (!at || Math.hypot(at[0] - clientX, at[1] - clientY) > HANDLE_GRAB) continue;
+      return { mode: 'scale', verb: 'scale', n: current.page, key: current.key, pageView, quad, from: corners[i], anchor: corners[(i + 2) % 4] };
+    }
+    return null;
+  }
+
+  /** The object a press would drag, selected there and then so the drag is visibly on it. */
+  async #moveTargetAt(e) {
+    const hit = await this.#hitAt(e.target, e.clientX, e.clientY);
+    const object = hit?.object;
+    if (!object) return null;
+    this.#select({ n: hit.n, key: object.ref.key });
+    if (object.capabilities.move !== true) return null;
+    const page = this.#pages.get(hit.n);
+    return {
+      mode: 'move', verb: 'move', n: hit.n, key: object.ref.key, pageView: hit.pageView,
+      quad: this.#shownQuad(page, object.ref.key, object.geometry.quad),
+      from: toPdfPoint(hit.pageView, e.clientX, e.clientY),
+    };
+  }
+
+  #onDragMove(e) {
+    const drag = this.#drag;
+    if (!(e.buttons & 1)) {
+      this.#cancelGesture();
+      return;
+    }
+    if (!drag.moved && Math.hypot(e.clientX - drag.client[0], e.clientY - drag.client[1]) < DRAG_THRESHOLD) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      try {
+        // Now that this is certainly a drag, follow the pointer even off the page.
+        this.#view.container.setPointerCapture(drag.pointerId);
+      } catch {
+        // No capture (a synthesised pointer, say): the drag still works, it just can't leave the page.
+      }
+    }
+    const to = toPdfPoint(drag.pageView, e.clientX, e.clientY);
+    const transform = drag.mode === 'scale'
+      ? scaleAbout(drag.anchor, clamp(distance(to, drag.anchor) / (distance(drag.from, drag.anchor) || 1), ...SCALE_LIMITS))
+      : translate(to[0] - drag.from[0], to[1] - drag.from[1]);
+    if (!transform) return;
+    drag.transform = transform;
+    this.#showPreview(drag.n, drag.key, transformQuad(drag.quad, transform));
+  }
+
+  async #onPointerUp(e) {
+    const drag = this.#drag;
+    if (!drag) return;
+    this.#drag = null;
+    if (drag.moved) {
+      try {
+        this.#view.container.releasePointerCapture(drag.pointerId ?? e.pointerId);
+      } catch { /* it was released with the pointer */ }
+    }
+    if (!drag.moved) {
+      this.#clearPreview(); // under the threshold: this was a click, and the click handler has it
+      return;
+    }
+    this.#clickAfterDrag = true;
+    await this.#write(drag.n, drag.key, drag.transform, drag.verb);
+  }
+
+  /** Drops a gesture in progress without writing it. True when there was one. */
+  #cancelGesture() {
+    if (!this.#drag) return false;
+    this.#drag = null;
+    this.#clearPreview();
+    this.#announce('Cancelled.');
+    return true;
+  }
+
+  // ---- where a pending gesture puts an object ------------------------------------------------------
+  // The preview is the only coordinate this module keeps between frames, and it is kept for exactly
+  // as long as the pages don't yet show the change: #documentChanged clears it when the rebuilt page
+  // arrives with the object in its new place, so nothing ever snaps back and then forward again.
+
+  #showPreview(n, key, quad) {
+    if (!quad) return;
+    this.#shownAt = { n, key, quad };
+    const page = this.#pages.get(n);
+    if (page) this.#draw(page);
+  }
+
+  #clearPreview() {
+    if (!this.#shownAt) return;
+    const page = this.#pages.get(this.#shownAt.n);
+    this.#shownAt = null;
+    if (page) this.#draw(page);
+  }
+
+  /**
+   * Writes one gesture through the engine, which decides whether it may happen at all.
+   *
+   * A gesture made while the pages are still being rebuilt from the last one waits for them: two
+   * gestures in quick succession are perfectly ordinary, and "Vellum is still updating the pages"
+   * is an answer for a person who asked twice, not for a person who turned a picture twice.
+   */
+  async #write(n, key, transform, verb, { coalesce = null } = {}) {
+    if (!transform) return false;
+    await this.#settled();
+    try {
+      const changed = await this.#view.textEditing.transformObject(n, key, transform, { verb, coalesce });
+      if (changed) this.#announce({ move: 'Moved.', scale: 'Resized.', rotate: 'Turned.' }[verb] ?? 'Changed.');
+      else this.#clearPreview();
+      return changed;
+    } catch (err) {
+      this.#clearPreview();
+      this.#notify(err instanceof EditError ? err.message : `That change couldn’t be made: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** Says why a verb isn't on offer, in the words the object model already answered with. */
+  #refuseVerb(object, verb) {
+    this.#notify(REASONS[object.capabilities[verb]] ?? REASONS.unsupported);
+  }
+
+  // ---- the keyboard: nudging, turning, flipping, deleting -------------------------------------------
+
+  /** The keys that act on the selected object, and nothing else. */
+  static #OBJECT_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Delete', 'Backspace', '[', ']']);
+
+  /**
+   * Handles a key that acts on the selected object. False when the key means nothing here — which is
+   * decided from the key and the selection alone, so that the answer is immediate and the page it
+   * acts on can be waited for.
+   */
+  #onObjectKey(e) {
+    const current = this.#selection.current;
+    if (!current) return false;
+    const flips = e.shiftKey && (e.key === 'H' || e.key === 'V');
+    if (!flips && !TextEditor.#OBJECT_KEYS.has(e.key)) return false;
+    this.#actOnSelected(current, { key: e.key, shiftKey: e.shiftKey });
+    return true;
+  }
+
+  /**
+   * Does what the key asked, once the page it acts on has been read. The wait matters: a change
+   * rebuilds the document, and a key pressed while the pages are still coming back would otherwise
+   * find no object and do nothing at all.
+   */
+  async #actOnSelected({ page, key }, e) {
+    await this.#ensurePage(page);
+    const object = this.#liveObject(page, key);
+    if (!object || !this.active || !this.#selection.has(page, key)) return;
+
+    const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (arrow) {
+      if (object.capabilities.move !== true) {
+        this.#refuseVerb(object, 'move');
+        return;
+      }
+      const step = NUDGE_STEP * (e.shiftKey ? 10 : 1);
+      const offset = this.#screenStep(page, arrow[0] * step, arrow[1] * step);
+      if (offset) this.#nudgeBy(page, key, translate(offset[0], offset[1]));
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (object.capabilities.delete !== true) {
+        this.#refuseVerb(object, 'delete');
+        return;
+      }
+      await this.#deleteSelected(page, key, object);
+      return;
+    }
+    if (e.key === '[' || e.key === ']') {
+      if (object.capabilities.rotate !== true) {
+        this.#refuseVerb(object, 'rotate');
+        return;
+      }
+      // PDF user space has y pointing up and the page is drawn with y pointing down, so the turn
+      // that looks counter-clockwise on screen is the clockwise one here.
+      const turns = e.key === '[' ? -1 : 1;
+      await this.#gestureNow(page, key, object, quarterTurn(quadCentre(object.geometry.quad), turns), 'rotate');
+      return;
+    }
+    if (e.shiftKey && (e.key === 'H' || e.key === 'V')) {
+      if (object.capabilities.rotate !== true) {
+        this.#refuseVerb(object, 'rotate');
+        return;
+      }
+      // Mirrored in the picture's OWN axes, which is what its current placement says they are:
+      // its CTM, with everything already done to it.
+      const basis = multiply(object.record.ctm, object.edit?.transform ?? IDENTITY);
+      await this.#gestureNow(page, key, object, flip(basis, e.key === 'H' ? 'horizontal' : 'vertical'), 'rotate');
+    }
+  }
+
+  /** One keyboard gesture, written at once: previewed, then handed to the engine. */
+  async #gestureNow(n, key, object, transform, verb) {
+    if (!transform) return;
+    this.#flushNudge();
+    this.#showPreview(n, key, transformQuad(object.geometry.quad, transform));
+    await this.#write(n, key, transform, verb);
+  }
+
+  async #deleteSelected(n, key, object) {
+    this.#flushNudge();
+    await this.#settled();
+    try {
+      await this.#view.textEditing.removeObject(n, key);
+      this.#select(null); // it isn't there any more, so nothing is selected
+      this.#announce(object.kind === 'text-run' ? 'Text deleted.' : 'Picture deleted.');
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be deleted: ${err.message}`);
+    }
+  }
+
+  /**
+   * A step of `sx`, `sy` POINTS along the SCREEN's own axes, as an offset in the page's user space.
+   * The arrow keys mean what they look like — Right moves the object right on screen — whatever the
+   * page's own /Rotate, the viewer's rotation, the zoom or an offset crop box, because all four live
+   * in the viewport that page-space.js converts through.
+   */
+  #screenStep(n, sx, sy) {
+    const pageView = this.#view.viewer.getPageView(n - 1);
+    if (!pageView) return null;
+    const px = pageView.viewport.scale; // screen pixels in one point
+    const origin = toPdfPoint(pageView, 0, 0);
+    const right = toPdfPoint(pageView, px, 0);
+    const down = toPdfPoint(pageView, 0, px);
+    const offset = [(right[0] - origin[0]) * sx + (down[0] - origin[0]) * sy,
+      (right[1] - origin[1]) * sx + (down[1] - origin[1]) * sy];
+    return offset.every(Number.isFinite) ? offset : null;
+  }
+
+  // ---- an arrow-key burst is one gesture, and so one undo -------------------------------------------
+  // Keys arrive one at a time but a burst is one movement, so they share a token and the edit store
+  // folds them into a single undo step (annotations/model.js). What is written is still absolute, so
+  // the last key of a burst says where the object ended up and undoing it puts it back at the start.
+
+  #nudgeBy(n, key, delta) {
+    let nudge = this.#nudge;
+    if (!nudge || nudge.n !== n || nudge.key !== key) {
+      this.#flushNudge();
+      const page = this.#pages.get(n);
+      const base = page ? this.#liveOf(page).quads.get(key) : null;
+      if (!base) return;
+      nudge = { n, key, base, token: `nudge:${++nudgeSeq}`, transform: IDENTITY, flush: 0, end: 0 };
+    }
+    clearTimeout(nudge.flush);
+    clearTimeout(nudge.end);
+    nudge.transform = multiply(nudge.transform, delta);
+    nudge.flush = setTimeout(() => this.#writeNudge(), 170);
+    nudge.end = setTimeout(() => this.#flushNudge(), 900);
+    this.#nudge = nudge;
+    this.#showPreview(n, key, transformQuad(nudge.base, nudge.transform));
+  }
+
+  /** Writes what the burst has moved so far and stays in the same burst, so it is still one undo. */
+  #writeNudge() {
+    const nudge = this.#nudge;
+    if (!nudge || isIdentity(nudge.transform)) return;
+    const transform = nudge.transform;
+    // The preview goes on from where it already is, so a write in the middle of a burst shows nothing.
+    nudge.base = transformQuad(nudge.base, transform) ?? nudge.base;
+    nudge.transform = IDENTITY;
+    this.#write(nudge.n, nudge.key, transform, 'move', { coalesce: nudge.token });
+  }
+
+  /** Ends a burst, writing whatever it has left. Called before any other change, and on leaving. */
+  #flushNudge() {
+    const nudge = this.#nudge;
+    if (!nudge) return;
+    clearTimeout(nudge.flush);
+    clearTimeout(nudge.end);
+    this.#writeNudge();
+    this.#nudge = null;
+  }
+
   #onKey(e) {
     if (!this.active || this.#editor || e.target.closest?.('input, textarea, button')) return;
     if (e.key === 'Tab') {
@@ -316,17 +742,31 @@ export class TextEditor {
       return;
     }
     if (e.key === 'Escape') {
-      // Clearing a selection first, then — with nothing selected — Escape means what it always
-      // meant, and AnnotationLayer's handler leaves Edit mode.
+      // A gesture under way is cancelled first and nothing is written; then the selection; then,
+      // with nothing selected, Escape means what it always meant and AnnotationLayer's handler
+      // leaves Edit mode.
+      if (this.#cancelGesture()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (!this.#selection.current) return;
       e.preventDefault();
       e.stopPropagation();
+      this.#flushNudge();
       this.#select(null);
+      return;
+    }
+    // Acting on the selected object: nudging, turning, flipping, deleting. Never with a modifier
+    // that belongs to something else — Ctrl+Z is undo, and stays undo.
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && this.#onObjectKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
     if (e.key === 'Enter') {
       const run = this.#focusRun();
-      if (!run) return; // an image is selected: nothing can be done to one yet
+      if (!run) return; // a picture is selected: Enter has nothing to open, and does nothing
       e.preventDefault();
       this.#open(run.n, run.key);
     }
@@ -592,17 +1032,23 @@ export class TextEditor {
 
   // ---- geometry ----------------------------------------------------------------------------------
 
-  /** The run's corners on screen (client pixels): ll, lr, ur, ul. */
+  /**
+   * A run's corners on screen (client pixels): ll, lr, ur, ul — where it is NOW, so the editor and
+   * the scroll-into-view both follow text that has been moved or scaled rather than opening over
+   * the place the file happens to draw it.
+   */
   #screenQuad(n, run) {
     const pageView = this.#view.viewer.getPageView(n - 1);
+    const page = this.#pages.get(n);
     if (!pageView?.div) return null;
-    return toClientQuad(pageView, run.quad);
+    const quad = page ? this.#shownQuad(page, runKeyOf(run.key), run.quad) : run.quad;
+    return quad ? toClientQuad(pageView, quad) : null;
   }
 
   /** Sizes, rotates and styles the editor to sit exactly over its text. */
   #layout(ed) {
     const { run } = ed.item;
-    const pts = this.#screenQuad(ed.n, run);
+    const pts = this.#screenQuad(ed.n, run); // where it is now: a scaled run gets a scaled editor
     if (!pts) return;
     const [ll, , ur, ul] = pts;
     const width = Math.hypot(ur[0] - ul[0], ur[1] - ul[1]);

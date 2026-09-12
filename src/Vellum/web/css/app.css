@@ -1226,14 +1226,23 @@ kbd {
   stroke-width: 2px;
   stroke-dasharray: 2 3;
 }
-/* A selected object that isn't text — an image. Selection outlines only: nothing can be moved,
-   scaled or resized yet, so there are no handles to grab. */
+/* A selected object that isn't text — an image — and the corner handles that scale it. A handle is
+   only drawn where a corner drag can really be honoured, so it never promises a gesture that would
+   be refused. */
 .vl-object-sel {
   fill: color-mix(in srgb, var(--accent) 6%, transparent);
   stroke: var(--accent);
   stroke-width: 2px;
   vector-effect: non-scaling-stroke;
 }
+.vl-object-handle {
+  fill: #fff; /* the page under it is paper, whatever the app theme is */
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+/* Dragging a picture moves it; text keeps the caret, because clicking text types rather than moves. */
+.viewer-container.vl-edit-move { cursor: move; }
 
 .vl-text-editor {
   position: absolute;

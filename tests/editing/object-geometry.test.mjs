@@ -214,17 +214,23 @@ test('handle points turn, mirror and shear with the quad', () => {
   assert.equal(handlePoints([1, 2]), null);
 });
 
-test('nothing in the app draws a handle yet', () => {
-  // Phase 2 computes handle geometry and stops there: no verb can honour a drag, so no handle is
-  // offered. If this ever fails, either Phase 3 has landed or something is promising a feature.
+test('only Edit mode draws a handle, and only the four corners of one', () => {
+  // A handle promises a drag, so exactly one module may draw one, and only where a corner drag can
+  // be honoured. If another module starts calling handlePoints, it has to answer for that promise.
   const js = new URL('../../src/Vellum/web/js/', import.meta.url);
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const at = new URL(`${e.name}${e.isDirectory() ? '/' : ''}`, dir);
     return e.isDirectory() ? walk(at) : e.name.endsWith('.js') ? [at] : [];
   });
   const users = walk(js).filter((f) => /\bhandlePoints\b/.test(fs.readFileSync(f, 'utf8')));
-  assert.deepEqual(users.map((u) => u.pathname.split('/').pop()), ['geometry.js'],
-    'handlePoints is defined, tested, and called by no part of the UI');
+  assert.deepEqual(users.map((u) => u.pathname.split('/').pop()).sort(), ['geometry.js', 'text-editor.js'],
+    'handlePoints is defined here and used by Edit mode alone');
+  // The edge midpoints stay unused: a non-proportional resize has no builder in transform.js and
+  // could not be written for text at all, so an edge handle would promise what nothing can do.
+  const ui = fs.readFileSync(new URL('ui/text-editor.js', js), 'utf8');
+  for (const call of ui.match(/handlePoints\([^)]*\)[^;\n]*/g) ?? []) {
+    assert.match(call, /\.slice\(0, 4\)/, `a handle beyond the four corners is offered: ${call.trim()}`);
+  }
 });
 
 // ---- 4. hit-testing: drawing order decides --------------------------------------------------

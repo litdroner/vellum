@@ -28,6 +28,13 @@ export function createCommands(app, ui, actions) {
   };
   const pages = actions.pages;
 
+  // An object is selected in Edit mode: the arrow keys nudge it, so they don't also turn the page.
+  // Nothing else changes — with nothing selected, and in every other tool, they page as they always did.
+  const nudging = () => {
+    const v = doc();
+    return Boolean(v && v.annotLayer?.tool === 'edit' && v.objectSelection?.current);
+  };
+
   return {
     'file.open': { group: 'File', icon: 'folder-open', label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
     'file.save': { group: 'File', icon: 'save', doc: true, label: 'Save changes', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
@@ -53,8 +60,8 @@ export function createCommands(app, ui, actions) {
     'view.pageTone': { group: 'View', icon: 'contrast', label: 'Page colours: normal, dark, sepia', keys: ['Ctrl+Shift+D'], global: true, run: () => actions.cyclePageTone() },
     'sidebar.toggle': { group: 'View', icon: 'panel-left', doc: true, label: 'Toggle sidebar', keys: ['F4', 'Ctrl+B'], global: true, run: () => ui.sidebar.toggle() },
 
-    'page.next': { group: 'Page', icon: 'chevron-right', doc: true, label: 'Next page', keys: ['PageDown', 'ArrowRight'], when: (e) => single() || e.key === 'ArrowRight', run: () => doc()?.nextPage() },
-    'page.prev': { group: 'Page', icon: 'chevron-left', doc: true, label: 'Previous page', keys: ['PageUp', 'ArrowLeft'], when: (e) => single() || e.key === 'ArrowLeft', run: () => doc()?.prevPage() },
+    'page.next': { group: 'Page', icon: 'chevron-right', doc: true, label: 'Next page', keys: ['PageDown', 'ArrowRight'], when: (e) => !nudging() && (single() || e.key === 'ArrowRight'), run: () => doc()?.nextPage() },
+    'page.prev': { group: 'Page', icon: 'chevron-left', doc: true, label: 'Previous page', keys: ['PageUp', 'ArrowLeft'], when: (e) => !nudging() && (single() || e.key === 'ArrowLeft'), run: () => doc()?.prevPage() },
     'page.first': { group: 'Page', icon: 'arrow-up-to-line', doc: true, label: 'First page', keys: ['Home', 'Ctrl+Home'], run: () => doc()?.firstPage() },
     'page.last': { group: 'Page', icon: 'arrow-down-to-line', doc: true, label: 'Last page', keys: ['End', 'Ctrl+End'], run: () => doc()?.lastPage() },
     'page.goto': { group: 'Page', icon: 'arrow-right', doc: true, label: 'Go to page…', keys: ['Ctrl+G'], global: true, run: () => ui.viewbar.focusPageInput() },
