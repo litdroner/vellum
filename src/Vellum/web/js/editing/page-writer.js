@@ -10,7 +10,8 @@
 //
 // Nothing else on the page is touched, and a page is only rewritten when every record for it still
 // matches the file exactly — a handler that can't verify its record throws, and then nothing is
-// written rather than something uncertain.
+// written rather than something uncertain. An edit of a kind no handler claims is refused for the
+// same reason: a change a person made must never vanish silently.
 
 import { PdfSource } from './source.js';
 import { analyzePage } from './runs.js';
@@ -23,8 +24,11 @@ export function applyObjectEdits({ lib, doc, pages, plan, edits }) {
   const byEntry = new Map();
   const byKind = new Map();
   for (const e of edits) {
-    // A kind no handler claims is ignored, as it always has been (see objects/registry.js).
-    if (!handlerFor(e.kind)) continue;
+    // A kind no handler claims is refused, before anything is written (see objects/registry.js):
+    // dropping it silently would lose a change the person made without telling them.
+    if (!handlerFor(e.kind)) {
+      throw new EditError('unsupported', 'Vellum can’t write this kind of change yet, so nothing was saved.', { kind: e.kind });
+    }
     const list = byEntry.get(e.entry) ?? [];
     list.push(e);
     byEntry.set(e.entry, list);

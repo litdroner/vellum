@@ -16,7 +16,7 @@ import { analyzeFile, engine, loadPdfLib, webModule } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { openSource } = await engine('source.js');
-const { planTextEdit } = await engine('edits.js');
+const { planTextEdit, EditError } = await engine('edits.js');
 const { composeDocument } = await webModule('annotations/persist.js');
 const { identityPlan } = await webModule('pages/plan.js');
 
@@ -448,29 +448,32 @@ test('z-order: text inside a form is nested the same way', async () => {
 });
 
 // ---- 8. unknown edit kinds ------------------------------------------------------------------
-// Today a record whose kind isn't 'text' is filtered out and silently ignored. Under the Phase 1
-// registry an unregistered kind should be REFUSED instead, so a user's edit can never be dropped
-// without a word. This test pins today's behaviour so that change is a deliberate, visible diff
-// rather than something that slips through.
+// A record whose kind no handler in objects/registry.js claims is REFUSED, not quietly filtered
+// out: an edit a person made must never be dropped without a word. The refusal is raised before
+// any page is touched, so a save carrying an unknown kind writes nothing at all — including the
+// good edits sent alongside it. (Until Phase 1 closed this, such a record was silently ignored.)
 
 const unknownRecord = (entry) => ({
   id: 'unknown-1', kind: 'image-move', entry,
   target: { key: '0:0' }, transform: [1, 0, 0, 1, 10, 0],
 });
 
-test('unknown edit kinds are silently ignored today (Step 1 must turn this into a refusal)', async () => {
+test('an unknown edit kind is refused, and takes the whole save down with it', async () => {
   const d = await open(read('simple'));
-  const unknown = unknownRecord(d.plan[0].id);
-  const none = await compose(d, []);
-  const withUnknown = await compose(d, [unknown]);
-  assert.deepEqual(Buffer.from(withUnknown), Buffer.from(none),
-    'an unknown kind changes nothing at all — it is dropped without a word');
+  const refused = (edits, what) => assert.rejects(() => compose(d, edits), (err) => {
+    assert.ok(err instanceof EditError, `${what}: expected an EditError, got ${err}`);
+    assert.equal(err.kind, 'unsupported', `${what}: refusal kind`);
+    assert.deepEqual(err.detail, { kind: 'image-move' }, `${what}: the refused edit's kind is named`);
+    return true;
+  }, what);
 
-  // And it does not disturb a real edit made alongside it.
-  const text = [planEdit(d, 0, 'Hello, world', 'Hello, Vellum')];
-  const textOnly = await compose(d, text);
-  const mixed = await compose(d, [...text, unknownRecord(d.plan[0].id)]);
-  assert.deepEqual(Buffer.from(mixed), Buffer.from(textOnly), 'the text edit is written; the unknown kind is ignored');
+  await refused([unknownRecord(d.plan[0].id)], 'an unknown kind on its own');
+  // Nothing partial: a real edit sent with it is refused too, rather than written on its own.
+  await refused([planEdit(d, 0, 'Hello, world', 'Hello, Vellum'), unknownRecord(d.plan[0].id)],
+    'an unknown kind beside a text edit');
+  // The kind is checked before the plan entry, so an unknown kind is refused even when no page
+  // would have matched it anyway.
+  await refused([unknownRecord('no-such-entry')], 'an unknown kind naming a page the plan doesn’t have');
 });
 
 test('an edit naming a page the plan doesn’t have is ignored rather than failing the save', async () => {

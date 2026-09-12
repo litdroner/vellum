@@ -228,13 +228,21 @@ nothing for the app-level suites to observe. They run again when Phase 2 wires s
 
 ### Remaining Phase 1 work
 
-1. **An edit whose kind no handler claims is still dropped without a word** (`editing/page-writer.js`,
-   `editing/objects/registry.js`). It has to become an explicit refusal — a change a person made must
-   never vanish silently. `phase1-baseline.test.mjs` pins today's behaviour on purpose, so that fix
-   arrives as a deliberate, readable diff rather than something that slips through.
-2. **`text-block`** is in the object model's planned kinds but not built: only `text-run`, `image`,
+**Closed: an edit whose kind no handler claims is no longer dropped without a word.**
+`editing/page-writer.js` now raises `EditError('unsupported', …, { kind })` for a kind that
+`editing/objects/registry.js` doesn't claim, before any page is touched — so nothing partial is
+written and a change a person made can never vanish silently. The kind is checked before the plan
+entry, so an unknown kind is refused even when no page would have matched it. `handlerFor()` still
+returns `null`; the writer, not the registry, decides what an unclaimed kind means. The Phase 1
+characterization test that pinned the old silent drop now asserts the refusal instead (same test
+count: 113 tests, 111 pass, 2 skipped). Nothing in the app emits such a kind today, so no app-level
+behaviour changed and the end-to-end suites are unaffected.
+
+Still open:
+
+1. **`text-block`** is in the object model's planned kinds but not built: only `text-run`, `image`,
    `path` and `form` exist. Paragraph grouping is a "should have" and is gated on its own tests.
-3. **No end-to-end coverage of the object model yet**, for the reason given above.
+2. **No end-to-end coverage of the object model yet**, for the reason given above.
 
 ## 8. Next
 

@@ -1,8 +1,8 @@
 // Which handler writes which kind of content edit (editing/edits.js). One kind today: text runs.
 //
-// A kind with no handler here is ignored by the page writer, exactly as it always has been. When
-// object editing lands, an unwritable kind should become an explicit refusal instead: an edit a
-// person made must never be dropped without a word.
+// A kind with no handler here is refused by the page writer — EditError('unsupported'), raised
+// before any page is touched — rather than dropped: an edit a person made must never disappear
+// without a word. Registering a handler here is what makes a kind writable.
 
 import * as textRun from './text-run.js';
 
