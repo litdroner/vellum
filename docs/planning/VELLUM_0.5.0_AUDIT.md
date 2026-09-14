@@ -7,7 +7,12 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 - Phase 0 (hardening and test infrastructure): done, see "Phase 0 record" below.
 - Phase 1 (object model and the unified page writer): done, see "Phase 1 record" below.
 - Phase 2 (selection): done, see "Phase 2 record" below.
-- Phase 3 onwards: not started.
+- Phase 3 (manipulation): done **except same-page multi-select**, and released in **0.4.1** (2026-09-12).
+  See "Status after 0.4.1" below.
+- **0.5.0 is not complete.** What remains is listed in "Status after 0.4.1".
+
+Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
+Phase 3 landed. Sections 2–8 are left as written at the time.
 
 ## 1. Approved direction
 
@@ -356,8 +361,60 @@ editable text — so an image is selected with the mouse and has no keyboard act
 **Known limitation**: paths are not selectable, so an image lying under an opaque filled rectangle can
 still be clicked through to. Making a path selectable needs a real outline for it, not a bounding box.
 
-## 9. Next
+## 9. Next (as written after Phase 2)
 
 Phase 3 — manipulation: move, proportional scale and delete for text runs; move, resize, rotate 90°,
 flip and delete for images; keyboard nudging; same-page multi-select. Handles get their behaviour,
 and the handle geometry above gets its first caller. It begins only on approval.
+
+## 10. Status after 0.4.1
+
+Phase 3 was approved and landed in four commits, then released as **0.4.1** (the version number, not
+0.5.0, because 0.5.0 is the whole plan and it isn't finished):
+
+| Commit | What |
+|---|---|
+| `0f562f5` | Foundation: object transforms (`editing/objects/transform.js`), the image handler (`editing/objects/image.js`), transformable text runs, baseline tests |
+| `4f6b456` | Capabilities answer yes where a writer exists; `transformObject()` / `removeObject()` in the session; an arrow-key burst coalesces into one undo step |
+| `a4652c3` | The interaction in Edit mode (drag, corner handles, keys) and the `manipulation` end-to-end suite, through save and reopen |
+| `99fd902` | Registry and design-system notes |
+| `ad0bd40` | Version 0.4.1 |
+
+### Existing in 0.4.x
+
+- **0.4.0**: editing existing text in place, one line at a time, with the hardening of Phase 0.
+- **0.4.1**: in Edit mode, select a text run or a picture; move both (drag, or arrow-key nudge by 1 pt,
+  10 pt with Shift); scale both uniformly from a corner handle; turn a picture a quarter turn ([ and ])
+  and mirror it (Shift+H, Shift+V); delete either (a picture's XObject is released when provably
+  unused). One record per object holding its absolute transform, one gesture one undo, written into the
+  page by the unified writer, surviving save and reload. Refused with a reason: clipped or degenerate
+  pictures, pictures in a form, on a layer or under a soft mask; text is never rotated, mirrored,
+  sheared or scaled non-uniformly.
+
+The architectural findings and invariants in sections 1–8 stand unchanged.
+
+### Remaining for 0.5.0
+
+Must have, not built:
+
+- **same-page multi-select** (with its effect on move, scale, delete and undo)
+
+To verify before 0.5.0 is called complete (on the must-have list; this document has no record yet of
+tests proving them for moved, scaled, turned or deleted objects): survival through page reorder,
+duplicate and rotate; PDF integrity after manipulation; unsupported-object messaging — each also with
+multi-select once it exists. Save and reopen are proved by the `manipulation` suite.
+
+Should have, only if each passes strict tests (otherwise deferred, not faked): paragraph grouping
+(`text-block`, still unbuilt), alignment, distribution, snapping, image replacement, image insertion,
+overlap warnings, single-style paragraph reflow (last, gated).
+
+Also still open from Phase 3's own list: **free (non-proportional) picture resize** — "move / resize"
+shipped as proportional scaling only.
+
+Deferred to 0.6+ (unchanged, see §1): rich-text formatting, font and colour changes (font selection,
+`docs/VELLUM_VISION.md` §4.3, with the bundled selectable font Liu as one option, §4.4), free rotation handles, cross-page moves, copy/paste, new
+text boxes, Form XObject editing, vector-shape editing, inline image replacement, moving annotations and
+links with content, tag-preserving edits, PDF/A font embedding, OCR, redaction, forms, signatures, AI
+(cloud processing stays out of scope). Deferral here never removes anything from the Vision.
+
+Nothing in this list begins without approval.

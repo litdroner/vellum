@@ -1,7 +1,29 @@
 # Feature registry
 
-What Vellum actually does, so nobody builds a second copy or fakes a missing one.
-Status: **done** (shipped and tested), **partial**, **planned** (not started; no UI may pretend it exists).
+What exists, what is being built, what is next, what is planned, what is research, and what must never
+be built — so nobody builds a second copy or fakes a missing one. The long-term direction is
+`docs/VELLUM_VISION.md`. A feature that moves to a later release changes here only — it never leaves the
+Vision.
+
+| Status | Meaning |
+|---|---|
+| **done** | shipped and tested |
+| **in progress** | being implemented in the approved current phase |
+| **next** | approved for the current phase or the one after it, not started |
+| **planned** | in the Vision, not started; no UI may pretend it exists |
+| **research** | in the Vision, but needs an engine, method or owner decision before it can be planned |
+| **out of scope** | excluded while Vellum is local-first; only the owner can change that |
+| **do not build** | never |
+
+## Now
+
+- **Current release: 0.4.1** (GitHub, 2026-09-12). Text editing from 0.4.0, plus the first part of the
+  0.5.0 object-editing plan: in Edit mode, select a text run or a picture; move and uniformly scale both;
+  quarter-turn and mirror pictures; nudge; delete. These rows are marked done below.
+- **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
+  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Phases 0–2 are done; Phase 3 is done except same-page
+  multi-select. What remains for 0.5.0 is the first two Roadmap rows. Nothing is **in progress** until
+  the owner approves the next step.
 
 ## Reading
 
@@ -74,21 +96,54 @@ Status: **done** (shipped and tested), **partial**, **planned** (not started; no
 | Reduce motion, reduce transparency (performance) | done | themes.js |
 | Two-page (spread) layout, full-screen reading | planned | — |
 
-## Planned — must not be faked
+## Roadmap — must not be faked
 
-- Editing images; reflowing whole paragraphs; moving or resizing text; writing scripts the
-  document's fonts and the standard fonts don't have (e.g. Devanagari, CJK).
-- Fill & sign: form filling, signatures (draw / type / upload, place, resize).
-- Redaction (flatten-based; needs sign-off on rasterising).
-- Password protection: add / change / remove (with the correct password).
-- OCR, compare, compress, metadata editing, text/image extraction, batch processing.
-- Autosave and crash recovery of unsaved edits.
-- Vellum Intelligence (AI): local-first, behind the `AIProvider` abstraction (ARCHITECTURE_GUIDELINES.md).
-  No AI UI until there is a real provider; no cloud provider, API keys or uploads.
-- Starred files (kept on this computer).
+Everything not built yet. Order within a status is not a schedule. The Vision section names the
+intended behaviour and its rules.
+
+| Feature | Status | Vision |
+|---|---|---|
+| 0.5.0 must-have left: same-page multi-select | next | §3.2 |
+| 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | planned | §3.2 |
+| Rotating text, non-proportional picture resize, free rotation, cross-page moves, copy/paste | planned | §3.2 |
+| New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
+| Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |
+| Bundled selectable font: Liu — one optional document-editing font available alongside other selectable fonts; a normal entry in the font selector, nothing more. Prerequisites, none present: the font file and a licence permitting bundling, use and PDF embedding, both supplied by the owner; font selection itself | planned | §4.4 |
+| Writing scripts the document's fonts and the standard fonts don't have (e.g. Devanagari, CJK) | planned | §3.2 |
+| Image crop; Form XObject editing; inline image replacement; vector-shape editing | planned | §3.2 |
+| Shapes, lines, arrows, freehand as page content; stamps and reusable custom stamps | planned | §3.2 |
+| Tag-preserving edits; PDF/A font embedding; keeping edited text on its layer | planned | §2.2, §10 |
+| Annotations: strikethrough, shapes, stamps, text boxes, measure (also listed under Annotating); moving annotations and links with content | planned | §3.3 |
+| Two-page (spread) layout, full-screen reading (also listed under App) | planned | §3.1 |
+| Fill & sign: form filling (text fields, checkboxes, radio buttons, dropdowns), signatures (type / draw / upload, place, resize) | planned — earlier stated order: after 0.5.0, before redaction | §3.7 |
+| Form detection, form creation, form flattening as an explicit user-requested output | planned | §3.7 |
+| Digital (certificate) signatures, separate from signature pictures: signing with a certificate, validity display (needs a local signing/certificate engine chosen) | planned | §3.7 |
+| True redaction: sensitive content really removed from the saved PDF; a covering box is not redaction; no silent page rasterising (method to be designed and approved) | research | §3.6 |
+| Password protection: add / change / remove (with the correct password); permissions (print, copy, edit) | planned | §3.6 |
+| Compress; metadata editing; metadata privacy cleaning; text/image extraction | planned | §3.4 |
+| Crop pages, page numbers, watermarks | planned | §3.4 |
+| Merge several files at once; mixed-format merge | planned / research (mixed formats need §3.5 engines) | §3.4 |
+| PDF diagnostics, repair, PDF/A validation | research | §3.4 |
+| PDF → JPG / PNG | planned | §3.5 |
+| PDF ↔ Word / Excel / PowerPoint; PDF → PDF/A (needs a local conversion engine) | research | §3.5 |
+| OCR: searchable text layer, language selection, progress, per-page failure handling, local only (needs a vendored engine and language data chosen) | planned | §3.8 |
+| Compare documents | planned | §3.9 |
+| Vellum Intelligence (AI): local-first, behind `AIProvider` (ARCHITECTURE_GUIDELINES.md). No AI UI until there is a real provider; no cloud provider, API keys or uploads. Summarise, ask, find, explain, translate, extract data, PDF → Markdown, Smart Split, study notes, AI difference summaries | research | §3.9 |
+| Vellum Flow: reusable local workflows composing existing operations | planned | §3.10 |
+| Batch processing: conversion, OCR, compression, watermarking, metadata cleaning, protection, export | planned | §3.10 |
+| Autosave and crash recovery of unsaved edits | planned | §3.11 |
+| Starred files (kept on this computer); task history; Batch Center; Workflow Center | planned | §3.10, §3.11 |
+| Templates; extensions (need a definition and a security model) | research | §3.11 |
 
 ## Out of scope while Vellum is local-first
 
-Cloud processing, document uploads, cloud storage and shared files, online AI APIs, API keys and cloud
-sign-in, telemetry, analytics, mandatory internet connections, third-party SaaS. See "Offline and
+Cloud processing, document uploads, cloud storage, sync and shared files, online AI APIs, API keys and
+cloud sign-in, telemetry, analytics, mandatory internet connections, third-party SaaS. See "Offline and
 privacy" in ARCHITECTURE_GUIDELINES.md.
+
+## Do not build
+
+Password cracking or recovery; encryption, permission or signature bypass; HTML-overlay, rasterised or
+guessed editing; whole-page reconstruction as an editing shortcut; silent font substitution; modifying
+embedded font programs; a covering box presented as redaction; fake features; changes to
+WebView2's security setup (SmartScreen, unsupported switches, Windows settings). See Vision §2.2 and §11.

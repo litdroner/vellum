@@ -1,6 +1,6 @@
 # Vellum — notes for Claude
 
-Vellum is a shipped Windows PDF reader/editor (GitHub: litdroner/vellum, releases v0.1, v0.2.0).
+Vellum is a shipped Windows PDF reader/editor (GitHub: litdroner/vellum; releases v0.2.0 to v0.4.1).
 WPF (.NET 10) window hosting a WebView2 page; the UI is plain ES modules (no build step) on pdf.js
 (rendering) and pdf-lib (writing). Developed by Pankaj Manhas, Homelabs; that credit must stay in
 About and in the exe/installer metadata.
@@ -8,9 +8,12 @@ About and in the exe/installer metadata.
 Continue the existing code. Never start over, never add a second system for something that exists
 (themes, toolbar, commands, dialogs). Read these first:
 
-- `docs/FEATURE_REGISTRY.md` — what exists, what is partial, what is planned (and must not be faked)
-- `docs/ARCHITECTURE_GUIDELINES.md` — layers, feature boundaries, how to add or remove a feature
-- `docs/DESIGN_SYSTEM.md` — themes, materials, tokens, components, motion
+- `docs/VELLUM_VISION.md` — the long-term product direction and durable decisions (below this file only)
+- `docs/DESIGN_SYSTEM.md` — the visual authority: themes, materials, tokens, components, motion
+- `docs/ARCHITECTURE_GUIDELINES.md` — engineering constraints: layers, boundaries, adding or removing a feature
+- `docs/FEATURE_REGISTRY.md` — what exists, is being built, is next, planned, research, or never to be built
+- `docs/VELLUM_VISUAL_REFERENCES.md` — visual assets in the repository, and external references that aren't
+- `docs/planning/` — detailed implementation and audit plans (0.5.0: `VELLUM_0.5.0_AUDIT.md`)
 - `docs/WEBVIEW2_NETWORK_AUDIT.md` — measured network activity of Vellum and its WebView2 runtime
 
 ## Build, run, test
@@ -41,3 +44,6 @@ node tests\e2e\run.mjs                       # the app itself over DevTools (Deb
   Never claim zero traffic or an offline WebView2. Use the privacy wording in "Offline and privacy" in
   ARCHITECTURE_GUIDELINES.md. AI, when it comes, goes behind `AIProvider` (local first; cloud interface only).
 - Keep the PDF the visual focus and the UI light: see the performance rules in DESIGN_SYSTEM.md.
+- Durable requirements live in the repository, not in chat. Deferring a feature changes
+  FEATURE_REGISTRY.md only; nothing leaves VELLUM_VISION.md without the owner's recorded decision.
+  Conflicting requirements go to "Open decisions" there, never resolved silently.

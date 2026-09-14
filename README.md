@@ -37,6 +37,11 @@ the SHA-256 GitHub publishes for it, installs it and reopens the documents you h
   says so first). Only edited pages change, the old text is really removed from the file, and edits
   undo, redo and save like everything else. Text Vellum can't change safely (scans, picture fonts,
   symbol fonts, protected PDFs…) says why instead.
+- **Move, scale, turn and delete objects** (in Edit mode): click a line of text or a picture to select
+  it, drag it to move it, or drag a corner handle to scale it proportionally. Pictures can also be
+  turned a quarter turn and mirrored; arrow keys nudge; Delete removes. Changes are written into the
+  page itself and undo as one step per gesture. Anything Vellum can't change safely (a clipped picture,
+  one inside a form or on a layer…) is refused with the reason; text isn't rotated or stretched.
 - **Page colours**: normal, dark or sepia pages (Ctrl+Shift+D), independent of the app theme.
 - **Appearance**: seven colour themes (Mist, Ocean, Sage, Blush, Sand, Lavender, Graphite), each in
   Light and an Obsidian dark mode or following Windows, plus your own accent colour. Reduce motion and
@@ -67,6 +72,8 @@ file's contents). They come back whenever you open that PDF in Vellum; other app
 | Sidebar | F4 |
 | Tools: select, highlight, underline, note, draw | V, H, U, N, D (H/U mark selected text directly) |
 | Edit text: keep / cancel / next / previous | E, then Enter / Esc / Tab / Shift+Tab |
+| Selected object (Edit mode): nudge / nudge ×10 / delete | Arrow keys / Shift+arrow keys / Del |
+| Selected picture: turn left / right, mirror horizontally / vertically | [ / ], Shift+H / Shift+V |
 | Delete annotation / undo / redo | Del / Ctrl+Z / Ctrl+Y |
 | Print | Ctrl+P |
 | Command palette / Settings | Ctrl+K / Ctrl+, |
@@ -106,7 +113,8 @@ src/Vellum/
 installer/Vellum.iss       Inno Setup script
 tools/                     run, publish, release, icon, DevTools helpers
 tests/editing/             text-editing engine tests (node --test "tests/editing/*.test.mjs")
-docs/                      design system, architecture guidelines, feature registry
+tests/e2e/                 the app end to end over DevTools (node tests/e2e/run.mjs)
+docs/                      vision, design system, architecture guidelines, feature registry, planning
 ```
 
 User data lives in `%LOCALAPPDATA%\Vellum` (settings, recent files, protected-PDF annotations,
@@ -117,8 +125,27 @@ WebView2 profile) and is kept on uninstall.
 - Annotations on encrypted PDFs are kept by Vellum, not inside the file (see above), and their pages
   can't be rearranged.
 - Page colours are a display setting only: printing and saved files are unchanged.
-- Text editing changes one line at a time (no paragraph reflow, moving or resizing yet). New
-  characters must exist in the document's font or in the standard Latin fonts; other scripts are
-  refused with a message. Protected (encrypted) PDFs can't be edited, and saving any change to a
-  digitally signed PDF invalidates its signature (Vellum warns about this).
-- Planned next: form filling, then redaction. Not planned: OCR, e-signatures, cloud sync.
+- Text editing changes one line at a time: no paragraph reflow, new text boxes or formatting (font,
+  size, bold, colour) yet. Text and pictures can be moved and scaled proportionally, but text can't be
+  rotated, pictures can't be stretched, cropped, replaced or inserted, and only one object is selected
+  at a time. New characters must exist in the document's font or in the standard Latin fonts; other
+  scripts are refused with a message. Protected (encrypted) PDFs can't be edited, and saving any change
+  to a digitally signed PDF invalidates its signature (Vellum warns about this).
+
+## Where it's going
+
+Everything below is **planned, not built** — none of it is in the app yet. The full direction is in
+[docs/VELLUM_VISION.md](docs/VELLUM_VISION.md) and the status of each item in
+[docs/FEATURE_REGISTRY.md](docs/FEATURE_REGISTRY.md).
+
+- **Next (0.5.0)**: finishing object editing, starting with selecting several objects at once.
+- **Edit**: new text and formatting with a choice of fonts, image crop, replace and insert,
+  shapes, stamps.
+- **Organise and convert**: page numbers, watermarks, metadata, compression; PDF to images and Office
+  formats and back.
+- **Protect and sign**: passwords and permissions, true redaction (content removed, not covered), form
+  filling, signature pictures, and digital (certificate) signatures.
+- **OCR** for scanned documents, run locally.
+- **Automate and understand**: batch processing and workflows; optional AI that can run locally.
+
+All of it runs on your computer. Not planned: cloud sync, cloud processing, uploads, telemetry.
