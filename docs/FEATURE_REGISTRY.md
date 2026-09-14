@@ -73,8 +73,9 @@ Vision.
 | Delete a selected run or picture (Delete / Backspace); a picture's XObject is released when provably unused | done | editing/session.js, editing/objects/image.js |
 | One object, one record, holding where it ends up: a second gesture replaces the first, and one gesture is one undo | done | editing/edits.js, editing/objects/image.js |
 | Refused rather than risked: a clipped or degenerate picture, one inside a form, on a layer or under a soft mask; text is never rotated, mirrored, sheared or scaled non-uniformly | done | editing/objects/capabilities.js, editing/objects/image.js, editing/edits.js |
+| Moved, scaled, turned and deleted objects — one or several — follow their pages through reorder, duplicate, rotate and delete, and through save and reopen; everything else in the file is kept (page boxes, annotations, links, form fields, outline, metadata, and images other pages still draw) | done | editing/edits.js (followEdits), annotations/persist.js; proved in tests/editing/object-pages.test.mjs and the page-changes suite |
 | Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
-| Rotating text, non-proportional picture resize, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
+| Rotating text, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages
 
@@ -106,9 +107,9 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 must-haves left to prove: moved, scaled, turned and deleted objects (one or several) surviving page reorder, duplicate and rotate; PDF integrity after manipulation; unsupported-object messaging | next | §3.2 |
+| 0.5.0 must-have left: non-proportional picture resize (edge handles, in the picture's own axes; never for text) | next | §3.2 |
 | 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | planned | §3.2 |
-| Rotating text, non-proportional picture resize, free rotation, cross-page moves, copy/paste | planned | §3.2 |
+| Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |
 | Bundled selectable font: Liu — one optional document-editing font available alongside other selectable fonts; a normal entry in the font selector, nothing more. Prerequisites, none present: the font file and a licence permitting bundling, use and PDF embedding, both supplied by the owner; font selection itself | planned | §4.4 |

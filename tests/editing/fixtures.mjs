@@ -641,6 +641,27 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ].join('\n'), { Font: { F1 }, XObject: { Im1 } });
   });
 
+  // 23. Three pages, each with a picture and its caption, every page drawing the ONE image resource
+  // its page tree hands down: objects that are moved, scaled, turned and deleted have to follow their
+  // pages through moves, copies, turns and deletions, and deleting the picture on one page must never
+  // take it away from the pages that inherit the same resources.
+  await build('gallery', async (b) => {
+    const { doc, ctx } = b;
+    const F1 = b.std(StandardFonts.Helvetica);
+    const Im1 = b.image(16, 12);
+    doc.catalog.Pages().set(PDFName.of('Resources'), ctx.obj({ Font: { F1 }, XObject: { Im1 } }));
+    const pages = [
+      ['q 180 0 0 135 72 560 cm /Im1 Do Q', text('F1', 12, 72, 540, 'Picture one')],
+      ['q 120 0 0 90 300 400 cm /Im1 Do Q', text('F1', 12, 300, 380, 'Picture two')],
+      ['q 90 0 0 90 150 200 cm /Im1 Do Q', text('F1', 12, 150, 180, 'Picture three')],
+    ];
+    for (const content of pages) {
+      const page = doc.addPage(PageSizes.Letter);
+      page.node.set(PDFName.of('Contents'), ctx.register(ctx.flateStream(content.join('\n'))));
+      page.node.delete(PDFName.of('Resources')); // inherited from the page tree
+    }
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

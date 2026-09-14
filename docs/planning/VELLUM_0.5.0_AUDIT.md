@@ -10,7 +10,9 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 - Phase 3 (manipulation): done **except same-page multi-select**, and released in **0.4.1** (2026-09-12).
   See "Status after 0.4.1" below.
 - Same-page multi-select: done on `main`, not yet released (2026-09-15). See "Multi-select record".
-- **0.5.0 is not complete.** What remains is listed in "Multi-select record", under "Remaining".
+- Survival through page changes, file integrity and refusal messaging: proved (2026-09-15). See "Page
+  changes and file integrity record".
+- **0.5.0 is not complete.** What remains is listed at the end of "Page changes and file integrity record".
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -515,3 +517,50 @@ grouping, alignment, distribution, snapping, image replacement, image insertion,
 single-style paragraph reflow (last, gated). Free (non-proportional) picture resize is still open.
 
 The README describes the released app, so it gains multi-select when a release includes it.
+
+## 12. Page changes and file integrity record
+
+The three must-haves §10 said had no proof — survival through the page organiser, PDF integrity after
+manipulation, and unsupported-object messaging — are now proved, for one object and for several. No
+app code changed: the path (`followEdits` in the edit store, `composeDocument`, the page writer) was
+already the one text edits take. What was missing was evidence, and one kind of document to find it on.
+
+### A fixture for the case that could go wrong
+
+`gallery`: three pages, each with a picture and its caption, every page drawing the one image resource
+it **inherits from the page tree** — no page has resources of its own. That is the case where deleting
+a picture could reach past its page: `releaseResources` must clone what the page inherits before
+changing it, and a duplicated page must carry its own copy.
+
+### What is proved
+
+`tests/editing/object-pages.test.mjs` (9 tests), each re-reading the saved file from scratch and
+passing one shared integrity check — pdf-lib loads it, pdf.js draws every page without an error, and
+every image a page draws by name is in the resources that page really resolves:
+
+| Case | Result |
+|---|---|
+| Reorder | a moved picture and caption go with their page; the pages around it are byte-identical |
+| Duplicate | the copy gets records of its own (new ids); a later deletion on the copy alone leaves the original's picture drawn (draws per page `[1, 0, 1, 1]`); undo puts it back |
+| Rotate | the page gains `/Rotate`; the objects stay exactly where they were put, in user space |
+| Delete a page | its records go with it; undo brings the page and its records back together |
+| A group through copy + move + turn | both copies hold both objects, the text still a move and a uniform scale |
+| Inherited resources | deleting page 1's picture empties page 1's own XObjects only (`[[], ['Im1'], ['Im1']]`); pages 2 and 3 still draw it; deleting all three leaves every caption |
+| The rest of the file | page boxes, annotations (subtypes and rects), the link, form fields, the outline and the title are identical after moving one line and deleting another |
+| Reopened | every manipulated object is found again, selectable, movable, and the moved text still verifies against pdf.js |
+| Messaging | on 14 fixtures, every refusal of every verb on every object is a key with a sentence in `REASONS`, for one object and for several; the fixtures reach `clipped`, `form`, `layer`, `soft-mask`, `type3` and `unsupported` |
+
+End to end, a new `page-changes` suite (**17 checks**) does it the way a person does: Shift-click a
+picture and its caption, drag them, duplicate the page and turn the copy from the command palette,
+move the copy to the front, save, close and reopen — both copies hold both objects where they were put,
+and the untouched page is exactly as the file had it.
+
+### Remaining for 0.5.0 (after §12)
+
+- **Must-have: non-proportional picture resize.** "Move / resize" shipped as a uniform scale; edge
+  handles that stretch a picture along its own axes are still to build (never offered for text, which
+  cannot be written that way). The registry listed it as planned as well; it is now the one open
+  must-have there too.
+- **Should-haves**, each only if its strict tests pass (otherwise deferred, not faked): paragraph
+  grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings,
+  single-style paragraph reflow (last, gated).

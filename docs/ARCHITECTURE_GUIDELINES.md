@@ -133,7 +133,8 @@ build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites
 `tests/e2e/suites`: `text-editor`, `regression` (annotations, search, rotation), `editing-store`,
 `phase0` (signed, tagged and PDF/A documents, soft masks, layers, thumbnails), `selection`,
 `manipulation` (move, scale, turn, flip and delete one object), `multi-select` (several objects on a
-page), and — only when named — `performance` (`VELLUM_PERF_PDF=<file>` measures a real document; it is
+page), `page-changes` (moved objects through the page organiser, save and reopen), and — only when
+named — `performance` (`VELLUM_PERF_PDF=<file>` measures a real document; it is
 copied first, never changed). A suite clicks what it has first scrolled into view, and waits for the
 state it needs rather than for a fixed time, because how far a document is scrolled once several are
 open, and how fast a freshly started app responds, both vary. It stops if Vellum is already open (it's single-instance, so a test would drive that copy)
