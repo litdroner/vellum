@@ -22,8 +22,13 @@
 //
 // A wrong "no" costs a feature; a wrong "yes" corrupts a file. So nothing here is true that the
 // writer would not accept, and the writer never trusts this module to have asked.
+//
+// Several selected objects answer together (sharedCapability): a verb is on offer for a selection
+// only when every object in it allows it, because a gesture on several objects is written whole or
+// not at all.
 
 import { imageRefusal } from './image.js';
+import { REASONS } from '../runs.js';
 
 /** The verbs an object answers for, in this order. */
 export const VERBS = Object.freeze(['move', 'scale', 'rotate', 'editText', 'delete']);
@@ -98,4 +103,31 @@ export function capabilitiesFor(analysis, kind, record, ref) {
     }
   }
   return Object.freeze(capabilities);
+}
+
+/**
+ * Whether every one of several objects allows `verb`: `true`, or the first refusal met, as
+ * { reason, object }, in the order the objects are given. Nothing at all allows nothing — there is
+ * no gesture to make — and says so in the vocabulary's own `unsupported`.
+ */
+export function sharedCapability(objects, verb) {
+  if (!objects?.length) return { reason: 'unsupported', object: null };
+  for (const object of objects) {
+    const answer = object.capabilities?.[verb] ?? 'unsupported';
+    if (answer !== true) return { reason: answer, object };
+  }
+  return true;
+}
+
+/** How a refused verb is named in a sentence about several objects. */
+const REFUSED = Object.freeze({ move: 'moved', scale: 'resized', rotate: 'turned', editText: 'edited', delete: 'deleted' });
+
+/**
+ * The sentence a refusal is reported in: the reason in its own words, and for a selection of
+ * several objects, first that not all of them can be — so it is plain that the whole gesture was
+ * held back, not only the part that one object refused.
+ */
+export function refusalMessage(verb, reason, count = 1) {
+  const why = REASONS[reason] ?? REASONS.unsupported;
+  return count > 1 ? `Not all of the selected objects can be ${REFUSED[verb] ?? 'changed'}. ${why}` : why;
 }

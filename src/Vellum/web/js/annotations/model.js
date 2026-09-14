@@ -69,7 +69,16 @@ export class AnnotationStore extends EventTarget {
    * makes a new kind of history, and any other change (a different token, or none) ends the run.
    */
   applyEdit(before, after, coalesce = null) {
-    this.apply([{ edit: { before, after } }], coalesce);
+    this.applyEdits([[before, after]], coalesce);
+  }
+
+  /**
+   * Several content edits as ONE undo step: `pairs` is [[before, after], ...], each as applyEdit
+   * takes it. A gesture on several selected objects is one gesture, so it is written, undone and
+   * redone together — never half of it. `coalesce` joins it to the previous step exactly as above.
+   */
+  applyEdits(pairs, coalesce = null) {
+    this.apply(pairs.map(([before, after]) => ({ edit: { before, after } })), coalesce);
   }
 
   get all() { return [...this.#items.values()]; }
@@ -146,12 +155,13 @@ export class AnnotationStore extends EventTarget {
   #commit(changes, coalesce = null) {
     this.#write(changes, 'after');
     const last = this.#undo.at(-1);
-    if (coalesce && last?.coalesce === coalesce && last.changes.length === 1 && changes.length === 1
-      && last.changes[0].edit && changes[0].edit) {
+    if (coalesce && last?.coalesce === coalesce && last.changes.every((c) => c.edit) && changes.every((c) => c.edit)) {
       // The same gesture, continued: one entry, still holding what the gesture started from. The
-      // sequence number moves on so that "unsaved changes" still notices the file has changed.
-      last.changes = [{ edit: { before: last.changes[0].edit.before, after: changes[0].edit.after } }];
-      last.seq = ++opSeq;
+      // sequence number moves on so that "unsaved changes" still notices the file has changed. A
+      // gesture that has come back to exactly where it started leaves no step behind at all.
+      last.changes = foldEdits(last.changes, changes);
+      if (last.changes.length) last.seq = ++opSeq;
+      else this.#undo.pop();
     } else {
       this.#undo.push({ seq: ++opSeq, changes, coalesce });
     }
@@ -224,4 +234,29 @@ export class AnnotationStore extends EventTarget {
   #emit(pages, plan = false, edits = false) {
     this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits } }));
   }
+}
+
+/**
+ * Two steps of one gesture as one: for each record, what it was before the first step and what it
+ * is after the second. Folded by record id, never by position, because a step can end one record
+ * and start another — a nudge that brings an object back to where the file has it removes its
+ * record, and the next nudge makes a new one with a new id — and each must be undone as itself.
+ * A record that ends the gesture exactly as it began it has nothing left to undo, and is dropped.
+ */
+function foldEdits(earlier, later) {
+  const byId = new Map();
+  for (const { edit } of [...earlier, ...later]) {
+    const record = edit.after ?? edit.before;
+    if (!record) continue;
+    const seen = byId.get(record.id);
+    if (seen) seen.after = edit.after;
+    else byId.set(record.id, { before: edit.before, after: edit.after });
+  }
+  const folded = [];
+  for (const edit of byId.values()) {
+    if (!edit.before && !edit.after) continue;
+    if (edit.before && edit.after && JSON.stringify(edit.before) === JSON.stringify(edit.after)) continue;
+    folded.push({ edit });
+  }
+  return folded;
 }

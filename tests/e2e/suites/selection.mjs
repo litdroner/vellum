@@ -94,9 +94,13 @@ export async function run(t) {
     return found;
   };
 
+  /** The selection as identity; `key` is the one selected object, when exactly one is. */
   const selection = (path) => q(`(() => {
     const s = ${V(path)}.objectSelection.current;
-    return s ? { page: s.page, key: s.key, fields: Object.keys(s).sort(), frozen: Object.isFrozen(s), json: JSON.stringify(s) } : null;
+    return s ? {
+      page: s.page, key: s.keys.length === 1 ? s.keys[0] : null, keys: [...s.keys],
+      fields: Object.keys(s).sort(), frozen: Object.isFrozen(s) && Object.isFrozen(s.keys), json: JSON.stringify(s),
+    } : null;
   })()`);
 
   /**
@@ -189,7 +193,7 @@ export async function run(t) {
   await clickObject(image);
   let state = await selection(F('objects'));
   check('clicking an image selects it', state?.key === image.key, state?.key);
-  check('the selection is identity and nothing else', state && state.fields.join(',') === 'key,page', state?.json);
+  check('the selection is identity and nothing else', state && state.fields.join(',') === 'keys,page', state?.json);
   check('and it is frozen, so nothing can be hung off it', state?.frozen === true);
   check('no editor opens for an image', (await editorOpen(F('objects'))) === false);
   let box = await outline(F('objects'));

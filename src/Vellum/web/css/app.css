@@ -1241,6 +1241,22 @@ kbd {
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
 }
+/* Several objects selected: one quiet frame around all of them, which the corner handles sit on, so
+   the handles plainly belong to the group rather than to any one object. */
+.vl-object-group {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+  stroke-width: 1px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+/* The rectangle dragged over bare paper to select what it encloses. */
+.vl-object-marquee {
+  fill: color-mix(in srgb, var(--accent) 8%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
 /* Dragging a picture moves it; text keeps the caret, because clicking text types rather than moves. */
 .viewer-container.vl-edit-move { cursor: move; }
 

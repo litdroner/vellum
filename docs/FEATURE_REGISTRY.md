@@ -8,6 +8,7 @@ Vision.
 | Status | Meaning |
 |---|---|
 | **done** | shipped and tested |
+| **done, unreleased** | implemented and tested on `main`, not yet in a release |
 | **in progress** | being implemented in the approved current phase |
 | **next** | approved for the current phase or the one after it, not started |
 | **planned** | in the Vision, not started; no UI may pretend it exists |
@@ -21,9 +22,10 @@ Vision.
   0.5.0 object-editing plan: in Edit mode, select a text run or a picture; move and uniformly scale both;
   quarter-turn and mirror pictures; nudge; delete. These rows are marked done below.
 - **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
-  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Phases 0–2 are done; Phase 3 is done except same-page
-  multi-select. What remains for 0.5.0 is the first two Roadmap rows. Nothing is **in progress** until
-  the owner approves the next step.
+  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Phases 0–3 are done, same-page multi-select included; it is on
+  `main` and not yet in a release (marked *done, unreleased* below). What remains for 0.5.0 is the
+  first two Roadmap rows. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in
+  order, within the audit's scope and its "Never" list, without a separate approval for each step.
 
 ## Reading
 
@@ -71,6 +73,7 @@ Vision.
 | Delete a selected run or picture (Delete / Backspace); a picture's XObject is released when provably unused | done | editing/session.js, editing/objects/image.js |
 | One object, one record, holding where it ends up: a second gesture replaces the first, and one gesture is one undo | done | editing/edits.js, editing/objects/image.js |
 | Refused rather than risked: a clipped or degenerate picture, one inside a form, on a layer or under a soft mask; text is never rotated, mirrored, sheared or scaled non-uniformly | done | editing/objects/capabilities.js, editing/objects/image.js, editing/edits.js |
+| Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
 | Rotating text, non-proportional picture resize, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages
@@ -103,7 +106,7 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 must-have left: same-page multi-select | next | §3.2 |
+| 0.5.0 must-haves left to prove: moved, scaled, turned and deleted objects (one or several) surviving page reorder, duplicate and rotate; PDF integrity after manipulation; unsupported-object messaging | next | §3.2 |
 | 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | planned | §3.2 |
 | Rotating text, non-proportional picture resize, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |

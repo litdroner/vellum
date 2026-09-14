@@ -104,9 +104,10 @@ export async function run(t) {
     return now;
   };
 
+  /** The selection as identity; `key` is the one selected object, when exactly one is. */
   const selection = (path) => q(`(() => {
     const s = ${V(path)}.objectSelection.current;
-    return s ? { page: s.page, key: s.key, fields: Object.keys(s).sort() } : null;
+    return s ? { page: s.page, key: s.keys.length === 1 ? s.keys[0] : null, keys: [...s.keys], fields: Object.keys(s).sort() } : null;
   })()`);
   const editorOpen = (path) => q(`Boolean(${V(path)}.el.querySelector('.vl-text-editor'))`);
   const handles = (path) => q(`${V(path)}.el.querySelectorAll('.vl-object-handle').length`);
@@ -183,7 +184,7 @@ export async function run(t) {
 
   await selectObject(F('images'), 1, image0.key);
   check('clicking a picture selects it', (await selection(F('images')))?.key === image0.key);
-  check('the selection is identity and nothing else', (await selection(F('images')))?.fields.join(',') === 'key,page');
+  check('the selection is identity and nothing else', (await selection(F('images')))?.fields.join(',') === 'keys,page');
   check('no editor opens for a picture', (await editorOpen(F('images'))) === false);
   check('four corner handles are offered, and no more', (await handles(F('images'))) === 4);
 

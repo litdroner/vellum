@@ -74,21 +74,22 @@ export async function connect({ port = 9222, timeoutMs = 20000 } = {}) {
 
   const type = (text) => send('Input.insertText', { text });
 
-  const mouse = async (x, y, { button = 'left', clickCount = 1 } = {}) => {
-    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount });
+  /** modifiers: the same bits as key() uses (Alt 1, Ctrl 2, Shift 8), held for the whole click. */
+  const mouse = async (x, y, { button = 'left', clickCount = 1, modifiers = 0 } = {}) => {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount, modifiers });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount, modifiers });
   };
 
-  const drag = async (from, to, steps = 8) => {
-    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from[0], y: from[1] });
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from[0], y: from[1], button: 'left', clickCount: 1 });
+  const drag = async (from, to, steps = 8, { modifiers = 0 } = {}) => {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from[0], y: from[1], modifiers });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from[0], y: from[1], button: 'left', clickCount: 1, modifiers });
     for (let i = 1; i <= steps; i++) {
       const x = from[0] + ((to[0] - from[0]) * i) / steps;
       const y = from[1] + ((to[1] - from[1]) * i) / steps;
-      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1, modifiers });
     }
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to[0], y: to[1], button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to[0], y: to[1], button: 'left', clickCount: 1, modifiers });
   };
 
   const wheel = (x, y, deltaY, modifiers = 0) =>

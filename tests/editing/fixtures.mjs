@@ -263,7 +263,7 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     await fill(api);
     const bytes = await doc.save({ useObjectStreams: false });
     const file = path.join(outDir, `${name}.pdf`);
-    fs.writeFileSync(file, bytes);
+    writeFixture(file, bytes);
     written[name] = file;
   }
 
@@ -708,8 +708,37 @@ function writeEncrypted(file, userPassword) {
   });
   const xref = [`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`, ...offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`)].join('');
   chunks.push(Buffer.from(`${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Encrypt 6 0 R /ID [<${id.toString('hex')}> <${id.toString('hex')}>] >>\nstartxref\n${length}\n%%EOF\n`));
-  fs.writeFileSync(file, Buffer.concat(chunks));
+  writeFixture(file, Buffer.concat(chunks));
   return file;
+}
+
+/**
+ * Writes a fixture only when its bytes differ from what is already there, and then atomically.
+ * `node --test` runs the test files in parallel and every one of them generates the fixtures into
+ * the same folder, so a plain write — which empties the file before filling it — could be read half
+ * written by another test. Generation is deterministic, so after the first run nothing is written
+ * at all; the first write goes to a file of its own and is renamed into place.
+ */
+function writeFixture(file, bytes) {
+  const data = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  try {
+    if (fs.readFileSync(file).equals(data)) return;
+  } catch { /* not written yet */ }
+  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temp, data);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(temp, file);
+      return;
+    } catch (err) {
+      // Windows refuses to replace a file another process has open for that moment: wait and retry.
+      if (attempt >= 40 || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) {
+        fs.rmSync(temp, { force: true });
+        throw err;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

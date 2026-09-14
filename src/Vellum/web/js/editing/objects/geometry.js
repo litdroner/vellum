@@ -83,6 +83,38 @@ export function quadBox(quad) {
   return boundsOf([[quad[0], quad[1]], [quad[2], quad[3]], [quad[4], quad[5]], [quad[6], quad[7]]]);
 }
 
+/**
+ * The axis-aligned bounds of several quads together — a selection of objects as one box — as
+ * [x1, y1, x2, y2], or null when there is nothing to bound. In PDF user space; a page is only ever
+ * turned in quarter turns, so this box is a rectangle on screen too.
+ */
+export function unionBox(quads) {
+  const points = [];
+  for (const quad of quads ?? []) {
+    if (!quad || quad.length < 8) continue;
+    for (let i = 0; i < 8; i += 2) points.push([quad[i], quad[i + 1]]);
+  }
+  if (!points.length) return null;
+  const box = boundsOf(points);
+  return box.every(Number.isFinite) ? box : null;
+}
+
+/** A box [x1, y1, x2, y2] as a quad (ll, lr, ur, ul), so a box is outlined and handled like an object. */
+export const boxQuad = (box) => (box ? [box[0], box[1], box[2], box[1], box[2], box[3], box[0], box[3]] : null);
+
+/**
+ * Is the whole of a quad inside a box [x1, y1, x2, y2]? Every corner has to be: a selection
+ * rectangle takes what it encloses, not whatever it touches, so a large picture behind the text
+ * being gathered up is not swept in with it. A quad with no area is never inside anything.
+ */
+export function quadWithin(quad, box) {
+  if (!box || quadArea(quad) < MIN_AREA) return false;
+  for (let i = 0; i < 8; i += 2) {
+    if (!(quad[i] >= box[0] && quad[i] <= box[2] && quad[i + 1] >= box[1] && quad[i + 1] <= box[3])) return false;
+  }
+  return true;
+}
+
 /** The centre of a quad — the mean of its four corners, which is its centre of symmetry. */
 export function quadCentre(quad) {
   if (!quad || quad.length < 8) return null;

@@ -73,6 +73,12 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
   picture takes the `move` cursor; text keeps the caret, because clicking text types rather than
   moves. While a gesture is under way only the outline follows the pointer: the page is re-rendered
   once, when the change is written, so nothing is dragged around at the cost of a repaint per frame.
+- **Several selected objects**: each is outlined exactly as it would be alone, and one quiet dashed
+  accent frame (`.vl-object-group`) surrounds them all. The four corner handles sit on that frame, and
+  appear only when every object in the selection can be scaled. Dragging over bare paper draws a
+  selection rectangle (`.vl-object-marquee`: a faint accent wash inside an accent line) that takes what
+  it wholly encloses, and outlines what it will take while it is being dragged. A gesture that one of
+  the objects refuses changes nothing and says why in a toast, in the object model's own words.
 - **Home**: date, greeting, Open card (dashed inner edge), paper illustration, recent covers.
 - **Settings**: left navigation (Appearance, Reading, Updates, Shortcuts, About), rows on surface.
 - **Command palette** (Ctrl+K): every command from the registry plus recent files.

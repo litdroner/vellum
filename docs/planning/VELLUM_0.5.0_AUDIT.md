@@ -9,7 +9,8 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 - Phase 2 (selection): done, see "Phase 2 record" below.
 - Phase 3 (manipulation): done **except same-page multi-select**, and released in **0.4.1** (2026-09-12).
   See "Status after 0.4.1" below.
-- **0.5.0 is not complete.** What remains is listed in "Status after 0.4.1".
+- Same-page multi-select: done on `main`, not yet released (2026-09-15). See "Multi-select record".
+- **0.5.0 is not complete.** What remains is listed in "Multi-select record", under "Remaining".
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -417,4 +418,100 @@ text boxes, Form XObject editing, vector-shape editing, inline image replacement
 links with content, tag-preserving edits, PDF/A font embedding, OCR, redaction, forms, signatures, AI
 (cloud processing stays out of scope). Deferral here never removes anything from the Vision.
 
-Nothing in this list begins without approval.
+Nothing in this list begins without approval. *(2026-09-15: the owner asked for the remaining 0.5.0
+work to go ahead in order — plan, implement, test, review, commit — within this scope and the "Never"
+list, stopping only for a real product or architecture decision, a PDF-integrity or security risk, or
+a contradiction in the documents.)*
+
+## 11. Multi-select record
+
+Same-page multi-select, the last Phase 3 must-have, built in the Edit mode that exists. No new tool,
+mode, command or palette entry, and no change to how any one object is written.
+
+### What a person can do
+
+In Edit mode, Shift- or Ctrl-click adds an object to the selection or takes it out; dragging over bare
+paper draws a rectangle that selects what it wholly encloses (with Shift or Ctrl, adds it); Ctrl+A
+selects every object on the page. A drag on any selected object moves them all; the corner handles sit
+on one frame around the group and scale every object about the same far corner; the arrow keys nudge
+them all (a burst is one undo step); [ and ] turn and Shift+H / Shift+V mirror each picture about its
+own centre and axes; Delete removes them all. Escape clears the selection; a plain click on one member
+selects it alone; Tab walks the editable text from the line chosen last, and Enter opens a line only
+when exactly one is selected.
+
+### Where it lives
+
+| Module | What changed |
+|---|---|
+| `editing/objects/selection.js` | identity is `{ page, keys }`: one page, keys in the order chosen (the last is the *primary*); `set`, `add`, `toggle`, `retain`; `resolve()` returns the objects still there |
+| `annotations/model.js` | `applyEdits()`: several records as one undo step; a burst folds **by record id** |
+| `editing/session.js` | `transformObjects()` and `removeObjects()`; the one-object methods are one-element calls of these |
+| `editing/objects/capabilities.js` | `sharedCapability()`: a verb for a selection only when every object allows it; `refusalMessage()`: one sentence for a refusal, one object or several |
+| `editing/objects/geometry.js` | `unionBox()`, `boxQuad()`, `quadWithin()` |
+| `ui/text-editor.js` | the interaction: modifier clicks, the rectangle, group drags, the group frame, keys over the selection |
+
+### Decisions worth keeping
+
+- **A selection is still identity and nothing else**, now `{ page, keys }`, frozen. It spans one page
+  because a gesture on several objects is one change to one page's content; choosing on another page
+  starts over there. The Phase 2 tests follow the new shape; what they pin — no quad, no coordinate, no
+  object in the state — is unchanged.
+- **All or nothing.** The session finds, asks and plans every object before anything is stored, then
+  stores all the records together as one undo step. One refusal, or one object that has gone, changes
+  nothing at all. The interaction offers a gesture only when `sharedCapability()` says every object
+  allows it, and the engine checks again regardless.
+- **One reason vocabulary, still.** A refusal for a selection is the first refusing object's own reason,
+  after "Not all of the selected objects can be moved." (or resized, turned, deleted), so it is plain
+  that the whole gesture was held back and not just one object.
+- **A group scales about the far corner of the box around it**, uniformly: each object gets the same
+  `scaleAbout(anchor, f)`, so text stays a move and a uniform scale, which is all text may be.
+- **Pictures turn and mirror each about their own centre and axes** when several are selected: a
+  selection is several objects, not one shape. A selection with text in it is not turned at all.
+- **The rectangle takes what it wholly encloses**, not what it touches, so a large picture behind the
+  text being gathered is not swept in with it. It is drawn with what it will take outlined as it goes.
+- **A deleted object cannot be acted on.** The analysis is of the original page and still lists what a
+  deletion removed; the session now refuses to move or delete such an object (moving a deleted picture
+  would have put it back), and the selection drops it after a rebuild.
+- **A drag that can't be honoured says why**, once, when the hand moves, instead of silently doing
+  nothing. This applies to one object too, and matches what the keys already did.
+- **Ctrl+A in Edit mode selects the page's objects**, handled in Edit mode like the other object keys
+  (Phase 3's precedent), not as a command.
+
+### Found and fixed on the way
+
+- **Undo could duplicate records or throw after an arrow-key burst** (shipped in 0.4.1). A burst folded
+  its steps by position. A nudge that brings a moved object back to where the file has it removes its
+  record, and the next nudge in the same burst makes a new record with a new id; folded by position,
+  undo then stored the old record under the new id, and undo/redo left two records for one object — a
+  document the writer refuses to compose. A burst that made a record and removed it again folded to
+  `{ before: null, after: null }`, and undoing that threw. The fold is now by record id, and a burst
+  that ends where it began leaves no undo step. Both cases have tests that fail on the old store.
+- **Background tabs opened scrolled past the top of page 1**, which was the "pre-existing flake" in
+  §8: the regression and text-editor suites clicked lines the stray scroll had put under the tool bar.
+  Fixed in the viewer (`cf15398`); both suites also scroll a line into view before clicking it.
+- **Parallel engine test files could read a fixture half-written**: every file regenerates the
+  fixtures into one folder. Fixtures are now written only when their bytes change (generation is
+  deterministic), and then atomically.
+
+### Test results
+
+**Node engine suite** — `node --test "tests/editing/*.test.mjs"`: **284 tests, 282 pass, 2 skipped, 0
+fail** (259 before). 25 tests are new in `multi-select.test.mjs`: the selection model, the store's
+folding (including the two bugs above), shared capabilities and refusal wording, group geometry, and
+the session driving real fixtures through `composeDocument` and re-reading the saved files.
+
+**End-to-end** — a new `multi-select` suite (**56 checks**) in the default set, driven with real
+modifier clicks, drags and keys, through save, close and reopen. The whole default set in one batch:
+**323 of 323 checks in 7 suites** — text-editor 43, regression 48, editing-store 14, phase0 30,
+selection 51, manipulation 81, multi-select 56. (Before this work the same batch gave 251 of 255, the
+four failures being the scroll flake fixed in `cf15398`.)
+
+### Remaining for 0.5.0
+
+Must-haves still to prove with tests, each also for several objects: survival of moved, scaled, turned
+and deleted objects through page reorder, duplicate and rotate; PDF integrity after manipulation;
+unsupported-object messaging. Then the should-haves, each only if its strict tests pass: paragraph
+grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings,
+single-style paragraph reflow (last, gated). Free (non-proportional) picture resize is still open.
+
+The README describes the released app, so it gains multi-select when a release includes it.

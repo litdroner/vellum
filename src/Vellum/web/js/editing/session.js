@@ -9,12 +9,13 @@
 // is the caller's to work out (objects/geometry.js transformQuad) and never something kept here.
 
 import { openSource } from './source.js';
-import { analyzePage, verifyPage, REASONS } from './runs.js';
+import { analyzePage, verifyPage } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
 import { selectableObjects } from './objects/selection.js';
+import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit } from './objects/image.js';
 import { IDENTITY, multiply } from './matrix.js';
-import { isIdentity, quantize } from './objects/transform.js';
+import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
 
 export class TextEditing {
@@ -134,69 +135,111 @@ export class TextEditing {
     return true;
   }
 
-  // ---- moving, scaling, turning, flipping and deleting one object ------------------------------
+  // ---- moving, scaling, turning, flipping and deleting objects ----------------------------------
   //
-  // Both kinds go through here, and both keep exactly one record per object. A gesture is given as
-  // a DELTA — "what this drag just did" — because that is what an interaction knows; the record
-  // keeps the ABSOLUTE transform, in the ORIGINAL page's user space, which is what the writers
-  // need and what makes a second gesture replace the first instead of stacking another record.
+  // Both kinds go through here, one object or several selected together, and every object keeps
+  // exactly one record. A gesture is given as DELTAS — "what this drag just did" to each object —
+  // because that is what an interaction knows; each record keeps the ABSOLUTE transform, in the
+  // ORIGINAL page's user space, which is what the writers need and what makes a second gesture
+  // replace the first instead of stacking another record.
+  //
+  // A gesture on several objects is all or nothing. Every object is found, asked and planned before
+  // anything is stored, so one refusal — or one object that has gone — changes nothing at all; and
+  // the records then go into the edit store together, as ONE undo step.
 
-  /** The object with this key on a page, and the page entry it belongs to. */
-  async #objectAt(pageNumber, key) {
+  /**
+   * The objects with these keys on one page, each with its record, and the page entry they belong
+   * to. An object whose record has already removed it is not on the page any more, however much the
+   * original content still holds it, and nothing may be done to it: moving a deleted picture must
+   * not put it back.
+   */
+  async #objectsAt(pageNumber, keys) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    if (!keys.length) throw new EditError('missing', 'Nothing is selected.');
+    if (new Set(keys).size !== keys.length) throw new EditError('changed', 'One object was asked for twice, so nothing was changed.');
     const { entry, objects, records } = await this.objects(pageNumber);
-    const object = objects.find((o) => o.ref.key === key);
-    if (!object) throw new EditError('missing', 'That object isn’t on this page any more.');
-    return { entry, object, record: records.get(key) ?? null };
+    const byKey = new Map(objects.map((o) => [o.ref.key, o]));
+    const found = keys.map((key) => {
+      const object = byKey.get(key) ?? null;
+      const record = records.get(key) ?? null;
+      if (!object || isRemoved(record)) {
+        throw new EditError('missing', keys.length > 1 ? 'One of the selected objects isn’t on this page any more, so nothing was changed.' : 'That object isn’t on this page any more.');
+      }
+      return { object, record };
+    });
+    return { entry, found };
   }
 
-  /** Refuses a verb in the words the capability already answered with. */
-  #refuse(object, verb) {
+  /** Refuses a verb in the words the capability already answered with — for a group, saying so. */
+  #refuse(object, verb, count = 1) {
     const reason = object.capabilities[verb];
     if (reason === true) return;
-    throw new EditError('not-editable', REASONS[reason] ?? REASONS.unsupported, { reason });
+    throw new EditError('not-editable', refusalMessage(verb, reason, count), { reason, key: object.ref.key });
   }
 
   /**
    * Applies `delta` — a page-space transform — to where an object is NOW: one undo step, one
-   * record, an absolute transform inside it. Returns false when nothing changed.
-   *
-   * `verb` is the capability the gesture claims ('move', 'scale' or 'rotate'), so a refusal is the
-   * one the object already published rather than a second opinion. `coalesce`, when given, joins
-   * this change to the previous one carrying the same token — an arrow-key burst is one gesture and
-   * so one undo (annotations/model.js).
-   *
-   * A delta that puts the object back exactly where the file has it removes the record altogether,
-   * so "move it and move it back" leaves the document as it found it.
+   * record, an absolute transform inside it. Returns false when nothing changed. The one-object
+   * form of transformObjects(), which says everything else.
    */
-  async transformObject(pageNumber, key, delta, { verb = 'move', coalesce = null } = {}) {
+  transformObject(pageNumber, key, delta, options = {}) {
+    return this.transformObjects(pageNumber, [{ key, delta }], options);
+  }
+
+  /**
+   * Applies a delta to each of several objects on one page — `moves` is [{ key, delta }] — as ONE
+   * undo step. Returns false when nothing changed.
+   *
+   * `verb` is the capability the gesture claims ('move', 'scale' or 'rotate'), and every object has
+   * to allow it: a refusal is the one the object already published rather than a second opinion.
+   * `coalesce`, when given, joins this change to the previous one carrying the same token — an
+   * arrow-key burst is one gesture and so one undo (annotations/model.js).
+   *
+   * A delta that puts an object back exactly where the file has it removes that object's record
+   * altogether, so "move it and move it back" leaves the document as it found it.
+   */
+  async transformObjects(pageNumber, moves, { verb = 'move', coalesce = null } = {}) {
     const view = this.#view;
-    const { entry, object, record } = await this.#objectAt(pageNumber, key);
-    this.#refuse(object, verb);
-    const absolute = quantize(multiply(record?.transform ?? IDENTITY, delta));
-    if (!absolute) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
-    if (record && sameAs(record.transform, absolute)) return false;
-    if (!record && isIdentity(absolute)) return false;
-    const after = this.#plan(entry, object, record, absolute);
-    view.annotations.applyEdit(record, after, coalesce);
+    if (moves.some((m) => !isValid(m?.delta))) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
+    const { entry, found } = await this.#objectsAt(pageNumber, moves.map((m) => m.key));
+    for (const { object } of found) this.#refuse(object, verb, found.length);
+    const pairs = [];
+    found.forEach(({ object, record }, i) => {
+      const absolute = quantize(multiply(record?.transform ?? IDENTITY, moves[i].delta));
+      if (!absolute) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
+      if (record ? sameAs(record.transform, absolute) : isIdentity(absolute)) return;
+      pairs.push([record, this.#plan(entry, object, record, absolute)]);
+    });
+    if (!pairs.length) return false;
+    view.annotations.applyEdits(pairs, coalesce);
     return true;
   }
 
   /** Deletes one object: text loses its glyphs, a picture loses its draw. One undo step. */
-  async removeObject(pageNumber, key) {
+  removeObject(pageNumber, key) {
+    return this.removeObjects(pageNumber, [key]);
+  }
+
+  /** Deletes several objects on one page as ONE undo step — all of them, or none if any refuses. */
+  async removeObjects(pageNumber, keys) {
     const view = this.#view;
-    const { entry, object, record } = await this.#objectAt(pageNumber, key);
-    this.#refuse(object, 'delete');
-    const after = object.kind === 'text-run'
+    const entry = view.shownPlan?.[pageNumber - 1];
+    // What planning needs is read first, so nothing is awaited between reading the records and
+    // storing what replaces them.
+    const glyphs = entry && entry.src !== 'blank' ? (await this.#source(entry.src)).glyphs : null;
+    const constraints = await this.#constraints();
+    const { entry: current, found } = await this.#objectsAt(pageNumber, keys);
+    for (const { object } of found) this.#refuse(object, 'delete', found.length);
+    const pairs = found.map(({ object, record }) => [record, object.kind === 'text-run'
       // Empty text has always been how text is removed (encoding.mode 'none'); a placement stays
       // on the record because it is not about the text, exactly as retyping keeps it.
       ? planTextEdit({
-        run: object.record, text: '', entry: entry.id, glyphs: (await this.#source(entry.src)).glyphs,
-        id: record?.id, transform: record?.transform ?? null, ...(await this.#constraints()),
+        run: object.record, text: '', entry: current.id, glyphs,
+        id: record?.id, transform: record?.transform ?? null, ...constraints,
       })
-      : planImageEdit({ object, removed: true, entry: entry.id, id: record?.id });
-    view.annotations.applyEdit(record, after);
+      : planImageEdit({ object, removed: true, entry: current.id, id: record?.id })]);
+    view.annotations.applyEdits(pairs);
     return true;
   }
 
@@ -286,6 +329,9 @@ export class TextEditing {
 
 /** Are these the same stored placement? Both may be absent, which is also the same. */
 const sameAs = (a, b) => (!a && isIdentity(b)) || Boolean(a && b && a.every((v, i) => v === b[i]));
+
+/** Has this record taken its object off the page: a picture's draw removed, or a run's text emptied? */
+export const isRemoved = (record) => Boolean(record?.removed) || record?.encoding?.mode === 'none';
 
 /**
  * Notes pdf.js's own name for each run's font (run.loadedFont): pdf.js loads embedded fonts into

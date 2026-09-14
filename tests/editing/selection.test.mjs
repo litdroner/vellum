@@ -5,6 +5,9 @@
 // second opinion. Second — and this is the one that matters — that a selection is IDENTITY and
 // nothing else. No quad, no coordinate, no analysis, no object. If geometry ever leaks into this
 // state, a selection can outlive the page it was measured on and draw an outline somewhere wrong.
+//
+// Written for one selected object ({ page, key }); multi-select made the identity { page, keys }
+// and these tests follow it, one object at a time. Several objects: multi-select.test.mjs.
 // Run: node --test "tests/editing/*.test.mjs"
 
 import test, { before } from 'node:test';
@@ -28,17 +31,17 @@ async function analyzed(name) {
 
 // ---- 1. the state is identity, and only identity ---------------------------------------------
 
-test('a selection is exactly { page, key } and nothing else', () => {
+test('a selection is exactly { page, keys } and nothing else', () => {
   const selection = new ObjectSelection();
   assert.equal(selection.current, null);
   selection.select(3, 'image:page#7');
-  assert.deepEqual(Object.keys(selection.current).sort(), ['key', 'page']);
-  assert.deepEqual(selection.current, { page: 3, key: 'image:page#7' });
-  assert.ok(Object.isFrozen(selection.current), 'and it cannot be added to afterwards');
+  assert.deepEqual(Object.keys(selection.current).sort(), ['keys', 'page']);
+  assert.deepEqual(selection.current, { page: 3, keys: ['image:page#7'] });
+  assert.ok(Object.isFrozen(selection.current) && Object.isFrozen(selection.current.keys), 'and it cannot be added to afterwards');
   assert.throws(() => { selection.current.quad = [1, 2, 3, 4]; }, TypeError);
-  // Nothing in it is a coordinate, a list of them, or anything but a number and a string.
+  // Nothing in it is a coordinate, a list of them, or anything but a number and strings.
   assert.equal(typeof selection.current.page, 'number');
-  assert.equal(typeof selection.current.key, 'string');
+  assert.ok(selection.current.keys.every((key) => typeof key === 'string'));
 });
 
 test('selecting an object keeps no part of the object', async () => {
@@ -47,7 +50,7 @@ test('selecting an object keeps no part of the object', async () => {
   const selection = new ObjectSelection();
   selection.select(1, object.ref.key);
   const kept = JSON.parse(JSON.stringify(selection.current));
-  assert.deepEqual(kept, { page: 1, key: object.ref.key });
+  assert.deepEqual(kept, { page: 1, keys: [object.ref.key] });
   // The object, its geometry and its record are all reachable from the analysis and from nowhere
   // in the selection: serialising the whole state is two fields, never a quad.
   assert.equal(JSON.stringify(selection.current).includes('quad'), false);
@@ -92,7 +95,8 @@ test('has() answers about both fields', () => {
   assert.equal(selection.has(2, 'run:0:0'), false);
   assert.equal(selection.has(1, 'run:9:9'), false);
   assert.equal(selection.page, 1);
-  assert.equal(selection.key, 'run:0:0');
+  assert.deepEqual([...selection.keys], ['run:0:0']);
+  assert.equal(selection.primary, 'run:0:0');
 });
 
 // ---- 2. geometry comes from the analysis, every time -----------------------------------------
@@ -102,17 +106,18 @@ test('resolve() finds the object in the analysis it is given', async () => {
   const object = selectableObjects(page).find((o) => o.kind === 'image');
   const selection = new ObjectSelection();
   selection.select(1, object.ref.key);
-  const found = selection.resolve(page);
+  const [found, ...more] = selection.resolve(page);
   assert.equal(found.ref.key, object.ref.key);
+  assert.equal(more.length, 0);
   assert.ok(found.geometry.quad, 'and the geometry comes with it, from the page, not the selection');
-  assert.equal(selection.resolve(null), null, 'without an analysis there is no geometry to give');
+  assert.deepEqual(selection.resolve(null), [], 'without an analysis there is no geometry to give');
 });
 
-test('a key that is no longer on the page resolves to null instead of throwing', async () => {
+test('a key that is no longer on the page resolves to nothing instead of throwing', async () => {
   const page = (await analyzed('objects')).pages[0];
   const selection = new ObjectSelection();
   selection.select(1, 'image:page#99999');
-  assert.equal(selection.resolve(page), null);
+  assert.deepEqual(selection.resolve(page), []);
   assert.equal(selection.current !== null, true, 'resolving does not itself clear the selection');
 });
 
@@ -124,7 +129,7 @@ test('reconcile() drops a selection whose object has gone, and keeps one that ha
   const kept = new ObjectSelection();
   kept.select(1, object.ref.key);
   kept.reconcile(objects);
-  assert.equal(kept.key, object.ref.key, 'still there, so still selected');
+  assert.equal(kept.primary, object.ref.key, 'still there, so still selected');
 
   // The same key against a different page: the object is not there, so the selection goes.
   const dropped = new ObjectSelection();
@@ -140,7 +145,7 @@ test('re-resolving after a fresh analysis of the same file finds the same object
   const selection = new ObjectSelection();
   selection.select(1, object.ref.key);
   // A rebuild produces a new analysis and new object instances; the two fields find it again.
-  const found = selection.resolve(second);
+  const [found] = selection.resolve(second);
   assert.ok(found, 'the key survives the rebuild');
   assert.notEqual(found, object, 'as a new object, not the one that was selected');
   assert.deepEqual([...found.geometry.quad], [...object.geometry.quad]);
