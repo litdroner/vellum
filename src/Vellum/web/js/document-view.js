@@ -93,6 +93,8 @@ export class DocumentView extends EventTarget {
   #restore = null;
   #resizeObserver = null;
   #refitFrame = 0;
+  /** The document is to start at the very top, and hasn't been able to yet (see #toStart). */
+  #startAtTop = false;
   /** Other PDFs pages were inserted from: sourceId → bytes. */
   sources = new Map();
   rebuilding = false;
@@ -244,12 +246,18 @@ export class DocumentView extends EventTarget {
     let size = '';
     this.#resizeObserver = new ResizeObserver(([entry]) => {
       const box = entry.borderBoxSize?.[0];
-      if (!box?.inlineSize || !box.blockSize) return; // a background tab has no size
+      if (!box?.inlineSize || !box.blockSize) {
+        size = ''; // a background tab has no size, so being shown again is always a change
+        return;
+      }
       const next = `${Math.round(box.inlineSize)}x${Math.round(box.blockSize)}`;
       if (next === size) return;
       size = next;
       cancelAnimationFrame(this.#refitFrame);
-      this.#refitFrame = requestAnimationFrame(() => this.#refit());
+      this.#refitFrame = requestAnimationFrame(() => {
+        this.#refit();
+        this.#toStart();
+      });
     });
     this.#resizeObserver.observe(this.container);
 
@@ -272,7 +280,8 @@ export class DocumentView extends EventTarget {
         this.viewer.currentPageNumber = resume.page;
       } else {
         // pdf.js scrolls page 1 flush to the top edge; start at the very top so its margin shows.
-        requestAnimationFrame(() => { this.container.scrollTop = 0; });
+        this.#startAtTop = true;
+        requestAnimationFrame(() => this.#toStart());
       }
     });
     eventBus.on('pagechanging', ({ pageNumber, previous }) => {
@@ -395,6 +404,7 @@ export class DocumentView extends EventTarget {
 
   goToPage(pageNumber, { pulse = false } = {}) {
     if (!this.pdf) return;
+    this.#startAtTop = false; // a page was asked for, which wins over where the document opened
     const page = clamp(Math.round(pageNumber), 1, this.pdf.numPages);
     this.viewer.currentPageNumber = page;
     // Leave a little breathing room above the page instead of butting it against the toolbar.
@@ -706,10 +716,33 @@ export class DocumentView extends EventTarget {
   hide() { this.el.hidden = true; }
   focus() { this.container.focus({ preventScroll: true }); }
 
-  /** Re-applies a fitted zoom for the viewer's current size (pdf.js skips it if nothing changed). */
+  /**
+   * Re-applies a fitted zoom for the viewer's current size (pdf.js skips it if nothing changed).
+   *
+   * A document still at its very start stays there. When the scale changes, pdf.js scrolls back to
+   * where it thinks the reader was, and for the start of a document that is page 1's own top edge,
+   * flush against the tool bar: a tab shown for the first time, or the sidebar opened at the top
+   * of a document, would lose the margin above the first page for no reason the reader gave.
+   */
   #refit() {
     const value = this.pdf ? this.viewer.currentScaleValue : null;
-    if (value === 'auto' || value === 'page-fit' || value === 'page-width') this.viewer.currentScaleValue = value;
+    if (value !== 'auto' && value !== 'page-fit' && value !== 'page-width') return;
+    const first = this.viewer.getPageView(0)?.div;
+    const top = first ? first.getBoundingClientRect().top - this.container.getBoundingClientRect().top + this.container.scrollTop : 0;
+    const atStart = this.viewer.currentPageNumber === 1 && this.container.scrollTop < top;
+    this.viewer.currentScaleValue = value;
+    if (atStart) this.container.scrollTop = 0;
+  }
+
+  /**
+   * Scrolls to the very top of the document as it opens, once it can be scrolled. A document opened
+   * behind another tab is hidden before this runs, and a hidden container ignores scrolling (and
+   * keeps the offset pdf.js gave it), so it waits for the resize observer to see the tab shown.
+   */
+  #toStart() {
+    if (!this.#startAtTop || !this.container.clientHeight) return;
+    this.#startAtTop = false;
+    if (this.pdf && this.viewer.currentPageNumber === 1) this.container.scrollTop = 0;
   }
 
   destroy() {

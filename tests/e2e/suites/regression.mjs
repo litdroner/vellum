@@ -40,7 +40,38 @@ export async function run(t) {
     }
     return { x: x / 4, y: y / 4 };
   })()`);
+  /**
+   * Scrolls a run to the middle of the view when it isn't plainly clickable where it is, as a person
+   * would before clicking it. How far a document is scrolled once several have opened isn't
+   * deterministic, and a line near the top of a page can land under the tool bar, where a click
+   * at its centre lands on the tool bar instead.
+   */
+  const revealRun = async (path, page, text) => {
+    const moved = await q(`(async () => {
+      const v = ${V(path)};
+      const p = await v.textEditing.page(${page});
+      const item = p.runs.find((r) => r.text === ${JSON.stringify(text)});
+      if (!item) return false;
+      const pv = v.viewer.getPageView(${page} - 1);
+      const vp = pv.viewport;
+      const box = pv.div.getBoundingClientRect();
+      const view = v.container.getBoundingClientRect();
+      let x = 0; let y = 0;
+      for (let i = 0; i < 8; i += 2) {
+        const [vx, vy] = vp.convertToViewportPoint(item.run.quad[i], item.run.quad[i + 1]);
+        x += box.left + (vx * box.width) / vp.width;
+        y += box.top + (vy * box.height) / vp.height;
+      }
+      x /= 4; y /= 4;
+      const under = document.elementFromPoint(x, y);
+      if (y > view.top + 60 && y < view.bottom - 110 && pv.div.contains(under)) return false;
+      v.container.scrollTop += (y - view.top) - view.height / 2;
+      return true;
+    })()`);
+    if (moved) await sleep(500);
+  };
   const openEditor = async (path, page, text) => {
+    await revealRun(path, page, text);
     const at = await runAt(path, page, text);
     if (!at) return false;
     await c.mouse(at.x, at.y);
@@ -79,11 +110,17 @@ export async function run(t) {
   // ===== 1. ANNOTATIONS ===========================================================================
   t.area('annotations');
   await activate(ANNOT);
-  // Highlight: the H tool, then drag across a line.
+  await q(`${V(ANNOT)}.focus()`);
+  // Highlight: the H tool, then drag across a line — once the tool is really on and the line's text
+  // layer is there to drag over (the suite may be the first thing a freshly started app does).
   await c.key('H');
+  const highlightOn = await waitFor(`${V(ANNOT)}.annotLayer.tool === 'highlight'`, 3000);
+  await revealRun(ANNOT, 1, 'Third line.');
+  await waitFor(`[...document.querySelectorAll('.doc:not([hidden]) .textLayer span')].some((s) => s.textContent === 'Third line.')`, 5000);
   let line = await spanRect('Third line.');
   await c.drag([line.left + 1, line.cy], [line.right - 1, line.cy]);
-  check('a new highlight is created by dragging over text with the H tool', await waitFor(`${V(ANNOT)}.annotations.all.some((a) => a.type === 'highlight')`, 3000));
+  check('a new highlight is created by dragging over text with the H tool', await waitFor(`${V(ANNOT)}.annotations.all.some((a) => a.type === 'highlight')`, 3000),
+    JSON.stringify({ highlightOn, tool: await q(`${V(ANNOT)}.annotLayer.tool`), line, selection: await q('String(getSelection())'), under: await q(`document.elementFromPoint(${line.cx}, ${line.cy})?.className ?? null`) }));
   // Note: the N tool, click beside the text, type, Done.
   await c.key('N');
   const hello = await spanRect('Hello, world');

@@ -51,9 +51,40 @@ export async function run(t) {
       active: __vellum.app.active === v, under: el ? el.tagName + '.' + String(el.className?.baseVal ?? el.className).slice(0, 50) : null,
       outlines: document.querySelectorAll('.vl-decor polygon.vl-edit-run').length, errors: __vellum.errors.slice(-3) };
   })()`);
+  /**
+   * Scrolls a run to the middle of the view when it isn't plainly clickable where it is, as a person
+   * would before clicking it. How far a document is scrolled once several have opened isn't
+   * deterministic, and a line near the top of a page can land under the tool bar, where a click at
+   * its centre lands on the tool bar instead.
+   */
+  const revealRun = async (path, page, text) => {
+    const moved = await q(`(async () => {
+      const v = ${V(path)};
+      const p = await v.textEditing.page(${page});
+      const item = p.runs.find((r) => r.text === ${JSON.stringify(text)});
+      if (!item) return false;
+      const pv = v.viewer.getPageView(${page} - 1);
+      const vp = pv.viewport;
+      const box = pv.div.getBoundingClientRect();
+      const view = v.container.getBoundingClientRect();
+      let x = 0; let y = 0;
+      for (let i = 0; i < 8; i += 2) {
+        const [vx, vy] = vp.convertToViewportPoint(item.run.quad[i], item.run.quad[i + 1]);
+        x += box.left + (vx * box.width) / vp.width;
+        y += box.top + (vy * box.height) / vp.height;
+      }
+      x /= 4; y /= 4;
+      const under = document.elementFromPoint(x, y);
+      if (y > view.top + 60 && y < view.bottom - 110 && pv.div.contains(under)) return false;
+      v.container.scrollTop += (y - view.top) - view.height / 2;
+      return true;
+    })()`);
+    if (moved) await sleep(500);
+  };
   let retries = 0;
   /** Clicks a run; for editable text, waits for the editor (one retry, reported, with the state if it didn't open). */
   const clickRun = async (path, page, text, { expectEditor = true } = {}) => {
+    await revealRun(path, page, text);
     const at = await runAt(path, page, text);
     if (!at) {
       console.log(`  (no run reads ${JSON.stringify(text)})`);
@@ -95,6 +126,7 @@ export async function run(t) {
   check('editable text is outlined', await waitFor(`document.querySelectorAll('.vl-decor polygon.vl-edit-run').length >= 3`));
   await shot('01-edit-mode');
 
+  await revealRun(SIMPLE, 1, 'Hello, world');
   let at = await runAt(SIMPLE, 1, 'Hello, world');
   await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
   check('hovering highlights the text and shows a text cursor', await waitFor(`Boolean(document.querySelector('.vl-edit-run.hover')) && ${V(SIMPLE)}.container.classList.contains('vl-edit-hover')`, 3000));
@@ -229,6 +261,7 @@ export async function run(t) {
   await activate(CONSTRUCTS);
   await c.key('E');
   await waitFor(`document.querySelectorAll('.vl-decor polygon.vl-edit-run').length >= 5`, 8000);
+  await revealRun(CONSTRUCTS, 1, 'abab');
   const locked = await runAt(CONSTRUCTS, 1, 'abab'); // locked: clicked below without expecting an editor
   await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: locked.x, y: locked.y });
   check('hovering locked text shows it can’t be edited', await waitFor(`${V(CONSTRUCTS)}.container.classList.contains('vl-edit-locked') && Boolean(document.querySelector('.vl-edit-run.locked'))`, 3000));
