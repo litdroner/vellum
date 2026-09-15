@@ -176,6 +176,20 @@ export function replacementOf(value) {
   return { source, format, width, height };
 }
 
+/** The fingerprint a record keeps of the image an object model image draws (verify() checks it). */
+export function targetOf({ ref, record }) {
+  return {
+    key: ref.key,
+    stream: ref.stream,
+    opIndex: ref.opIndex,
+    name: record.name,
+    inline: record.inline,
+    ctm: [...record.ctm],
+    width: record.info?.width ?? null,
+    height: record.info?.height ?? null,
+  };
+}
+
 /**
  * Plans moving, scaling, turning, flipping, replacing or deleting one image: a record, or EditError
  * saying why not. `object` is the object model's image (objects/page-objects.js) — its `ref` for
@@ -193,17 +207,8 @@ export function planImageEdit({ object, transform = null, removed = false, repla
   if (object?.kind !== 'image') throw new EditError('unsupported', REASONS.unsupported, { kind: object?.kind ?? null });
   const reason = replacement && !removed ? replaceRefusal(object.record, object.ref) : imageRefusal(object.record, object.ref);
   if (reason) refuse(reason);
-  const { ref, record } = object;
-  const target = {
-    key: ref.key,
-    stream: ref.stream,
-    opIndex: ref.opIndex,
-    name: record.name,
-    inline: record.inline,
-    ctm: [...record.ctm],
-    width: record.info?.width ?? null,
-    height: record.info?.height ?? null,
-  };
+  const { record } = object;
+  const target = targetOf(object);
   if (removed) return { id, kind, entry, target, transform: null, removed: true };
   const kept = quantize(transform ?? [1, 0, 0, 1, 0, 0]);
   if (!kept) throw new EditError('content', 'That change to the picture couldn’t be worked out, so nothing was changed.');
@@ -263,7 +268,7 @@ export async function embedPictures(lib, doc, pictures, sources) {
  * appended — an image is never redrawn, only wrapped or removed — so `append` is always empty.
  * Throws (and nothing at all is written) if a record no longer matches the file.
  */
-export function write({ lib, doc, page, index, analysis, records, prepared }) {
+export function write({ lib, doc, page, index, analysis, records, prepared, pageRecords = records }) {
   const patches = [];
   const dropped = []; // draws that no longer use their resource: deleted or replaced
   const added = []; // { patch, ref, local } for each replaced draw, named once all of them are known
@@ -304,7 +309,11 @@ export function write({ lib, doc, page, index, analysis, records, prepared }) {
     patches.push({ start: end, end, text: ' Q' });
   }
   if (added.length || dropped.length) {
-    const names = updateResources(lib, doc, page, analysis, dropped, added.map((a) => a.ref));
+    // A pasted copy (objects/copies.js) draws the page's own resource by name, after the page: that
+    // name must stay, even when every draw of it in the page's content has gone.
+    const drawnByCopies = new Set(pageRecords.filter((r) => r.kind === 'image-copy' && !r.replacement).map((r) => r.target?.name));
+    const released = dropped.filter((i) => !drawnByCopies.has(i.name));
+    const names = updateResources(lib, doc, page, analysis, released, added.map((a) => a.ref));
     added.forEach(({ patch, local }, i) => {
       patch.text = local ? ` q ${local.map(num).join(' ')} cm /${names[i]} Do Q ` : ` /${names[i]} Do `;
     });
@@ -321,7 +330,7 @@ export function write({ lib, doc, page, index, analysis, records, prepared }) {
  * is refused at the writer too, the way a PDF/A-breaking font change is: the file is what matters,
  * and it must not depend on the UI having asked the right question.
  */
-function verify(analysis, record, index) {
+export function verify(analysis, record, index) {
   const t = record.target;
   const image = analysis.images.find((i) => (i.stream ?? 'page') === t.stream && i.opIndex === t.opIndex);
   const same = image

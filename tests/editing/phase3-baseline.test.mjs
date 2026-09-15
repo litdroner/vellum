@@ -124,8 +124,8 @@ test('an edited page composed twice from the same base is byte-identical, record
 const MATRIX_FIXTURES = ['images', 'objects', 'constructs', 'cropbox', 'transparency', 'tagged', 'pdfa', 'scanned', 'overlap'];
 
 /** The cells Step 4 turned true, and the only ones any fixture may report as true. */
-const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete',
-  'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.replace', 'image.delete']);
+const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete', 'text-run.copy',
+  'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.replace', 'image.delete', 'image.copy']);
 
 test('capability matrix: a verb is true only where a writer exists for that kind', async () => {
   const seen = new Map(); // `${kind}.${verb}` → the answers seen across every fixture

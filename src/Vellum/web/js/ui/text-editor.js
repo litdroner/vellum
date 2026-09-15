@@ -48,6 +48,9 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     rewraps the words into the paragraph's own lines at that width, in its own font.
 //   - replacing a picture: with one picture selected, the bar over it (or the command palette) asks
 //     the host for a PNG or JPEG file, and the picture's image becomes that one, in the same frame.
+//   - copy, paste and duplicate (Ctrl+C, Ctrl+V, Ctrl+D, commands.js): the selected objects are copied
+//     as they are now, and pasted a step right and down as new objects (editing/objects/copies.js),
+//     selected, as one undo step.
 //
 // Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
 //
@@ -91,6 +94,13 @@ const ARRANGE_BUTTONS = Object.freeze([
   ['vertical', 'Space evenly down', 'align-vertical-space-between'],
 ]);
 let nudgeSeq = 0;
+/** Points a pasted or duplicated object lands from where it was copied, right and down on screen. */
+const PASTE_STEP = 10;
+/**
+ * The objects last copied in Edit mode, in any open document: what the session's copyObjects() took,
+ * and how many times it has been pasted onto each page, so each paste lands a step further along.
+ */
+let objectClipboard = null; // { clip, pastes: Map<entry id, count> }
 const STANDARD_CSS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
 
 function svg(tag, attrs) {
@@ -299,19 +309,117 @@ export class TextEditor {
       const key = await this.#view.textEditing.insertImage(page, bytes, { basis: displayBasis(pageView), box: pageView.pdfPage.view });
       this.#announce(`Picture “${name}” added.`);
       this.#warnTagged('inserted');
-      // Selected once the rebuilt page has it: until then the page data is the old one, and
-      // reconciling against it would drop a key it has never heard of.
-      const until = performance.now() + 20000;
-      while (performance.now() < until) {
-        await this.#settled();
-        const now = this.#view.rebuilding ? null : await this.#ensurePage(page);
-        if (now?.data && this.#liveOf(now).byKey.has(key)) break;
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-      if (this.active) this.#changeSelection((s) => s.set(page, [key]));
+      await this.#selectWhenShown(page, [key]);
       return true;
     } catch (err) {
       this.#notify(err instanceof EditError ? err.message : `That picture couldn’t be added: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Selects new objects on page `n` once the rebuilt page has them: until then the page data is the
+   * old one, and reconciling against it would drop keys it has never heard of.
+   */
+  async #selectWhenShown(n, keys) {
+    const until = performance.now() + 20000;
+    while (performance.now() < until) {
+      await this.#settled();
+      const now = this.#view.rebuilding ? null : await this.#ensurePage(n);
+      if (now?.data && keys.every((key) => this.#liveOf(now).byKey.has(key))) break;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    if (this.active) this.#changeSelection((s) => s.set(n, keys));
+  }
+
+  /** Is there something copied in Edit mode that Ctrl+V can paste? */
+  get canPaste() { return this.active && Boolean(objectClipboard); }
+
+  /**
+   * Copies the selected objects, as they are now, for pasting (Ctrl+C in Edit mode, commands.js).
+   * Nothing in the document changes. Resolves true when copied; otherwise says why.
+   */
+  async copySelected() {
+    const clip = await this.#copyOfSelection('copy');
+    if (!clip) return false;
+    objectClipboard = { clip, pastes: new Map() };
+    this.#announce(`${counted(clip.items.length, 'object', 'objects')} copied.`);
+    return true;
+  }
+
+  /**
+   * Pastes what was copied onto the page in view (Ctrl+V in Edit mode), a step further right and down
+   * with each paste, and selects it: one undo step. Resolves true when pasted; otherwise says why.
+   */
+  async paste(n = null) {
+    if (!this.active) {
+      this.#notify('Switch to Edit mode (E) to paste objects.');
+      return false;
+    }
+    const held = objectClipboard;
+    if (!held) {
+      this.#notify('Copy objects in Edit mode (Ctrl+C) before pasting them.');
+      return false;
+    }
+    const page = n ?? this.#view.viewer.currentPageNumber ?? null;
+    const entry = page ? this.#view.shownPlan?.[page - 1]?.id : null;
+    if (!entry) return false;
+    const times = (held.pastes.get(entry) ?? 0) + 1;
+    const pasted = await this.#pasteOnto(page, held.clip, PASTE_STEP * times);
+    if (pasted) held.pastes.set(entry, times);
+    return pasted;
+  }
+
+  /**
+   * Duplicates the selected objects a step right and down, and selects the duplicates (Ctrl+D in Edit
+   * mode): copy and paste in one, as one undo step, leaving what was copied before untouched.
+   */
+  async duplicateSelected() {
+    const page = this.#selection.page;
+    const clip = await this.#copyOfSelection('duplicate');
+    return clip ? this.#pasteOnto(page, clip, PASTE_STEP) : false;
+  }
+
+  /** The session's copy of the selection, or null having said why. `purpose`: 'copy' or 'duplicate'. */
+  async #copyOfSelection(purpose) {
+    const current = this.#selection.current;
+    if (!this.active || !current) {
+      this.#notify(`Select objects in Edit mode to ${purpose} them.`);
+      return null;
+    }
+    if (!(await this.commitPending())) return null;
+    this.#closeEditor();
+    this.#flushNudge();
+    await this.#settled();
+    await this.#ensurePage(current.page);
+    const objects = current.keys.map((key) => this.#liveObject(current.page, key));
+    if (objects.some((o) => !o) || !this.#allow(objects, 'copy')) return null;
+    try {
+      return await this.#view.textEditing.copyObjects(current.page, current.keys);
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be copied: ${err.message}`);
+      return null;
+    }
+  }
+
+  /** Pastes `clip` onto page `n`, `step` points right and down on screen, and selects what was pasted. */
+  async #pasteOnto(n, clip, step) {
+    if (!(await this.commitPending())) return false;
+    this.#closeEditor();
+    this.#flushNudge();
+    await this.#settled();
+    const offset = this.#screenStep(n, step, step);
+    if (!offset) {
+      this.#notify('That page isn’t ready yet. Try again in a moment.');
+      return false;
+    }
+    try {
+      const keys = await this.#view.textEditing.pasteObjects(n, clip, translate(offset[0], offset[1]));
+      this.#announce(`${counted(keys.length, 'object', 'objects')} pasted.`);
+      await this.#selectWhenShown(n, keys);
+      return true;
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be pasted: ${err.message}`);
       return false;
     }
   }
@@ -752,7 +860,8 @@ export class TextEditor {
     const tol = tolerancePoints(at.pageView, 2);
     const object = hitTest(this.#liveOf(page).objects, point, tol);
     if (object) {
-      const item = object.kind === 'text-run'
+      // A pasted copy of text is not its original: clicking it selects it, and opens no editor.
+      const item = object.kind === 'text-run' && !object.ref.copy
         ? page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null
         : null;
       return { n: at.n, page, object, item, pageView: at.pageView };
@@ -927,7 +1036,8 @@ export class TextEditor {
    */
   #paragraphOf(page, key) {
     const live = this.#liveOf(page);
-    live.blocks ??= textBlocks([...live.objects, ...(page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [])]);
+    // Pasted copies stand apart: a copy dropped beside a paragraph must not join it.
+    live.blocks ??= textBlocks([...live.objects.filter((o) => !o.ref.copy), ...(page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [])]);
     return blockOf(live.blocks, key)?.keys ?? null;
   }
 
@@ -938,7 +1048,7 @@ export class TextEditor {
    * its own grounds. Only a width can still be refused, when the hand lets go. Kept with the live objects.
    */
   #reflowable(page, objects) {
-    if (objects.length < 2 || objects.some((o) => o.kind !== 'text-run') || !page.objects?.analysis) return false;
+    if (objects.length < 2 || objects.some((o) => o.kind !== 'text-run' || o.ref.copy) || !page.objects?.analysis) return false;
     const keys = objects.map((o) => o.ref.key);
     const paragraph = this.#paragraphOf(page, keys[0]);
     if (!paragraph || !sameKeys(paragraph, keys)) return false;

@@ -17,7 +17,7 @@ import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { insertedObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
-import { IDENTITY, multiply } from './matrix.js';
+import { copiedObject, isCopy, keyOf as copyKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';import { IDENTITY, multiply } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
 import { newId } from '../annotations/model.js';
@@ -80,12 +80,23 @@ export class TextEditing {
     if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
     const analysis = entry.src === 'blank' ? null : await this.#analysis(entry, pageNumber);
     const records = this.#recordsOf(entry);
-    // Pictures put on the page from a file are objects too, after everything the page draws itself.
-    const inserted = [...records.values()].filter((r) => r.kind === insertedKind).map((r, i) => insertedObject(analysis, r, i));
+    const own = analysis ? selectableObjects(analysis) : [];
+    // Pictures put on the page from a file, and pasted copies, are objects too: after everything the
+    // page draws itself, in the order they were added. A copy is the object it was copied from, drawn
+    // again; one whose original the page doesn't have can't be drawn, and the writer refuses it.
+    const byKey = new Map(own.map((o) => [o.ref.key, o]));
+    const added = [];
+    for (const r of records.values()) {
+      if (r.kind === insertedKind) added.push(insertedObject(analysis, r, added.length));
+      else if (isCopy(r.kind)) {
+        const source = byKey.get(r.kind === textCopyKind ? `run:${r.target.key}` : r.target.key);
+        if (source) added.push(copiedObject(source, r, added.length));
+      }
+    }
     return {
       entry,
       kind: analysis?.summary.kind ?? 'no-text',
-      objects: [...(analysis ? selectableObjects(analysis) : []), ...inserted],
+      objects: [...own, ...added],
       analysis,
       records,
     };
@@ -104,6 +115,7 @@ export class TextEditing {
       if (e.kind === 'text') records.set(`run:${e.target.key}`, e);
       else if (e.kind === 'image') records.set(e.target.key, e);
       else if (e.kind === insertedKind) records.set(insertedKey(e), e);
+      else if (isCopy(e.kind)) records.set(copyKey(e), e);
     }
     return records;
   }
@@ -242,6 +254,7 @@ export class TextEditing {
     const { entry: current, found, analysis } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) {
       if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
+      if (object.ref.copy) throw new EditError('reflow', 'Pasted text can’t be reflowed yet.', { key: object.ref.key });
       this.#refuse(object, 'editText', found.length);
     }
     const lines = found.map(({ object, record }) => ({ run: object.record, record }));
@@ -261,7 +274,8 @@ export class TextEditing {
     const constraints = await this.#constraints();
     const { entry: current, found } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) this.#refuse(object, 'delete', found.length);
-    const pairs = found.map(({ object, record }) => [record, object.kind === 'text-run'
+    // A pasted copy is its record, like a picture put there from a file: deleting it takes the record away.
+    const pairs = found.map(({ object, record }) => [record, object.ref.copy ? null : object.kind === 'text-run'
       // Empty text has always been how text is removed (encoding.mode 'none'); a placement stays
       // on the record because it is not about the text, exactly as retyping keeps it.
       ? planTextEdit({
@@ -336,6 +350,86 @@ export class TextEditing {
     return insertedKey(record);
   }
 
+  // ---- copying and pasting objects -----------------------------------------------------------------
+  //
+  // Copying reads; it changes nothing. It takes each selected object as it is now — retyped, moved,
+  // replaced — into plain data (objects/copies.js snapshotOf), all of them or none if any refuses, so a
+  // later change to the document doesn't change what was copied. Pasting turns that into new records
+  // on a page, as ONE undo step, and hands back their keys so they can be selected.
+
+  /**
+   * What copying these objects of one page takes: { owner, from: { src, index }, items, sources }, to
+   * give to pasteObjects(). `sources` holds the bytes of any picture from a file among them, so it can
+   * be pasted into another document too. EditError when one of them can't be copied.
+   */
+  async copyObjects(pageNumber, keys) {
+    const { entry, found } = await this.#objectsAt(pageNumber, keys);
+    for (const { object } of found) this.#refuse(object, 'copy', found.length);
+    const items = found.map(({ object, record }) => snapshotOf(object, record));
+    const sources = new Map();
+    for (const item of items) {
+      if (item.kind !== insertedKind) continue;
+      const bytes = this.#view.sources.get(item.picture.source);
+      if (!bytes) throw new EditError('missing', 'A picture being copied isn’t available any more, so nothing was copied.');
+      sources.set(item.picture.source, bytes);
+    }
+    return { owner: this.#view, from: { src: entry.src, index: entry.index }, items, sources };
+  }
+
+  /**
+   * Pastes what copyObjects() took onto a page, each object moved by `offset` (a page-space transform)
+   * from where it was copied: ONE undo step, and the new objects' keys, in the order copied.
+   *
+   * Text and pictures the page itself draws are drawn again from that page's original content, so they
+   * can only be pasted on a page showing the same content — the page they came from or a duplicate of
+   * it — in the same document. A picture put there from a file can go on any page of any document.
+   * All or nothing: EditError, with nothing stored, when any of them can't be pasted.
+   */
+  async pasteObjects(pageNumber, clip, offset = IDENTITY) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    if (!clip?.items?.length) throw new EditError('missing', 'Nothing has been copied.');
+    if (!isValid(offset)) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
+    const constraints = await this.#constraints();
+    const { entry, analysis, objects } = await this.objects(pageNumber);
+    const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
+    if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
+    const sameContent = clip.owner === view && entry.src === clip.from?.src && entry.index === clip.from?.index;
+    const byKey = new Map(objects.map((o) => [o.ref.key, o]));
+    const count = clip.items.length;
+    const records = clip.items.map((item) => {
+      const transform = quantize(multiply(item.transform, offset));
+      if (!transform) throw new EditError('content', 'That copy couldn’t be worked out, so nothing was pasted.');
+      if (item.kind === insertedKind) {
+        if (constraints.embeddedFontsOnly) {
+          throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, and Vellum can’t check that a new picture meets it, so nothing was pasted.');
+        }
+        if (!clip.sources?.get(item.picture.source) && !view.sources.get(item.picture.source)) {
+          throw new EditError('missing', 'A picture being pasted isn’t available any more, so nothing was pasted.');
+        }
+        return planInsertion({ picture: item.picture, transform, entry: entry.id });
+      }
+      if (!sameContent) {
+        throw new EditError('paste', count > 1
+          ? 'Some of these objects are part of the page they were copied from, and can only be pasted on that page (or a duplicate of it) for now, so nothing was pasted.'
+          : 'This object is part of the page it was copied from, and can only be pasted on that page (or a duplicate of it) for now.');
+      }
+      // Drawn from the page's own object, so that object has to allow it still.
+      const source = byKey.get(item.kind === textCopyKind ? `run:${item.target.key}` : item.target.key);
+      if (!source) throw new EditError('missing', 'What was copied isn’t on this page, so nothing was pasted.');
+      this.#refuse(source, 'copy', count);
+      if (item.encoding?.mode === 'standard' && constraints.embeddedFontsOnly) {
+        throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; this text uses a substitute font, so it wasn’t pasted.');
+      }
+      return planCopy({ ...item, transform, entry: entry.id });
+    });
+    for (const item of clip.items) {
+      if (item.kind === insertedKind && !view.sources.has(item.picture.source)) view.sources.set(item.picture.source, clip.sources.get(item.picture.source));
+    }
+    view.annotations.applyEdits(records.map((r) => [null, r]));
+    return records.map((r) => (r.kind === insertedKind ? insertedKey(r) : copyKey(r)));
+  }
+
   /**
    * The record for one absolute placement — or null when there is nothing left to say, which is
    * what "back where it started" means. Text that was only ever moved has no record without its
@@ -343,7 +437,8 @@ export class TextEditing {
    * its replacement wherever it is put, and so keeps its record even back where it started.
    */
   #plan(entry, object, record, absolute) {
-    // A picture put there from a file has no "where it started": its record is where it is.
+    // A picture put there from a file, or a copy, has no "where it started": its record is where it is.
+    if (object.ref.copy) return planCopy({ ...record, transform: absolute });
     if (object.ref.inserted) return planInsertion({ picture: record.picture, transform: absolute, entry: entry.id, id: record.id });
     if (object.kind !== 'text-run') {
       const replacement = record?.removed ? null : record?.replacement ?? null;

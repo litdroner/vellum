@@ -85,8 +85,8 @@ test('every capability is true or a key of the one REASONS table', async () => {
   }
 });
 
-test('every object answers the same seven verbs, in the same order', async () => {
-  assert.deepEqual([...VERBS], ['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete']);
+test('every object answers the same eight verbs, in the same order', async () => {
+  assert.deepEqual([...VERBS], ['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete', 'copy']);
   for await (const { name, page, o } of everyObject()) {
     assert.deepEqual(Object.keys(o.capabilities), [...VERBS], `${name} page ${page} ${o.kind}`);
   }
@@ -112,8 +112,8 @@ test('only the verbs with a writer are ever true, and only on the kinds that hav
     }
   }
   assert.deepEqual([...trues.keys()].sort(),
-    ['image.delete', 'image.move', 'image.replace', 'image.rotate', 'image.scale', 'image.stretch',
-      'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.scale'],
+    ['image.copy', 'image.delete', 'image.move', 'image.replace', 'image.rotate', 'image.scale', 'image.stretch',
+      'text-run.copy', 'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.scale'],
     'the sweep must find every writable cell, and no other');
 });
 
@@ -122,7 +122,7 @@ test('a text run move, scale and delete are its editText, exactly: one verdict, 
   // be moved, and refuses in the very same words.
   for await (const { name, page, o } of everyObject()) {
     if (o.kind !== 'text-run') continue;
-    for (const verb of ['move', 'scale', 'delete']) {
+    for (const verb of ['move', 'scale', 'delete', 'copy']) {
       assert.equal(o.capabilities[verb], o.capabilities.editText,
         `${name} page ${page} ${JSON.stringify(o.text)}: ${verb} disagrees with editText`);
     }

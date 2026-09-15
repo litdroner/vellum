@@ -67,7 +67,7 @@ function rewritePage(lib, doc, source, page, index, records, prepared) {
   const patches = [];
   const appended = [];
   for (const [kind, list] of groupByKind(records)) {
-    const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list, prepared: prepared.get(kind) });
+    const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list, prepared: prepared.get(kind), pageRecords: records });
     patches.push(...result.patches);
     appended.push(...result.append);
   }

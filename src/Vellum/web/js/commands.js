@@ -37,6 +37,9 @@ export function createCommands(app, ui, actions) {
     const v = doc();
     return Boolean(v && v.annotLayer?.tool === 'edit' && v.objectSelection?.current);
   };
+  // The same test gives Ctrl+C and Ctrl+D to the selected objects; otherwise Ctrl+C copies text as it
+  // always did. Ctrl+V pastes objects only in Edit mode, once some have been copied there.
+  const objectsSelected = nudging;
 
   return {
     'file.open': { group: 'File', icon: 'folder-open', label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
@@ -108,6 +111,9 @@ export function createCommands(app, ui, actions) {
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
     'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },
+    'edit.copyObjects': { group: 'Edit', icon: 'copy', doc: true, label: 'Copy objects', keys: ['Ctrl+C'], when: objectsSelected, run: () => doc()?.textEditor?.copySelected() },
+    'edit.pasteObjects': { group: 'Edit', icon: 'files', doc: true, label: 'Paste objects', keys: ['Ctrl+V'], when: () => Boolean(doc()?.textEditor?.canPaste), run: () => doc()?.textEditor?.paste() },
+    'edit.duplicateObjects': { group: 'Edit', icon: 'copy-plus', doc: true, label: 'Duplicate objects', keys: ['Ctrl+D'], when: objectsSelected, run: () => doc()?.textEditor?.duplicateSelected() },
     'edit.selectAll': { group: 'Edit', icon: 'text-select', doc: true, label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },
 
     'app.palette': { group: 'App', icon: 'zap', palette: false, label: 'Command palette', keys: ['Ctrl+K'], global: true, run: () => actions.palette() },

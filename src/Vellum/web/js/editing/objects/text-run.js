@@ -88,7 +88,7 @@ export function write({ lib, doc, page, index, analysis, records }) {
   return { patches, append };
 }
 
-const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i) => s === b[i][0] && g === b[i][1]);
+export const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i) => s === b[i][0] && g === b[i][1]);
 
 /**
  * The replacement for one text operator: its glyphs as a TJ array, with every edited glyph turned
@@ -159,7 +159,7 @@ function neutralize(analysis, show, editedGlyphs) {
  * several text operators keeps the spacing between them (each gap is measured and re-emitted) but
  * not a baseline shift between them, which one TJ array cannot hold and this writer never kept.
  */
-function originalItems(analysis, run) {
+export function originalItems(analysis, run) {
   const first = analysis.shows[run.glyphs[0][0]];
   const factor = -1000 / (first.fontSize * first.th); // the TJ number that moves the pen by one unit
   if (!Number.isFinite(factor)) throw new EditError('content', 'Text with no size can’t be edited.');
@@ -194,7 +194,7 @@ function gapBefore(previous, glyph) {
  * `transform`, which is why it is applied to the CTM and not to the text matrix: multiply(ctm, T)
  * is "the original placement, then T", and T is in the page's own user space.
  */
-function drawText(analysis, run, fontName, items, transform = null) {
+export function drawText(analysis, run, fontName, items, transform = null) {
   const [si, gi] = run.glyphs[0];
   const show = analysis.shows[si];
   const first = show.glyphs[gi];
@@ -233,7 +233,7 @@ function textArray(items) {
 }
 
 /** A standard font added to this page's resources (a copy of them: other pages are unaffected). */
-function addStandardFont(lib, doc, page, name) {
+export function addStandardFont(lib, doc, page, name) {
   const { PDFName, PDFDict } = lib;
   const ctx = doc.context;
   const font = doc.embedStandardFont(name);
@@ -250,7 +250,7 @@ function addStandardFont(lib, doc, page, name) {
   return key;
 }
 
-function encodeStandard(lib, name, text) {
+export function encodeStandard(lib, name, text) {
   const encoding = lib.StandardFontEmbedder.for(name).encoding;
   return [...text].map((ch) => ({ code: encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code, byteLength: 1 }));
 }

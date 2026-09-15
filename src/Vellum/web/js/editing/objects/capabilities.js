@@ -2,7 +2,7 @@
 // already made (editing/runs.js) and from the refusals each handler already publishes — it decides
 // nothing new and parses nothing.
 //
-//   capabilities = { move, scale, stretch, rotate, replace, editText, delete }
+//   capabilities = { move, scale, stretch, rotate, replace, editText, delete, copy }
 //
 // Each value is `true` (Vellum can do this today) or a key from the ONE reason vocabulary in
 // runs.js, which is what turns it into a sentence a person reads. There is no second table.
@@ -16,13 +16,15 @@
 //           and scaled text is redrawn from the file's own glyphs (objects/text-run.js), and
 //           deleting is what writing empty text has always done. `stretch` and `rotate` are not
 //           offered: the glyphs would have to be laid out again, which Vellum can't do; nor is
-//           `replace`, which is swapping one picture for another.
+//           `replace`, which is swapping one picture for another. `copy` follows `editText` too: a
+//           pasted copy is the same glyphs drawn again by the same writer (objects/copies.js).
 //   images  move, scale, stretch, rotate and delete are true together, because one `cm` patch
 //           writes any of them (objects/image.js). They are true when imageRefusal() — the handler's
 //           own gate, the same one the writer checks again before any byte is written — says nothing
 //           is wrong. `replace` (another image in the same frame) is true on the same terms, except
-//           for an inline image, which has no resource to swap (replaceRefusal()). `editText` is
-//           never true: an image has no text.
+//           for an inline image, which has no resource to swap (replaceRefusal()). `copy` is true on
+//           the same terms, except for an inline image, which has no name to draw it again by.
+//           `editText` is never true: an image has no text.
 //   paths
 //   forms   nothing: neither has a writer, and neither has an oriented outline to grab.
 //
@@ -37,7 +39,7 @@ import { imageRefusal, replaceRefusal } from './image.js';
 import { REASONS } from '../runs.js';
 
 /** The verbs an object answers for, in this order. */
-export const VERBS = Object.freeze(['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete']);
+export const VERBS = Object.freeze(['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete', 'copy']);
 
 /**
  * Refusals that are about the object or the page as a whole rather than about text, in the order
@@ -94,6 +96,7 @@ export function capabilitiesFor(analysis, kind, record, ref) {
     capabilities.move = verdict;
     capabilities.scale = verdict;
     capabilities.delete = verdict;
+    capabilities.copy = verdict;
   } else if (kind === 'image') {
     // The handler's own gate, asked once. It repeats the structural checks and adds the two only
     // it can make — a clip that would crop the picture differently, and a placement with no
@@ -106,6 +109,7 @@ export function capabilitiesFor(analysis, kind, record, ref) {
       capabilities.rotate = true;
       capabilities.delete = true;
       capabilities.replace = replaceRefusal(record, ref) ?? true;
+      capabilities.copy = record.inline ? 'unsupported' : true;
     } else {
       for (const verb of VERBS) capabilities[verb] = reason;
       capabilities.editText = reason; // an image has no text; the structural reason is still why
@@ -129,7 +133,7 @@ export function sharedCapability(objects, verb) {
 }
 
 /** How a refused verb is named in a sentence about several objects. */
-const REFUSED = Object.freeze({ move: 'moved', scale: 'resized', stretch: 'stretched', rotate: 'turned', replace: 'replaced', editText: 'edited', delete: 'deleted' });
+const REFUSED = Object.freeze({ move: 'moved', scale: 'resized', stretch: 'stretched', rotate: 'turned', replace: 'replaced', editText: 'edited', delete: 'deleted', copy: 'copied' });
 
 /**
  * The sentence a refusal is reported in: the reason in its own words, and for a selection of

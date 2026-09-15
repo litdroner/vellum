@@ -80,7 +80,7 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
   const imageRecord = (opIndex, info, fields, ownOc = null) => ({
     index: out.images.length, opIndex, stream: form?.key ?? 'page', range: [ops[opIndex].start, ops[opIndex].end],
     ...fields, info, ctm: gs.ctm, quad: unitQuad(gs.ctm), box: unitBox(gs.ctm), clip: gs.clip,
-    ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
+    ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask, fill: gs.fill, gsNames: gs.gsNames.slice(),
     form: form?.key ?? null, ...markedContext(marked, ownOc),
   });
   /** A painted path or shading: its bounds in user space and the state it was painted with. */

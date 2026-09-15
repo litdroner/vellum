@@ -18,15 +18,15 @@ Vision.
 
 ## Now
 
-- **Current release: 0.4.1** (GitHub, 2026-09-12). Text editing from 0.4.0, plus the first part of the
-  0.5.0 object-editing plan: in Edit mode, select a text run or a picture; move and uniformly scale both;
-  quarter-turn and mirror pictures; nudge; delete. These rows are marked done below.
-- **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
-  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Every 0.5.0 must-have is done: phases 0–3, with same-page
-  multi-select and picture stretching on `main` and not yet in a release (marked *done, unreleased*
-  below). Of the should-haves, alignment, distribution, snapping, image replacement, image insertion, paragraph grouping, overlap warnings and single-style paragraph reflow are done on `main`:
-  every 0.5.0 feature is built; what remains is the one broad regression pass and the release QA (the first Roadmap row). On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
-  the audit's scope and its "Never" list, without a separate approval for each step.
+- **Current release: 0.5.0** (tag `v0.5.0`, 2026-09-15). Object editing: text editing from 0.4, and in
+  Edit mode selecting, moving, scaling, turning, mirroring, stretching, nudging and deleting text and
+  pictures, one or several; alignment, distribution, snapping, picture replacement and insertion,
+  paragraph grouping, overlap warnings and single-style paragraph reflow
+  (record: `docs/planning/VELLUM_0.5.0_AUDIT.md`). Rows still marked *done, unreleased* below from before
+  that release shipped in it.
+- **Current cycle: 0.6.** One feature at a time, on the owner's instruction (2026-09-15). Done on `main`,
+  not released: copy, paste and duplicate objects (Editing). No version bump, push or release until the
+  owner asks.
 
 ## Reading
 
@@ -84,6 +84,7 @@ Vision.
 | Overlap warnings (should-have): while a drag or an arrow-key burst is moving objects, what they would newly cover (text or pictures, not what they already overlapped) is outlined in amber; the outline goes when the hand does, nothing is refused, and a drop that leaves an overlap is announced to screen readers | done, unreleased | editing/objects/overlap.js, ui/text-editor.js (#overlapsOf) |
 | Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
 | Single-style paragraph reflow (should-have, the narrow case): a whole paragraph selected in Edit mode that passes the reflow gate has one handle on its right edge; dragging it rewraps the paragraph's words, in order, into its own lines at that width — same baselines, left edge, font, size and colour, lines no longer needed emptied — one undo step, re-encoded only in the paragraph's own font (never a substitute). The handle is offered only when every line can be edited, is one style and one placement, on one left edge and even spacing, set left to right with the font's own widths (no kerning, tracking, justification or pen-move spaces) and with no hyphenated break. Refused with the reason when the hand lets go: a width narrower than a word, or one needing more lines than the paragraph has | done, unreleased | editing/objects/reflow.js, editing/session.js (reflowParagraph), ui/text-editor.js (#reflowable, #reflow) |
+| Copy, paste and duplicate objects (0.6): in Edit mode, Ctrl+C copies the selected text and pictures as they are now (retyped, moved, replaced); Ctrl+V pastes them on the page in view, 10 pt right and down from where they were copied (a step further with each paste), selected, as one undo step; Ctrl+D duplicates the selection the same way; also in the command palette. A pasted copy is a new record (`text-copy`, `image-copy`) drawn after the page from the page's own glyphs, font, size, colour, ExtGStates and image resource, fingerprinted against the original content at every save, or another inserted picture for a picture from a file; copies move, scale, turn (pictures), delete, arrange and copy again, follow duplicated, reordered and rotated pages, and are ordinary content once saved. Refused with nothing stored: inline images; text or pictures of a page pasted on a page with different content or into another document (a picture from a file goes anywhere); PDF/A for substitute fonts and new pictures. Not yet: retyping, reflowing or replacing a pasted copy before saving | done, unreleased | editing/objects/copies.js, editing/session.js, ui/text-editor.js, commands.js; tests/editing/copy-paste.test.mjs, tests/e2e/suites/copy-paste.mjs |
 | Rotating text, general paragraph reflow (more lines than a paragraph has, mixed styles, kerned or justified text, hyphenation), new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages
@@ -116,8 +117,9 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 release: one broad regression pass (the full end-to-end batch and Node tests) and release QA; every 0.5.0 feature is built | next | §3.2 |
-| Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
+| Cross-page moves, and pasting a page's own text and pictures onto another page or document (copying the font, image and ExtGState resources they draw with) | next | §3.2 |
+| Retyping, reflowing and replacing a pasted copy before it is saved | planned | §3.2 |
+| Rotating text, free rotation | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |
 | Bundled selectable font: Liu — one optional document-editing font available alongside other selectable fonts; a normal entry in the font selector, nothing more. Prerequisites, none present: the font file and a licence permitting bundling, use and PDF embedding, both supplied by the owner; font selection itself | planned | §4.4 |
