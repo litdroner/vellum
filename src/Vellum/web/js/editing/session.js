@@ -15,7 +15,8 @@ import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
-import { insertedObject } from './objects/page-objects.js';
+import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
+import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
 import { transformQuad, unionBox } from './objects/geometry.js';
@@ -99,6 +100,7 @@ export class TextEditing {
     const added = [];
     for (const r of records.values()) {
       if (r.kind === insertedKind) added.push(insertedObject(analysis, r, added.length));
+      else if (r.kind === newTextKind) added.push(insertedTextObject(analysis, r, added.length));
       else if (isCopy(r.kind)) {
         const source = sourceObject(origins.get(r.from ? originKey(r.from) : ''), r);
         if (source) added.push(copiedObject(source, r, added.length));
@@ -128,6 +130,7 @@ export class TextEditing {
       if (e.kind === 'text') records.set(`run:${e.target.key}`, e);
       else if (e.kind === 'image') records.set(e.target.key, e);
       else if (e.kind === insertedKind) records.set(insertedKey(e), e);
+      else if (e.kind === newTextKind) records.set(newTextKey(e), e);
       else if (isCopy(e.kind)) records.set(copyKey(e), e);
     }
     return records;
@@ -141,6 +144,7 @@ export class TextEditing {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     if (isCopyKey(runKey)) return this.#retypeCopy(pageNumber, runKey, text);
+    if (isNewTextKey(runKey)) return this.#retypeNewText(pageNumber, runKey, text);
     const { entry, runs } = await this.page(pageNumber);
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) throw new EditError('missing', 'That text isn’t on this page any more.');
@@ -200,6 +204,53 @@ export class TextEditing {
     const planned = planTextEdit({ run, text, entry: record.entry, glyphs, id: record.id, ...constraints });
     if (planned.encoding.mode === 'none') return null;
     return planCopy({ ...record, text: planned.text, encoding: planned.encoding });
+  }
+
+  // ---- new text ------------------------------------------------------------------------------------
+  //
+  // New text (`text:<id>`, objects/inserted-text.js) is its record: retyping plans the record again with
+  // the new text, in its own standard font, keeping its id, font, size and placement; emptied, it goes, as
+  // deleting it does. A character the font doesn't have is refused, never drawn in another font.
+
+  /** Retypes new text: one undo step, false when nothing changed. */
+  async #retypeNewText(pageNumber, key, text) {
+    const lib = await loadPdfLib();
+    const { found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
+    const planned = this.#retypedNewText(lib, object, record, text);
+    if (planned && planned.text === record.text) return false;
+    this.#view.annotations.applyEdits([[record, planned]]);
+    return true;
+  }
+
+  /** The record retyping new text to `text` makes, null when it empties it. EditError when it can't. */
+  #retypedNewText(lib, object, record, text) {
+    if (!object.ref.newText || record?.kind !== newTextKind) throw new EditError('missing', 'That text isn’t on this page any more.');
+    this.#refuse(object, 'editText');
+    return cleanText(text).trim() ? planNewText({ lib, ...record, text }) : null;
+  }
+
+  /**
+   * Puts a line of new text on a page, in a standard font, centred and upright as the page is shown
+   * (`basis`, page-space.js displayBasis; `box`, the page's crop box): one undo step, one record, and the
+   * new text's object key back, so it can be selected and typed over. Throws EditError when it can't be
+   * done: a page whose content can't be rewritten, a PDF/A document (the standard fonts aren't embedded).
+   */
+  async insertText(pageNumber, { basis, box, text = PLACEHOLDER }) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const lib = await loadPdfLib();
+    if ((await this.#constraints()).embeddedFontsOnly) {
+      throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded. New text is written in a standard font that isn’t, so no text was added.');
+    }
+    const { entry, analysis } = await this.objects(pageNumber);
+    const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
+    if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
+    const upright = planNewText({ lib, text, transform: IDENTITY, entry: entry.id });
+    const transform = defaultTextPlacement({ box: upright.box, page: box, basis });
+    if (!transform) throw new EditError('content', 'Vellum couldn’t work out where to put the text on this page, so nothing was added.');
+    const record = planNewText({ lib, text, transform, entry: entry.id, id: upright.id });
+    view.annotations.applyEdits([[null, record]]);
+    return newTextKey(record);
   }
 
   /**
@@ -285,6 +336,7 @@ export class TextEditing {
   async transformObjects(pageNumber, moves, { verb = 'move', coalesce = null } = {}) {
     const view = this.#view;
     if (moves.some((m) => !isValid(m?.delta))) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
+    const lib = await loadPdfLib(); // new text is planned with pdf-lib's font tables
     const { entry, found } = await this.#objectsAt(pageNumber, moves.map((m) => m.key));
     for (const { object } of found) this.#refuse(object, verb, found.length);
     const pairs = [];
@@ -292,7 +344,7 @@ export class TextEditing {
       const absolute = quantize(multiply(record?.transform ?? IDENTITY, moves[i].delta));
       if (!absolute) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
       if (record ? sameAs(record.transform, absolute) : isIdentity(absolute)) return;
-      pairs.push([record, this.#plan(entry, object, record, absolute)]);
+      pairs.push([record, this.#plan(entry, object, record, absolute, lib)]);
     });
     if (!pairs.length) return false;
     view.annotations.applyEdits(pairs, coalesce);
@@ -315,6 +367,7 @@ export class TextEditing {
     const { entry: current, found, analysis: own, origins } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) {
       if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
+      if (object.ref.newText) throw new EditError('reflow', 'New text is one line of its own, so it can’t be reflowed yet.', { key: object.ref.key, reason: 'new-text' });
       this.#refuse(object, 'editText', found.length);
     }
     // Pasted lines are reflowed as the paragraph they were copied from, in that page's analysis, and only
@@ -354,7 +407,7 @@ export class TextEditing {
     const { entry: current, found } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) this.#refuse(object, 'delete', found.length);
     // A pasted copy is its record, like a picture put there from a file: deleting it takes the record away.
-    const pairs = found.map(({ object, record }) => [record, object.ref.copy ? null : object.kind === 'text-run'
+    const pairs = found.map(({ object, record }) => [record, object.ref.copy || object.ref.newText ? null : object.kind === 'text-run'
       // Empty text has always been how text is removed (encoding.mode 'none'); a placement stays
       // on the record because it is not about the text, exactly as retyping keeps it.
       ? planTextEdit({
@@ -459,7 +512,7 @@ export class TextEditing {
         if (!bytes) throw new EditError('missing', 'A picture being copied isn’t available any more, so nothing was copied.');
         sources.set(picture.source, bytes);
       }
-      if (item.kind === insertedKind) continue;
+      if (item.kind === insertedKind || item.kind === newTextKind) continue;
       item.from ??= { src: entry.src, index: entry.index };
       const verified = this.#pages.get(originKey(item.from));
       if (verified) analyses.set(originKey(item.from), verified);
@@ -528,6 +581,7 @@ export class TextEditing {
     if (!clip?.items?.length) throw new EditError('missing', 'Nothing has been copied.');
     if (!isValid(offset)) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
     const constraints = await this.#constraints();
+    const lib = await loadPdfLib();
     const { entry, analysis } = await this.objects(pageNumber);
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
@@ -546,6 +600,16 @@ export class TextEditing {
         if (!bytes) throw new EditError('missing', 'A picture being pasted isn’t available any more, so nothing was pasted.');
         adopt.set(item.picture.source, bytes);
         placed.push({ item, quad: UNIT_QUAD });
+        continue;
+      }
+      if (item.kind === newTextKind) {
+        // New text carries its text and font name, so it goes on any page of any document — but not
+        // into a PDF/A one, which needs every font embedded.
+        if (constraints.embeddedFontsOnly) {
+          throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded. New text is written in a standard font that isn’t, so nothing was pasted.');
+        }
+        const [x1, y1, x2, y2] = item.box;
+        placed.push({ item, quad: [x1, y1, x2, y1, x2, y2, x1, y2] });
         continue;
       }
       if (!item.from) throw new EditError('paste', 'What was copied can’t be pasted, so nothing was pasted.');
@@ -597,6 +661,7 @@ export class TextEditing {
       const transform = quantize(multiply(multiply(item.transform, offset), shift));
       if (!transform) throw new EditError('content', 'That copy couldn’t be worked out, so nothing was pasted.');
       if (item.kind === insertedKind) return planInsertion({ picture: item.picture, transform, entry: entry.id });
+      if (item.kind === newTextKind) return planNewText({ lib, ...item, transform, entry: entry.id });
       return planCopy({ ...item, from, transform, entry: entry.id });
     });
     return { records, adopt: [...adopt] };
@@ -608,9 +673,10 @@ export class TextEditing {
    * transform; text that was retyped keeps its own record, untransformed. A replaced picture keeps
    * its replacement wherever it is put, and so keeps its record even back where it started.
    */
-  #plan(entry, object, record, absolute) {
-    // A picture put there from a file, or a copy, has no "where it started": its record is where it is.
+  #plan(entry, object, record, absolute, lib) {
+    // A picture put there from a file, new text, or a copy, has no "where it started": its record is where it is.
     if (object.ref.copy) return planCopy({ ...record, transform: absolute });
+    if (object.ref.newText) return planNewText({ lib, ...record, transform: absolute });
     if (object.ref.inserted) return planInsertion({ picture: record.picture, transform: absolute, entry: entry.id, id: record.id });
     if (object.kind !== 'text-run') {
       const replacement = record?.removed ? null : record?.replacement ?? null;
@@ -635,6 +701,7 @@ export class TextEditing {
    */
   async preview(pageNumber, runKey, text) {
     if (isCopyKey(runKey)) return this.#previewCopy(pageNumber, runKey, text);
+    if (isNewTextKey(runKey)) return this.#previewNewText(pageNumber, runKey, text);
     const { entry, runs } = await this.page(pageNumber);
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) return { ok: false, message: 'That text isn’t on this page any more.' };
@@ -658,6 +725,19 @@ export class TextEditing {
       const planned = this.#retyped(object, record, clean, glyphsFor(glyphs, record, entry), constraints);
       if (!planned) return { ok: true, mode: 'none', font: null, missing: [] };
       return { ok: true, mode: planned.encoding.mode, font: planned.encoding.font ?? null, missing: planned.encoding.missing ?? [] };
+    } catch (err) {
+      if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };
+      throw err;
+    }
+  }
+
+  /** preview() for new text: 'new' in its standard font, 'none' when emptied, or why it can't be. */
+  async #previewNewText(pageNumber, key, text) {
+    try {
+      const lib = await loadPdfLib();
+      const { found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
+      const planned = this.#retypedNewText(lib, object, record, text);
+      return planned ? { ok: true, mode: 'new', font: planned.font, missing: [] } : { ok: true, mode: 'none', font: null, missing: [] };
     } catch (err) {
       if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };
       throw err;
@@ -745,7 +825,10 @@ const glyphsFor = (glyphs, record, entry) => {
 };
 
 /** The object-model key of a record pasted or moved onto a page. */
-const keyOfRecord = (r) => (r.kind === insertedKind ? insertedKey(r) : copyKey(r));
+const keyOfRecord = (r) => (r.kind === insertedKind ? insertedKey(r) : r.kind === newTextKind ? newTextKey(r) : copyKey(r));
+
+/** Is this object key new text's? */
+const isNewTextKey = (key) => typeof key === 'string' && key.startsWith('text:');
 
 const UNIT_QUAD = Object.freeze([0, 0, 1, 0, 1, 1, 0, 1]);
 

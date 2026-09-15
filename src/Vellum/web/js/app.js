@@ -520,7 +520,11 @@ document.addEventListener('contextmenu', (e) => {
   }
   const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;
   if (pageNumber && view.textEditor?.active) {
-    items.push({ label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) }, '-');
+    items.push(
+      { label: 'Add text', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
+      { label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) },
+      '-',
+    );
   }
   if (link && /^(https?|mailto):/i.test(link.href)) {
     items.push({ label: 'Open link', icon: 'external-link', action: () => window.open(link.href, '_blank') });

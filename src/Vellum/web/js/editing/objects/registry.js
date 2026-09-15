@@ -1,5 +1,6 @@
 // Which handler writes which kind of content edit: text runs (editing/edits.js), images already on a
-// page (objects/image.js), pictures put on a page from a file (objects/inserted-image.js) and pasted
+// page (objects/image.js), pictures put on a page from a file (objects/inserted-image.js), new text
+// (objects/inserted-text.js) and pasted
 // copies of text and pictures (objects/copies.js), each owning everything about turning its own kind
 // of record into bytes.
 //
@@ -10,10 +11,11 @@
 import * as textRun from './text-run.js';
 import * as image from './image.js';
 import * as insertedImage from './inserted-image.js';
+import * as insertedText from './inserted-text.js';
 import { textCopy, imageCopy } from './copies.js';
 
 const HANDLERS = new Map([
-  [textRun.kind, textRun], [image.kind, image], [insertedImage.kind, insertedImage],
+  [textRun.kind, textRun], [image.kind, image], [insertedImage.kind, insertedImage], [insertedText.kind, insertedText],
   [textCopy.kind, textCopy], [imageCopy.kind, imageCopy],
 ]);
 

@@ -917,6 +917,57 @@ export async function run(t) {
     insertedSaved?.w === 40 && insertedSaved?.h === 20 && insertedSaved.key.startsWith('image:') && insertedSaved.move === true, JSON.stringify(insertedSaved));
   check('pdf.js paints it from the saved file', Boolean(insertedSaved) && magenta(await paintedAt(await reveal(OBJ, 1, insertedSaved.key))));
 
+  // ---- new text (0.6): Add text, type over it, turn it, save and reopen ------------------------------------
+
+  area('new text');
+  await editMode(OBJ);
+  await q(`${V(OBJ)}.objectSelection.clear()`);
+  const newTexts = () => q(`${V(OBJ)}.annotations.edits.filter((e) => e.kind === 'inserted-text').map((e) => ({ text: e.text, font: e.font, transform: e.transform }))`);
+  const textDepth = await undoDepth(OBJ);
+  check('Add text succeeds', (await q(`${V(OBJ)}.textEditor.addText(1)`)) === true, await q(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent).join(' | ')`));
+  check('the editor opens on it with its words selected',
+    await waitFor(`(() => { const i = document.querySelector('.vl-text-input'); return i && i.value === 'New text' && i.selectionStart === 0 && i.selectionEnd === 8; })()`, 6000));
+  check('it is selected, as new text', ((await selection(OBJ))?.key ?? '').startsWith('text:'), JSON.stringify(await selection(OBJ)));
+  const textKey = (await selection(OBJ))?.key;
+  await c.type('Hello new text');
+  check('the editor says which font it is written in', await waitFor(`document.querySelector('.vl-edit-status')?.textContent.includes('Helvetica')`, 3000));
+  await c.key('Enter');
+  await rest(OBJ);
+  check('typing over it and Enter keeps the text: one record, two undo steps',
+    JSON.stringify((await newTexts()).map((t) => [t.text, t.font])) === JSON.stringify([['Hello new text', 'Helvetica']]) && (await undoDepth(OBJ)) === textDepth + 2,
+    JSON.stringify(await newTexts()));
+  const drawnText = async () => q(`(async () => (await (await ${V(OBJ)}.pdf.getPage(1)).getTextContent()).items.some((i) => i.str === 'Hello new text'))()`);
+  check('the page draws it as real text', await drawnText());
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+  await q(`${V(OBJ)}.focus()`);
+  await c.key(']');
+  await sleep(900);
+  await rest(OBJ);
+  const turnedNew = (await newTexts())[0]?.transform;
+  check('] turns it a quarter turn, still one record', (await newTexts()).length === 1 && Math.abs(turnedNew?.[1]) === 1 && turnedNew[1] === -turnedNew[2], JSON.stringify(turnedNew));
+  await q(`${V(OBJ)}.focus()`);
+  await c.key('Ctrl+K');
+  await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+  await c.type('Add text');
+  await sleep(300);
+  check('the command palette offers “Add text”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Add text'))`));
+  await c.key('Escape');
+  await sleep(300);
+
+  await q('__vellum.actions.save()');
+  await waitFor(`!${V(OBJ)}.annotations.dirty`, 25000);
+  await q(`__vellum.app.close(${V(OBJ)})`);
+  await waitFor(`!${V(OBJ)}`);
+  await q(`__vellum.actions.openRecent(${JSON.stringify(OBJ)})`);
+  await rest(OBJ);
+  const savedRun = await q(`(async () => {
+    const { runs } = await ${V(OBJ)}.textEditing.page(1);
+    const item = runs.find((r) => r.run.text === 'Hello new text');
+    return item ? { font: item.run.font?.name, size: item.run.frame.size, dir: item.run.frame.dir, editable: item.run.editable } : null;
+  })()`);
+  check('saved and reopened: editable page text in Helvetica 12, still turned',
+    savedRun?.font === 'Helvetica' && Math.abs(savedRun.size - 12) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true, JSON.stringify(savedRun));
+
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }

@@ -59,6 +59,9 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     a copied picture is replaced from the bar — each changing only the copy's record.
 //   - moving to another page: a move drag let go over another page puts the objects there, under the
 //     pointer, as one undo step (session.moveObjectsToPage).
+//   - new text: "Add text" (the command palette, or the page's context menu) puts a line of text in a
+//     standard PDF font in the middle of the page, selected, with the editor open on it; it is then
+//     retyped, moved, scaled, turned, copied and deleted like any text (editing/objects/inserted-text.js).
 //
 // Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
 //
@@ -138,17 +141,21 @@ function decodeBase64(data) {
 /** A text run's object key in the model: the one place the two namings meet. */
 const runKeyOf = (key) => `run:${key}`;
 
-/**
- * The object key of what the text editor is open on: a run of the page (by its run key), or a pasted
- * copy of text, which the editor names by its object key, `copy:<id>`, as the session does.
- */
-const editedKeyOf = (key) => (key.startsWith('copy:') ? key : runKeyOf(key));
+/** Does the editor name this text by its object key (a pasted copy, or new text) rather than a run key? */
+const isRecordKey = (key) => key.startsWith('copy:') || key.startsWith('text:');
 
 /**
- * A pasted copy of text as the editor's item: the run it draws (under the copy's key), the text it
- * reads now and its record — the shape of the page's own runs in TextEditing.page().
+ * The object key of what the text editor is open on: a run of the page (by its run key), or a pasted
+ * copy of text or new text, which the editor names by its object key (`copy:<id>`, `text:<id>`), as the
+ * session does.
  */
-const copyItemOf = (object) => (object?.kind === 'text-run' && object.ref.copy
+const editedKeyOf = (key) => (isRecordKey(key) ? key : runKeyOf(key));
+
+/**
+ * A pasted copy of text, or new text, as the editor's item: the run it draws (under its own key), the
+ * text it reads now and its record — the shape of the page's own runs in TextEditing.page().
+ */
+const copyItemOf = (object) => (object?.kind === 'text-run' && (object.ref.copy || object.ref.newText)
   ? { run: { ...object.record, key: object.ref.key }, text: object.text, edit: object.edit ?? null }
   : null);
 
@@ -356,6 +363,38 @@ export class TextEditor {
   }
 
   /**
+   * Puts a line of new text on page `n` — by default the selection's page, else the page in view —
+   * centred and upright as the page is shown, in a standard PDF font (editing/objects/inserted-text.js):
+   * one undo step. The new text is selected and the editor opens on it with its words selected, so
+   * typing replaces them. The command (commands.js) and the page's context menu in Edit mode call this.
+   * Resolves true when the text was added.
+   */
+  async addText(n = null) {
+    const page = this.#insertionPage(n, 'add text');
+    if (!page) return false;
+    if (!(await this.commitPending())) return false;
+    this.#closeEditor();
+    this.#flushNudge();
+    await this.#settled();
+    const pageView = this.#view.viewer.getPageView(page - 1);
+    if (!pageView?.pdfPage) {
+      this.#notify('That page isn’t ready yet. Try again in a moment.');
+      return false;
+    }
+    try {
+      const key = await this.#view.textEditing.insertText(page, { basis: displayBasis(pageView), box: pageView.pdfPage.view });
+      this.#announce('Text added. Type to replace it.');
+      this.#warnTagged('newText');
+      await this.#selectWhenShown(page, [key]);
+      await this.#open(page, key);
+      return true;
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That text couldn’t be added: ${err.message}`);
+      return false;
+    }
+  }
+
+  /**
    * Selects new objects on page `n` once the rebuilt page has them: until then the page data is the
    * old one, and reconciling against it would drop keys it has never heard of.
    */
@@ -491,10 +530,10 @@ export class TextEditor {
     }
   }
 
-  /** The page a new picture goes on, when Edit mode is on: `n`, the selection's page, or the page in view. */
-  #insertionPage(n) {
+  /** The page a new picture or new text goes on, when Edit mode is on: `n`, the selection's page, or the page in view. */
+  #insertionPage(n, what = 'insert a picture') {
     if (!this.active) {
-      this.#notify('Switch to Edit mode (E) to insert a picture.');
+      this.#notify(`Switch to Edit mode (E) to ${what}.`);
       return null;
     }
     return n ?? this.#selection.page ?? this.#view.viewer.currentPageNumber ?? null;
@@ -766,7 +805,7 @@ export class TextEditor {
     // drawn above, in the outline Edit mode has always used for it.
     const selected = selectedKeys.map((key) => this.#liveObject(page.n, key)).filter(Boolean);
     for (const object of selected) {
-      if (object.kind === 'text-run' && (!object.ref.copy || this.#editor?.key === object.ref.key)) continue;
+      if (object.kind === 'text-run' && (!(object.ref.copy || object.ref.newText) || this.#editor?.key === object.ref.key)) continue;
       const quad = this.#shownQuad(page, object.ref.key, object.geometry.quad);
       if (quad) shapes.push(svg('polygon', { class: 'vl-object-sel', points: quadPoints(quad) }));
     }
@@ -951,9 +990,10 @@ export class TextEditor {
     const tol = tolerancePoints(at.pageView, 2);
     const object = hitTest(this.#liveOf(page).objects, point, tol);
     if (object) {
-      // A pasted copy of text is not its original: clicking it opens an editor on the copy itself.
+      // A pasted copy of text is not its original: clicking it opens an editor on the copy itself. New
+      // text has no run of the page either, and opens on its own record.
       const item = object.kind !== 'text-run' ? null
-        : object.ref.copy ? copyItemOf(object)
+        : object.ref.copy || object.ref.newText ? copyItemOf(object)
           : page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null;
       return { n: at.n, page, object, item, pageView: at.pageView };
     }
@@ -1139,12 +1179,14 @@ export class TextEditor {
   #paragraphOf(page, key) {
     const live = this.#liveOf(page);
     // Pasted copies stand apart: a copy dropped beside a paragraph must not join it. Lines pasted
-    // together make paragraphs of their own, among the copies only.
+    // together make paragraphs of their own, among the copies only. New text is a line of its own and
+    // is never in a paragraph.
     if (!live.blocks) {
       const paths = page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [];
+      const lines = live.objects.filter((o) => !o.ref.newText);
       live.blocks = [
-        ...textBlocks([...live.objects.filter((o) => !o.ref.copy), ...paths]),
-        ...textBlocks([...live.objects.filter((o) => o.ref.copy), ...paths]),
+        ...textBlocks([...lines.filter((o) => !o.ref.copy), ...paths]),
+        ...textBlocks([...lines.filter((o) => o.ref.copy), ...paths]),
       ];
     }
     return blockOf(live.blocks, key)?.keys ?? null;
@@ -1695,7 +1737,7 @@ export class TextEditor {
    */
   #focusRun() {
     const { page, primary } = this.#selection;
-    if (copyItemOf(primary?.startsWith('copy:') ? this.#liveObject(page, primary) : null)) return { n: page, key: primary };
+    if (copyItemOf(primary && isRecordKey(primary) ? this.#liveObject(page, primary) : null)) return { n: page, key: primary };
     if (!primary?.startsWith('run:')) return null;
     return { n: page, key: primary.slice('run:'.length) };
   }
@@ -1804,7 +1846,7 @@ export class TextEditor {
     }
     await this.#settled();
     const page = await this.#ensurePage(n);
-    const item = key.startsWith('copy:') ? copyItemOf(this.#liveObject(n, key)) : page?.data?.runs.find((r) => r.run.key === key);
+    const item = isRecordKey(key) ? copyItemOf(this.#liveObject(n, key)) : page?.data?.runs.find((r) => r.run.key === key);
     if (!item?.run.editable || !this.active || this.#editor) return;
     this.#hideTip();
     const input = h('input', {
@@ -1852,6 +1894,7 @@ export class TextEditor {
     this.#notify({
       picture: 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it replaces a picture, so a description of the old picture may still be read out.',
       inserted: 'This PDF is tagged for accessibility. Vellum doesn’t add a new picture to those tags, so screen readers won’t describe it.',
+      newText: 'This PDF is tagged for accessibility. Vellum doesn’t add new text to those tags, so screen readers may not read it.',
     }[what] ?? 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
   }
 
@@ -1937,9 +1980,11 @@ export class TextEditor {
     if (this.#editor !== ed || ed.input.value !== text) return;
     ed.done.disabled = !result.ok;
     const run = ed.item.run;
-    const family = result.mode === 'standard' ? standardFamily(result.font) : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font);
+    const family = result.mode === 'standard' || result.mode === 'new' ? standardFamily(result.font) : run.newText ? standardFamily(run.font.name)
+      : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font);
     ed.input.style.fontFamily = family;
     if (!result.ok) this.#setStatus(result.message, 'error');
+    else if (result.mode === 'new') this.#setStatus(`New text in ${prettyFont(result.font)}, a standard PDF font.`, '');
     else if (result.mode === 'standard') this.#setStatus(`The original font doesn’t have ${quoteChars(result.missing)}, so this text will use ${prettyFont(result.font)}.`, 'warn');
     else if (result.mode === 'none') this.#setStatus('The text will be removed.', 'warn');
     else this.#setStatus('Same font as the original.', '');
@@ -1993,7 +2038,7 @@ export class TextEditor {
     Object.assign(ed.input.style, {
       fontSize: `${height / em}px`,
       lineHeight: `${height}px`,
-      fontFamily: run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font),
+      fontFamily: run.newText ? standardFamily(run.font.name) : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font),
       color: cssColor(first.fill),
       letterSpacing: `${(first.tc ?? 0) * (first.th ?? 1) * perPoint}px`,
       paddingInline: `${pad}px`,

@@ -106,6 +106,7 @@ export function createCommands(app, ui, actions) {
     'arrange.alignBottom': { group: 'Arrange', icon: 'align-end-horizontal', doc: true, label: 'Align bottom edges', run: () => arrange('bottom') },
     'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
     'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
+    'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text', run: () => doc()?.textEditor?.addText() },
     'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, label: 'Insert picture…', run: () => doc()?.textEditor?.insertPicture() },
     'edit.replacePicture': { group: 'Edit', icon: 'image', doc: true, label: 'Replace picture…', run: () => doc()?.textEditor?.replacePicture() },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },

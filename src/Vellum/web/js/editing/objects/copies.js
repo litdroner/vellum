@@ -76,7 +76,8 @@ const unusable = () => new EditError('content', 'That copy couldn’t be worked 
  */
 export function snapshotOf(object, record = null) {
   if (object.ref.inserted) return { kind: insertedKind, picture: { ...record.picture }, transform: [...record.transform] };
-  if (record && isCopy(record.kind)) {
+  // A pasted copy, and new text (inserted-text.js), are their records: copied as another such record.
+  if (record && (isCopy(record.kind) || object.ref.newText)) {
     const { id, entry, ...rest } = record;
     return structuredClone(rest);
   }
