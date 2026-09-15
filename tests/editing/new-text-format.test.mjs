@@ -2,7 +2,7 @@
 // editing/objects/inserted-text.js planFormat, editing/session.js formatText).
 //
 // Pinned here: lines break where they were typed and wrap at spaces to the box's width, aligned within it;
-// formatting (size, the standard family's own bold and italic, underline, alignment, colour, opacity) is
+// formatting (the font's family, size, the family's own bold and italic, underline, alignment, colour, opacity) is
 // validated and refused in plain words, never substituted; the writer draws every line as real text with
 // its colour, opacity and underline; formatting is one undo step, keeps the box's top-left corner, and
 // survives moving, turning, copying, pasting onto another page and into another document, cutting and
@@ -16,7 +16,7 @@ import { analyzeFile, engine, loadPdfLib, webModule, withSession } from './harne
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { planNewText, planFormat, write } = await engine('objects/inserted-text.js');
-const { layoutText, standardFace, styledFont, styleOf, formatOf, LINE_SPACING } = await engine('objects/text-format.js');
+const { layoutText, standardFace, styledFont, styleOf, formatOf, FAMILY_NAMES, LINE_SPACING } = await engine('objects/text-format.js');
 const { EditError } = await engine('edits.js');
 const { quarterTurn } = await engine('objects/transform.js');
 const { quadCentre, transformQuad } = await engine('objects/geometry.js');
@@ -191,5 +191,65 @@ test('formatted new text in a session: one undo step each, kept through move, tu
     assert.equal(store.edits.length, 1);
     store.undo();
     assert.deepEqual(kept(store.edits.find((e) => e.id === formatted.id)), kept(formatted));
+  });
+});
+
+test('font selection: another standard family, its bold and italic kept, laid out again in its own widths', async () => {
+  const lib = await loadPdfLib();
+  assert.deepEqual(FAMILY_NAMES, ['Helvetica', 'Times', 'Courier'], 'the fonts new text may be written in');
+  assert.equal(styledFont('Helvetica-BoldOblique', { family: 'Times' }), 'Times-BoldItalic', 'the family’s own face, not a slant');
+  assert.equal(styledFont('Times-Italic', { family: 'Courier' }), 'Courier-Oblique');
+  assert.equal(styledFont('Helvetica', { family: 'Times', bold: true }), 'Times-Bold', 'a family and a style at once');
+  assert.equal(styledFont('Helvetica', { family: 'Liu' }), null, 'a font Vellum doesn’t have is never substituted');
+  assert.equal(styledFont('Arial', { family: 'Times' }), null);
+
+  const base = { lib, text: 'alpha beta gamma delta', transform: [1, 0, 0, 1, 72, 700], entry: 'e', width: 70, font: 'Helvetica-Bold' };
+  const record = planNewText(base);
+  const courier = planFormat({ lib, record, changes: { family: 'Courier' } });
+  assert.equal(courier.font, 'Courier-Bold', 'bold kept through the change of family');
+  assert.equal(courier.id, record.id, 'the same record, formatted');
+  const laid = layoutText(standardFace(lib, 'Courier-Bold'), { text: base.text, size: courier.size, width: 70 });
+  assert.deepEqual(courier.box, laid.box);
+  assert.deepEqual(laid.lines.map((l) => l.text), ['alpha', 'beta', 'gamma', 'delta']);
+  assert.ok(laid.lines.length > layoutText(standardFace(lib, 'Helvetica-Bold'), { text: base.text, size: record.size, width: 70 }).lines.length,
+    'Courier is wider, so the same box wraps into more lines');
+  const topLeft = (r) => apply(r.transform, r.box[0], r.box[3]);
+  assert.ok(topLeft(courier).every((v, i) => near(v, topLeft(record)[i])), 'the box’s top-left corner stays where it was');
+
+  // A font Vellum doesn't have is refused in plain words, with nothing changed.
+  assert.throws(() => planFormat({ lib, record, changes: { family: 'Liu' } }),
+    (e) => e instanceof EditError && e.kind === 'content' && /standard PDF fonts/.test(e.message));
+  assert.throws(() => planFormat({ lib, record, changes: { family: 'Times New Roman' } }), EditError);
+  // A character the chosen face can't write is refused, not drawn in another font.
+  assert.throws(() => planFormat({ lib, record: planNewText({ ...base, text: 'Hi' }), changes: { family: 'Times', size: 5000 } }), EditError);
+});
+
+test('font selection in a session: one undo step, written and reopened in the chosen font', async () => {
+  const bytes = read('crosspage');
+  await withSession(bytes, async ({ store, session, sources, plan }) => {
+    const key = await session.insertText(1, { basis: UPRIGHT, box: LETTER });
+    assert.equal(await session.edit(1, key, 'Quarterly notes'), true);
+    assert.equal(await session.formatText(1, [key], { bold: true, italic: true }), true);
+    assert.equal(await session.formatText(1, [key], { family: 'Times' }), true);
+    assert.equal(store.edits[0].font, 'Times-BoldItalic', 'the family chosen, the style kept');
+    assert.equal(await session.formatText(1, [key], { family: 'Times' }), false, 'the same font again changes nothing');
+    await assert.rejects(session.formatText(1, [key], { family: 'Liu' }), (e) => e.kind === 'content');
+    assert.equal(store.edits[0].font, 'Times-BoldItalic', 'a refused font changes nothing');
+    assert.equal(store.edits.length, 1, 'still its one record');
+    assert.equal(depth(store), 4, 'add, retype, bold and italic, font');
+
+    // Page text isn't new text: its font is not changed here.
+    const pageRun = (await session.objects(1)).objects.find((o) => o.kind === 'text-run' && !o.ref.newText);
+    await assert.rejects(session.formatText(1, [pageRun.ref.key], { family: 'Times' }), (e) => e.kind === 'format');
+
+    const object = (await session.objects(1)).objects.find((o) => o.ref.key === key);
+    assert.equal(object.record.format.family, 'Times', 'the format bar reads the family off the record');
+
+    const saved = await composeDocument({ base: bytes, plan, edits: store.edits, sources });
+    const after = await analyzeFile(saved);
+    const line = after.pages[0].runs.find((r) => r.text === 'Quarterly notes');
+    assert.ok(line, 'the line is on the page');
+    assert.equal(line.font.name, 'Times-BoldItalic');
+    assert.ok(line.editable, [...line.reasons].join(', '));
   });
 });

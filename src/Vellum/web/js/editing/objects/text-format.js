@@ -1,8 +1,9 @@
 // How new text (objects/inserted-text.js) is formatted and laid out, apart from how it is written.
 //
 //   format: { font, size, underline, align, color, opacity, width }
-//     font        a font by its name; today one of the standard PDF fonts, whose bold and italic are
-//                 the family's own faces (styledFont) — never a synthesized slant or a thicker stroke
+//     font        a font by its name; today one of the standard PDF fonts, whose family is chosen
+//                 (styledFont with a `family`) and whose bold and italic are the family's own faces
+//                 — never a synthesized slant or a thicker stroke
 //     size        points
 //     underline   true or false: a filled rule under each line, in the text's colour
 //     align       'left' | 'center' | 'right', within the box
@@ -18,7 +19,7 @@
 // metrics tables: nothing is fetched, no font file is read.
 
 /** The standard font families new text may be written in, and each one's faces: regular, bold, italic, bold italic. */
-const FAMILIES = Object.freeze({
+export const FAMILIES = Object.freeze({
   Helvetica: ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique'],
   Times: ['Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic'],
   Courier: ['Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique'],
@@ -29,6 +30,13 @@ const FAMILIES = Object.freeze({
  * pictograms under Latin codes, which is not what a person typing text means.
  */
 export const FONTS = Object.freeze(Object.values(FAMILIES).flat());
+
+/**
+ * The families a font selector offers for new text, in the order it lists them. Only the standard PDF
+ * fonts are here: the document's own fonts and bundled fonts (docs/VELLUM_VISION.md §4.3, §4.4) need a
+ * font parser to be measured and embedded, which the repository doesn't have, so they aren't offered.
+ */
+export const FAMILY_NAMES = Object.freeze(Object.keys(FAMILIES));
 
 export const ALIGNS = Object.freeze(['left', 'center', 'right']);
 
@@ -50,11 +58,16 @@ export function styleOf(font) {
   return null;
 }
 
-/** The face of `font`'s family with `bold` and `italic` changed as asked (unchanged when not given); null for an unknown font. */
-export function styledFont(font, { bold, italic } = {}) {
+/**
+ * The face asked for: `font`'s own family, or `family` when another one is named (choosing a font), with
+ * `bold` and `italic` changed as asked and kept as they are when not given. Null for a font or a family
+ * that isn't one of these — nothing is ever substituted.
+ */
+export function styledFont(font, { family, bold, italic } = {}) {
   const style = styleOf(font);
-  if (!style) return null;
-  return FAMILIES[style.family][(bold ?? style.bold ? 1 : 0) + (italic ?? style.italic ? 2 : 0)];
+  const faces = FAMILIES[family ?? style?.family];
+  if (!style || !faces) return null;
+  return faces[(bold ?? style.bold ? 1 : 0) + (italic ?? style.italic ? 2 : 0)];
 }
 
 const round = (v, digits = 4) => {

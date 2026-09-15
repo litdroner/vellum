@@ -12,7 +12,7 @@ import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
-import { LINE_SPACING, LIMITS as TEXT_LIMITS } from '../editing/objects/text-format.js';
+import { FAMILY_NAMES, LINE_SPACING, LIMITS as TEXT_LIMITS } from '../editing/objects/text-format.js';
 import { openMenu } from './menu.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
@@ -999,10 +999,12 @@ export class TextEditor {
   }
 
   // ---- formatting new text -----------------------------------------------------------------------
-  // Over new text (objects/inserted-text.js) the same bar formats it: size, the standard family's own
-  // bold and italic, underline, alignment, colour and opacity — for every selected object when all of them
-  // are new text, one undo step (session.formatText). Its box's right-edge handle sets the width its lines
-  // wrap to (#wrapHandle). Text of the page itself isn't formatted here: that would be a font change.
+  // Over new text (objects/inserted-text.js) the same bar formats it: its font (one of the standard
+  // families, #fontMenu), size (#sizeMenu, or a step at a time), the family's own bold and italic,
+  // underline, alignment, colour and opacity — for every selected object when all of them are new text,
+  // one undo step (session.formatText). Its box's right-edge handle sets the width its lines wrap to
+  // (#wrapHandle). Text of the page itself isn't formatted here: changing the font of text the file
+  // already draws needs the font system of docs/VELLUM_VISION.md §4.3.
 
   /** The formats of the selection when every selected object is new text that can be changed; else null. */
   #newTextFormats() {
@@ -1018,8 +1020,15 @@ export class TextEditor {
       class: 'tb-btn small', title: label, 'aria-label': label, html: icon(iconName, 16), onMousedown: keep, onClick, ...extra,
     });
     const sep = h('div', { class: 'vl-sep' });
+    const font = h('button', {
+      class: 'tb-btn small vl-edit-font vl-text-font', title: 'Font', 'aria-label': 'Font', 'aria-haspopup': 'menu',
+      onMousedown: keep, onClick: () => this.#fontMenu(font),
+    });
     const smaller = button('Smaller text', 'minus', () => this.formatSelected('smaller'));
-    const size = h('span', { class: 'vl-edit-font vl-text-size', 'aria-live': 'polite' });
+    const size = h('button', {
+      class: 'tb-btn small vl-edit-font vl-text-size', title: 'Text size', 'aria-label': 'Text size', 'aria-haspopup': 'menu',
+      'aria-live': 'polite', onMousedown: keep, onClick: () => this.#sizeMenu(size),
+    });
     const larger = button('Larger text', 'plus', () => this.formatSelected('larger'));
     const toggles = FORMAT_BUTTONS.map((entry) => (entry
       ? button(entry[1], entry[2], () => this.formatSelected(entry[0]), { 'aria-pressed': 'false', 'data-format': entry[0] })
@@ -1029,7 +1038,10 @@ export class TextEditor {
       onClick: () => this.#colourMenu(colour),
     });
     const opacity = button('Opacity', 'blend', () => this.#opacityMenu(opacity), { 'aria-haspopup': 'menu' });
-    return { els: [sep, smaller, size, larger, h('div', { class: 'vl-sep' }), ...toggles, h('div', { class: 'vl-sep' }), colour, opacity], sep, size, colour };
+    return {
+      els: [sep, font, h('div', { class: 'vl-sep' }), smaller, size, larger, h('div', { class: 'vl-sep' }), ...toggles, h('div', { class: 'vl-sep' }), colour, opacity],
+      sep, font, size, colour,
+    };
   }
 
   /** Shows the format controls for `formats` (or hides them), pressed as the selection is. */
@@ -1039,6 +1051,7 @@ export class TextEditor {
     format.sep.hidden = !arranging;
     const [first] = formats;
     const all = (field) => formats.every((f) => f[field]);
+    format.font.textContent = formats.every((f) => f.family === first.family) ? first.family : 'Mixed';
     format.size.textContent = formats.every((f) => f.size === first.size) ? `${first.size} pt` : '– pt';
     for (const el of format.els) {
       const kind = el.dataset?.format;
@@ -1052,8 +1065,8 @@ export class TextEditor {
   /**
    * Formats the selected new text: 'bold', 'italic' and 'underline' switch that style (on for all unless
    * all have it), 'left', 'center' and 'right' align it, 'larger' and 'smaller' step its size, and an
-   * object sets fields directly ({ color }, { opacity }, { width }). One undo step; resolves true when
-   * something changed. The command palette and the format bar call this.
+   * object sets fields directly ({ family }, { size }, { color }, { opacity }, { width }). One undo step;
+   * resolves true when something changed. The command palette and the format bar call this.
    */
   async formatSelected(what) {
     const formats = this.#newTextFormats();
@@ -1080,6 +1093,28 @@ export class TextEditor {
       this.#notify(err instanceof EditError ? err.message : `That text couldn’t be formatted: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * The fonts new text can be written in: the standard families, each shown in the browser font that
+   * stands in for it. Choosing one keeps the text's bold and italic (the family's own faces) and lays its
+   * lines out again in that font's widths. The document's own fonts and bundled fonts aren't offered:
+   * they need the font system of docs/VELLUM_VISION.md §4.3, so nothing here pretends to have them.
+   */
+  #fontMenu(anchor) {
+    const formats = this.#newTextFormats() ?? [];
+    const current = formats.every((f) => f.family === formats[0]?.family) ? formats[0]?.family : null;
+    openMenu(FAMILY_NAMES.map((family) => ({
+      label: family, checked: current === family, font: STANDARD_CSS[family], action: () => this.formatSelected({ family }),
+    })), { anchor, align: 'center', className: 'font-menu' });
+  }
+
+  #sizeMenu(anchor) {
+    const formats = this.#newTextFormats() ?? [];
+    const current = formats.every((f) => f.size === formats[0]?.size) ? formats[0]?.size : null;
+    openMenu(TEXT_SIZES.map((size) => ({
+      label: `${size} pt`, checked: current === size, action: () => this.formatSelected({ size }),
+    })), { anchor, align: 'center' });
   }
 
   #colourMenu(anchor) {

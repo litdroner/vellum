@@ -9,6 +9,8 @@
 //   doc:    needs an open document (hidden from the palette otherwise)
 //   palette: false keeps it out of the palette
 
+import { FAMILY_NAMES } from './editing/objects/text-format.js';
+
 export function createCommands(app, ui, actions) {
   const doc = () => (app.active?.status === 'ready' ? app.active : null);
   const single = () => doc()?.viewMode === 'single';
@@ -110,6 +112,11 @@ export function createCommands(app, ui, actions) {
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold new text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic new text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline new text', run: () => doc()?.textEditor?.formatSelected('underline') },
+    // One command per font new text can be written in (editing/objects/text-format.js), so the palette
+    // offers exactly the fonts the format bar's font menu does.
+    ...Object.fromEntries(FAMILY_NAMES.map((family) => [`edit.textFont${family}`, {
+      group: 'Edit', icon: 'type', doc: true, label: `New text in ${family}`, run: () => doc()?.textEditor?.formatSelected({ family }),
+    }])),
     'edit.textLarger': { group: 'Edit', icon: 'plus', doc: true, label: 'Larger new text', run: () => doc()?.textEditor?.formatSelected('larger') },
     'edit.textSmaller': { group: 'Edit', icon: 'minus', doc: true, label: 'Smaller new text', run: () => doc()?.textEditor?.formatSelected('smaller') },
     'edit.textAlignLeft': { group: 'Edit', icon: 'text-align-start', doc: true, label: 'Align new text left', run: () => doc()?.textEditor?.formatSelected('left') },

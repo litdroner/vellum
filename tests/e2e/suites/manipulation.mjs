@@ -991,6 +991,34 @@ export async function run(t) {
     check('dragging it sets a narrower width the lines wrap to, one undo step',
       wrappedNew?.width !== null && wrappedNew.width < wideBefore && (await undoDepth(OBJ)) === formatDepth + 7, JSON.stringify(wrappedNew));
   }
+  // Font selection (0.6): another standard family from the bar's font menu, the family's own bold face kept.
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+  const fontButton = `document.querySelector('.vl-arrange-bar .vl-text-font')`;
+  check('the bar says which font the text is in', await waitFor(`${fontButton} && !${fontButton}.hidden && ${fontButton}.textContent === 'Helvetica'`, 4000),
+    await q(`${fontButton}?.textContent ?? 'no font button'`));
+  const fontDepth = await undoDepth(OBJ);
+  const centreOf = async (selector) => q(`(() => { const el = ${selector}; if (!el) return null; const r = el.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  const fontAt = await centreOf(fontButton);
+  await c.mouse(fontAt[0], fontAt[1]);
+  check('it opens a menu of the fonts new text can be written in',
+    await waitFor(`[...document.querySelectorAll('.menu.font-menu .menu-label')].map((e) => e.textContent).join(',') === 'Helvetica,Times,Courier'`, 3000),
+    await q(`[...document.querySelectorAll('.menu .menu-label')].map((e) => e.textContent).join(',')`));
+  const timesAt = await centreOf(`[...document.querySelectorAll('.menu.font-menu .menu-item')].find((b) => b.textContent.includes('Times'))`);
+  await c.mouse(timesAt[0], timesAt[1]);
+  await rest(OBJ);
+  check('choosing Times writes it in that family’s own bold face, one undo step',
+    (await newRecord())?.font === 'Times-Bold' && (await undoDepth(OBJ)) === fontDepth + 1 && (await waitFor(`${fontButton}.textContent === 'Times'`, 3000)),
+    JSON.stringify(await newRecord()));
+  const shownFamily = `(async () => { const p = await ${V(OBJ)}.pdf.getPage(1); const tc = await p.getTextContent(); const it = tc.items.find((i) => i.str.includes('Hello')); return it ? tc.styles[it.fontName]?.fontFamily : null; })()`;
+  check('the page is drawn again in that font', await waitFor(`${shownFamily}.then((f) => f === 'serif')`, 8000), await q(shownFamily));
+  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Helvetica' })`);
+  await rest(OBJ);
+  check('back to Helvetica, the bold face and the rest of the format kept',
+    (await newRecord())?.font === 'Helvetica-Bold' && (await newRecord())?.align === 'center' && (await undoDepth(OBJ)) === fontDepth + 2, JSON.stringify(await newRecord()));
+  check('and the page with it', await waitFor(`${shownFamily}.then((f) => f === 'sans-serif')`, 8000), await q(shownFamily));
+  check('a font Vellum doesn’t have is refused, with nothing changed',
+    (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Liu' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
+
   await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
   await q(`${V(OBJ)}.focus()`);
   await c.key(']');

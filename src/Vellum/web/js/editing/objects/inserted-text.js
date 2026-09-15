@@ -29,8 +29,10 @@
 // is real text; an underline is a filled rule under its line. The standard fonts are the ones every PDF
 // reader has, and are not embedded — so a PDF/A file, which needs every font embedded, is refused new text.
 // The codes are the font's own standard (WinAnsi) encoding; a character it doesn't have is refused, never
-// drawn in another font. Nothing already on the page is touched. Choosing another font, and fonts that are
-// embedded, is font selection (docs/VELLUM_VISION.md §4.3), which this does not pretend to be.
+// drawn in another font. Nothing already on the page is touched. Its family is chosen from the standard
+// families (planFormat with a `family`, text-format.js FAMILY_NAMES) — the part of font selection
+// (docs/VELLUM_VISION.md §4.3) that needs no font parser. The document's own fonts and bundled fonts are
+// not offered and not pretended to be: they must be measured and embedded, which needs the parser.
 //
 // To the object model it is text (kind 'text-run', page-objects.js insertedTextObject), so selecting,
 // moving, scaling, turning, snapping, arranging, copying, deleting and retyping it all go through what
@@ -43,10 +45,10 @@ import { hexString, num, pdfName } from '../content/writer.js';
 import { applyLinear, invert, multiply, translate } from '../matrix.js';
 import { quantize } from './transform.js';
 import { addResource, addStandardFont } from './text-run.js';
-import { DEFAULT_FORMAT, FONTS, formatOf, layoutText, rgbOf, standardFace, styledFont } from './text-format.js';
+import { DEFAULT_FORMAT, FAMILY_NAMES, FONTS, formatOf, layoutText, rgbOf, standardFace, styledFont } from './text-format.js';
 import { newId } from '../../annotations/model.js';
 
-export { FONTS };
+export { FAMILY_NAMES, FONTS };
 
 /** The kind of edit record this handler writes. */
 export const kind = 'inserted-text';
@@ -54,7 +56,7 @@ export const kind = 'inserted-text';
 /** The object-model key of new text. */
 export const keyOf = (record) => `text:${record.id}`;
 
-/** The font new text is written in until font selection exists. */
+/** The font new text is written in until another family is chosen for it. */
 export const DEFAULT_FONT = DEFAULT_FORMAT.font;
 
 /** The size new text starts at, in points. */
@@ -72,6 +74,8 @@ const REFUSED_FORMAT = {
   size: 'That text size couldn’t be used, so nothing was changed.',
   width: 'That width couldn’t be used, so nothing was changed.',
 };
+
+const REFUSED_FAMILY = 'New text can only be written in one of the standard PDF fonts, so nothing was changed.';
 
 /**
  * Plans new text: a record, or EditError. Used for new text and for every later change to it (same
@@ -98,13 +102,16 @@ export function planNewText({ lib, text, transform, entry, id = newId(), ...fiel
 }
 
 /**
- * New text formatted: `record` planned again with `changes` — any of size, bold, italic (the family's own
- * faces), underline, align, color, opacity and width — its top-left corner staying where it is, so a
- * bigger size grows down and to the right. The record, or EditError when the format can't be used.
+ * New text formatted: `record` planned again with `changes` — any of family (one of FAMILY_NAMES), size,
+ * bold, italic (the family's own faces), underline, align, color, opacity and width — its top-left corner
+ * staying where it is, so a bigger size or a wider font grows down and to the right. A family keeps the
+ * bold and italic the text already has, and its lines are laid out and wrapped again in its own widths.
+ * The record, or EditError when the format can't be used.
  */
 export function planFormat({ lib, record, changes }) {
-  const { bold, italic, ...rest } = changes;
-  const font = styledFont(record.font, { bold, italic }) ?? record.font;
+  const { family, bold, italic, ...rest } = changes;
+  if (family !== undefined && !FAMILY_NAMES.includes(family)) throw new EditError('content', REFUSED_FAMILY, { field: 'font' });
+  const font = styledFont(record.font, { family, bold, italic }) ?? record.font;
   const planned = planNewText({ lib, ...record, ...rest, font });
   const shift = record.box[3] - planned.box[3];
   if (!shift) return planned;

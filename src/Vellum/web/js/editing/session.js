@@ -230,10 +230,11 @@ export class TextEditing {
   }
 
   /**
-   * Formats new text (objects/inserted-text.js planFormat): `changes` holds any of size, bold, italic,
-   * underline, align, color, opacity and width, and applies to every one of `keys`, which must all be new
-   * text — one undo step, false when nothing changed. Throws EditError, with nothing changed, when any
-   * of them can't take it (a character the bold or italic face doesn't have, a size out of range).
+   * Formats new text (objects/inserted-text.js planFormat): `changes` holds any of family (one of the
+   * standard families), size, bold, italic, underline, align, color, opacity and width, and applies to
+   * every one of `keys`, which must all be new text — one undo step, false when nothing changed. Throws
+   * EditError, with nothing changed, when any of them can't take it (a character the chosen face doesn't
+   * have, a family that isn't one of the standard ones, a size out of range).
    */
   async formatText(pageNumber, keys, changes) {
     const view = this.#view;

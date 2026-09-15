@@ -2,7 +2,8 @@ import { h, clamp } from '../dom.js';
 import { icon } from '../icons.js';
 
 // Popup menus (context menu, zoom menu). One open at a time.
-// items: [{ label, icon?, shortcut?, checked?, disabled?, action }] or '-' for a separator.
+// items: [{ label, icon?, swatch?, font?, shortcut?, checked?, disabled?, action }] or '-' for a
+// separator. `font` is a CSS font stack the label is shown in, so a font menu previews its fonts.
 
 let current = null;
 
@@ -27,7 +28,7 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
         ? `<span class="menu-swatch" style="background:${item.swatch}"></span>`
         : item.icon ? icon(item.icon, 16) : item.checked ? icon('check', 16) : '',
     }),
-    h('span', { class: 'menu-label', text: item.label }),
+    h('span', { class: 'menu-label', text: item.label, style: item.font ? { fontFamily: item.font } : null }),
     item.shortcut ? h('span', { class: 'menu-shortcut', text: item.shortcut }) : null);
     // Keep the PDF text selection alive while clicking (needed for Copy).
     button.addEventListener('mousedown', (e) => e.preventDefault());
