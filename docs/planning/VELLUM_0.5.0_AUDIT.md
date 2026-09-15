@@ -1037,7 +1037,12 @@ extended for the reflow handle's gate.
 for the whole paragraph; the width preview while held; on release four records (font or emptied), one undo
 step, every word in order, drawn by pdf.js; the reflowed paragraph selected again keeps its handle; a width
 narrower than a word is refused with the reason and changes nothing; a kerned paragraph gets no handle; no
-page errors. `manipulation` and `selection` rerun after the change (see the commit's checkpoint).
+page errors. After the change, `manipulation` and `selection` run together: 139/140 and 34/51 (the
+selection failures all followed its first image click); `selection` alone: 51/51. `manipulation` alone
+failed once more on *insert picture → inserting a PNG succeeds* (the picture was inserted and selected, but
+the call's result didn't come back as `true`), then passed 140/140 twice, the check now recording the
+returned value, the time and the notices. Not reproduced, and the insert path doesn't reach reflow code;
+left for the broad regression pass to watch.
 
 ### Remaining for 0.5.0 (after §19)
 
