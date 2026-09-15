@@ -19,7 +19,9 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 - Should-haves snapping, image replacement and image insertion: done on `main`, not yet released. See
   §15, §16 and §17.
 - Should-haves paragraph grouping and overlap warnings: done on `main`, not yet released. See §18.
-- **0.5.0 is not complete**: single-style paragraph reflow remains. See the end of §18.
+- Should-have single-style paragraph reflow: done on `main`, not yet released. See §19.
+- **Every 0.5.0 feature is built.** Not yet done: the one broad regression pass and the release QA
+  (end of §19).
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -977,3 +979,68 @@ one broad regression pass and the release QA.
 **Recommended next step: single-style paragraph reflow**, built on a `text-block` — rewrapping a grouped
 paragraph's text to a new width in its own single font and size — only in the narrow case the audit
 allows, refused otherwise.
+
+## 19. Single-style paragraph reflow record (the last should-have)
+
+### What a person gets
+
+In Edit mode, a whole paragraph selected (Shift-clicks, a rectangle, or a drag of one of its lines) that
+can be reflowed shows one extra handle, on the middle of its right edge. Dragging it shows the new width
+as a dashed box from the paragraph's left edge; letting go rewraps the words into the paragraph's own
+lines at that width. A single line, a part of a paragraph, text set at an angle, or a paragraph that fails
+the gate below gets no handle.
+
+### The narrow case, and why it is narrow
+
+- **The paragraph's own lines, nothing else.** Words are refilled greedily into the existing lines, top
+  first; each keeps its baseline, left edge, font, size, colour, spacing operators and placement; lines no
+  longer needed are emptied (`encoding: none`). A width that would need more lines than the paragraph
+  has is refused: making a new line would need a record with no run to fingerprint, which the edit model
+  (edits.js) does not have, and inventing one is out of scope.
+- **No new record kind, writer or font path.** Every line stays its one `text` record, planned by
+  `planTextEdit` in the run's own font (`encoding: font`); a result needing a substitute is refused (the
+  "Never" list forbids silent substitution). A line whose new text is the file's own again goes back to
+  its own glyphs (or its placement record), as retyping does. The writer re-checks each record against the
+  original run as always, and PDF/A, signed, tagged and encrypted documents take the paths text edits take.
+- **The gate** (`reflow.js`, checked again for every plan, independently of grouping): at least two lines,
+  every one editable; none already in a substitute font or removed; one style (font, size, Tc, Tw, Tz, Ts,
+  Tr, fill, stroke, graphics states, form, clip, text and CTM scale); one placement (the same record
+  transform, or none); one left edge (0.1 × size) and an even spacing of 0.9–1.6 × size (grouping's own
+  bounds, now exported); **laid out with the font's own widths** — every glyph starts where the previous
+  one ends (0.02 × size) on the same baseline, and each line's width as measured from the font equals its
+  width in the file (0.02 × size + 0.2%), so kerning, tracking, justification or pen-move word gaps are
+  refused; no line but the last ending in a hyphen; the font able to write every word in its own glyphs,
+  with no gap substituted for a space it can't draw. Measurement follows the PDF text model exactly
+  (`(w0·Tfs + Tc + Tw·[code 32])·Th`, in the text matrix and CTM).
+- **The width is measured as shown** and divided by the paragraph's shared uniform scale, so a paragraph
+  scaled as one reflows as it looks.
+- **The handle is behind the engine's own gate** (`#reflowable` calls `reflowRefusal`), cached with the
+  page's live objects; `object-geometry.test.mjs` now pins that the right-edge handle is only drawn and
+  grabbed behind that gate, as the stretch handles are behind theirs. Only a width can be refused after the
+  hand lets go, with the reason in a notice.
+- **Known limit**: lines emptied by a reflow are gone from the page, so the paragraph can then be
+  reflowed only into the lines it still shows (undo restores them).
+
+### Test results
+
+**Node**: 335 tests, 333 pass, 2 skipped, 0 fail. The `paragraphs` fixture gains a second page (a kerned
+paragraph, words spaced by pen moves, a hyphenated break). `reflow.test.mjs` (4): wider and narrower
+widths refill every word in order, lines given in any order; refusals for a word-narrow width, too many
+lines, one line, kerning, pen-move spaces, a hyphen, lines far apart, two colours; through the session a
+reflow is four records (font / none), one undo step, and the saved file — verified against pdf.js — has
+each new line on its original line's baseline and left edge, in its font, within the width, every word in
+order, and every other run on the page unchanged; a paragraph scaled ×2 reflows at twice the width with its
+placement kept; an emptied line is gone and a separately nudged line refuses. `object-geometry.test.mjs`
+extended for the reflow handle's gate.
+
+**End-to-end** (focused): `multi-select` 90/90 with a new *reflow* area (11): no handle for one line; one
+for the whole paragraph; the width preview while held; on release four records (font or emptied), one undo
+step, every word in order, drawn by pdf.js; the reflowed paragraph selected again keeps its handle; a width
+narrower than a word is refused with the reason and changes nothing; a kerned paragraph gets no handle; no
+page errors. `manipulation` and `selection` rerun after the change (see the commit's checkpoint).
+
+### Remaining for 0.5.0 (after §19)
+
+Every 0.5.0 feature is built. **Next: the one broad regression pass** — the full default end-to-end batch
+and the Node tests, fixing what it finds — **then the release QA session**. No push, release or version
+bump has been made.

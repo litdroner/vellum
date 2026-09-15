@@ -682,6 +682,14 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
       at(72, 200, 'Above a rule'), 'q 0 G 0.5 w 72 193 m 300 193 l S Q', at(72, 186, 'Below a rule'),
       at(90, 140, 'An indented first line'), at(72, 126, 'then the rest of that'), at(72, 112, 'paragraph at the margin.'),
     ].join('\n'), { Font: { F1 } });
+    // Page 2: paragraphs that group but must not reflow — kerned by TJ numbers, words spaced by pen
+    // moves instead of space characters, and a word split by a hyphen.
+    const tj = (x, y, parts) => `BT /F1 11 Tf ${x} ${y} Td [${parts.map((p) => (typeof p === 'number' ? p : lit(ansi(p)))).join(' ')}] TJ ET`;
+    b.page(PageSizes.Letter, [
+      tj(72, 700, ['A kerned ', 'W', 80, 'ave line']), tj(72, 686, ['and another ', 'T', 60, 'oward line']),
+      tj(72, 620, ['Words', -278, 'moved', -278, 'apart']), tj(72, 606, ['by', -278, 'the', -278, 'pen']),
+      at(72, 540, 'A paragraph with a hyphen-'), at(72, 526, 'ated word across two lines'),
+    ].join('\n'), { Font: { F1 } });
   });
 
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user

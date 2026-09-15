@@ -24,8 +24,8 @@ Vision.
 - **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
   `docs/planning/VELLUM_0.5.0_AUDIT.md`. Every 0.5.0 must-have is done: phases 0–3, with same-page
   multi-select and picture stretching on `main` and not yet in a release (marked *done, unreleased*
-  below). Of the should-haves, alignment, distribution, snapping, image replacement, image insertion, paragraph grouping and overlap warnings are done on `main`;
-  the rest (the first Roadmap row) remain, each only if its strict tests pass. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
+  below). Of the should-haves, alignment, distribution, snapping, image replacement, image insertion, paragraph grouping, overlap warnings and single-style paragraph reflow are done on `main`:
+  every 0.5.0 feature is built; what remains is the one broad regression pass and the release QA (the first Roadmap row). On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
   the audit's scope and its "Never" list, without a separate approval for each step.
 
 ## Reading
@@ -83,7 +83,8 @@ Vision.
 | Paragraph grouping (should-have): in Edit mode, dragging a line that plainly belongs to a paragraph selects and moves the whole paragraph (then handles, keys, arrange and Delete act on it as on any selection, one undo step); a click still edits that one line, and a line selected on its own drags alone. Grouped only when every line can be moved, has the same font, size, colour, render mode and direction, starts at the same left edge at a spacing of 0.9–1.6 × the text size that doesn't drift, shares its row with no other text, doesn't start like a list item, and has nothing drawn between it and the next; an indented line leaves the lines around it ungrouped. Nothing new is written: each line is its own record, as before | done, unreleased | editing/objects/text-block.js, ui/text-editor.js (#paragraphOf) |
 | Overlap warnings (should-have): while a drag or an arrow-key burst is moving objects, what they would newly cover (text or pictures, not what they already overlapped) is outlined in amber; the outline goes when the hand does, nothing is refused, and a drop that leaves an overlap is announced to screen readers | done, unreleased | editing/objects/overlap.js, ui/text-editor.js (#overlapsOf) |
 | Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
-| Rotating text, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
+| Single-style paragraph reflow (should-have, the narrow case): a whole paragraph selected in Edit mode that passes the reflow gate has one handle on its right edge; dragging it rewraps the paragraph's words, in order, into its own lines at that width — same baselines, left edge, font, size and colour, lines no longer needed emptied — one undo step, re-encoded only in the paragraph's own font (never a substitute). The handle is offered only when every line can be edited, is one style and one placement, on one left edge and even spacing, set left to right with the font's own widths (no kerning, tracking, justification or pen-move spaces) and with no hyphenated break. Refused with the reason when the hand lets go: a width narrower than a word, or one needing more lines than the paragraph has | done, unreleased | editing/objects/reflow.js, editing/session.js (reflowParagraph), ui/text-editor.js (#reflowable, #reflow) |
+| Rotating text, general paragraph reflow (more lines than a paragraph has, mixed styles, kerned or justified text, hyphenation), new characters outside Latin (WinAnsi) | planned | — |
 
 ## Pages
 
@@ -115,7 +116,7 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 should-have left, only if its strict tests pass (otherwise it moves to a later release): single-style paragraph reflow (last, gated) | next | §3.2 |
+| 0.5.0 release: one broad regression pass (the full end-to-end batch and Node tests) and release QA; every 0.5.0 feature is built | next | §3.2 |
 | Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |

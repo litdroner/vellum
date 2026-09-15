@@ -16,6 +16,7 @@ import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { insertedObject } from './objects/page-objects.js';
+import { planReflow } from './objects/reflow.js';
 import { IDENTITY, multiply } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
@@ -165,7 +166,7 @@ export class TextEditing {
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     if (!keys.length) throw new EditError('missing', 'Nothing is selected.');
     if (new Set(keys).size !== keys.length) throw new EditError('changed', 'One object was asked for twice, so nothing was changed.');
-    const { entry, objects, records } = await this.objects(pageNumber);
+    const { entry, objects, records, analysis } = await this.objects(pageNumber);
     const byKey = new Map(objects.map((o) => [o.ref.key, o]));
     const found = keys.map((key) => {
       const object = byKey.get(key) ?? null;
@@ -175,7 +176,7 @@ export class TextEditing {
       }
       return { object, record };
     });
-    return { entry, found };
+    return { entry, found, analysis };
   }
 
   /** Refuses a verb in the words the capability already answered with — for a group, saying so. */
@@ -226,6 +227,28 @@ export class TextEditing {
   /** Deletes one object: text loses its glyphs, a picture loses its draw. One undo step. */
   removeObject(pageNumber, key) {
     return this.removeObjects(pageNumber, [key]);
+  }
+
+  /**
+   * Reflows a paragraph — these text lines of one page — to `width`, measured along the text as the
+   * paragraph is shown now, in its own font and on its own lines (objects/reflow.js): ONE undo step.
+   * false when nothing changed; EditError, with the reason, whenever it can't be done exactly.
+   */
+  async reflowParagraph(pageNumber, keys, width) {
+    const view = this.#view;
+    const entry = view.shownPlan?.[pageNumber - 1];
+    const glyphs = entry && entry.src !== 'blank' ? (await this.#source(entry.src)).glyphs : null;
+    const constraints = await this.#constraints();
+    const { entry: current, found, analysis } = await this.#objectsAt(pageNumber, keys);
+    for (const { object } of found) {
+      if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
+      this.#refuse(object, 'editText', found.length);
+    }
+    const lines = found.map(({ object, record }) => ({ run: object.record, record }));
+    const pairs = planReflow({ analysis, lines, width, entry: current.id, glyphs, ...constraints });
+    if (!pairs.length) return false;
+    view.annotations.applyEdits(pairs);
+    return true;
   }
 
   /** Deletes several objects on one page as ONE undo step — all of them, or none if any refuses. */

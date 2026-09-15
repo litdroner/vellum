@@ -9,6 +9,7 @@ import { ALIGNMENTS, DISTRIBUTIONS, MINIMUM, alignMoves, distributeMoves } from 
 import { snapMove } from '../editing/objects/snap.js';
 import { textBlocks, blockOf } from '../editing/objects/text-block.js';
 import { newOverlaps } from '../editing/objects/overlap.js';
+import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
@@ -42,7 +43,9 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     one of them allows it.
 //   - paragraphs: pressing a line that plainly belongs to a paragraph (editing/objects/text-block.js)
 //     selects the whole paragraph, so dragging it moves the paragraph; a click still opens the editor
-//     on that one line, and a line selected on its own drags by itself.
+//     on that one line, and a line selected on its own drags by itself. A whole paragraph selected
+//     that can be reflowed (editing/objects/reflow.js) has a handle on its right edge: dragging it
+//     rewraps the words into the paragraph's own lines at that width, in its own font.
 //   - replacing a picture: with one picture selected, the bar over it (or the command palette) asks
 //     the host for a PNG or JPEG file, and the picture's image becomes that one, in the same frame.
 //
@@ -585,6 +588,9 @@ export class TextEditor {
       // Edge handles stretch, so they are only for one object that can be stretched: a picture.
       if (this.#stretchable(selected)) {
         for (const [x, y] of points.slice(4)) shapes.push(svg('circle', { class: 'vl-object-handle edge', cx: x, cy: y, r }));
+      } else if (this.#drag?.mode !== 'reflow' && points[5] && this.#reflowable(page, selected)) {
+        // A whole paragraph that can be reflowed: one handle, on its right edge (#reflowable).
+        shapes.push(svg('circle', { class: 'vl-object-handle edge reflow', cx: points[5][0], cy: points[5][1], r }));
       }
     }
     // What the objects being moved would newly cover, while they are moving (#overlapsOf).
@@ -596,6 +602,10 @@ export class TextEditor {
     const drag = this.#drag;
     if (drag?.mode === 'marquee' && drag.n === page.n && drag.box) {
       shapes.push(svg('polygon', { class: 'vl-object-marquee', points: quadPoints(boxQuad(drag.box)) }));
+    }
+    // The width a paragraph is being reflowed to, from its left edge to the hand.
+    if (drag?.mode === 'reflow' && drag.n === page.n && drag.right !== null) {
+      shapes.push(svg('polygon', { class: 'vl-reflow-width', points: quadPoints(boxQuad([drag.box[0], drag.box[1], drag.right, drag.box[3]])) }));
     }
     // Guide lines where a move drag has snapped into line, measured in display axes and drawn back in
     // user space: a line that is vertical on screen stays vertical whatever the rotation.
@@ -901,6 +911,10 @@ export class TextEditor {
         quads: this.#quadsOf(page, objects), basis, axis, fixedAt,
       };
     }
+    // A whole paragraph's right-edge handle reflows it to a new width, from its left edge.
+    if (this.#reflowable(page, objects) && grabbed(5)) {
+      return { mode: 'reflow', verb: 'reflow', n: current.page, keys: [...current.keys], pageView, box: quadBox(frame), right: null };
+    }
     return null;
   }
 
@@ -913,6 +927,29 @@ export class TextEditor {
     const live = this.#liveOf(page);
     live.blocks ??= textBlocks([...live.objects, ...(page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [])]);
     return blockOf(live.blocks, key)?.keys ?? null;
+  }
+
+  /**
+   * May these selected objects be reflowed from the handle on their right edge? Only a whole paragraph
+   * (#paragraphOf, exactly), set left to right on the page, and only when the engine's own gate lets it
+   * (objects/reflow.js reflowRefusal) — so the handle never promises a reflow that would be refused on
+   * its own grounds. Only a width can still be refused, when the hand lets go. Kept with the live objects.
+   */
+  #reflowable(page, objects) {
+    if (objects.length < 2 || objects.some((o) => o.kind !== 'text-run') || !page.objects?.analysis) return false;
+    const keys = objects.map((o) => o.ref.key);
+    const paragraph = this.#paragraphOf(page, keys[0]);
+    if (!paragraph || !sameKeys(paragraph, keys)) return false;
+    const live = this.#liveOf(page);
+    const id = [...keys].sort().join('|');
+    live.reflowable ??= new Map();
+    if (!live.reflowable.has(id)) {
+      const q = objects[0].geometry.quad;
+      const upright = q[2] - q[0] > 0 && Math.abs(q[3] - q[1]) < 1e-3 * (q[2] - q[0]);
+      const lines = objects.map((o) => ({ run: o.record, record: o.edit }));
+      live.reflowable.set(id, upright && reflowRefusal(page.objects.analysis, lines) === null);
+    }
+    return live.reflowable.get(id);
   }
 
   /** Where each of these objects is drawn right now, by key. */
@@ -984,8 +1021,9 @@ export class TextEditor {
     }
     if (drag.mode === 'refused') return;
     const to = toPdfPoint(drag.pageView, e.clientX, e.clientY);
-    if (drag.mode === 'marquee') {
-      drag.box = [Math.min(drag.from[0], to[0]), Math.min(drag.from[1], to[1]), Math.max(drag.from[0], to[0]), Math.max(drag.from[1], to[1])];
+    if (drag.mode === 'marquee' || drag.mode === 'reflow') {
+      if (drag.mode === 'marquee') drag.box = [Math.min(drag.from[0], to[0]), Math.min(drag.from[1], to[1]), Math.max(drag.from[0], to[0]), Math.max(drag.from[1], to[1])];
+      else drag.right = Math.max(to[0], drag.box[0] + 1);
       const page = this.#pages.get(drag.n);
       if (page) this.#draw(page);
       return;
@@ -1065,8 +1103,30 @@ export class TextEditor {
       this.#finishMarquee(drag);
       return;
     }
+    if (drag.mode === 'reflow') {
+      await this.#reflow(drag);
+      return;
+    }
     const said = covers ? `${{ move: 'Moved', scale: 'Resized', stretch: 'Resized' }[drag.verb] ?? 'Changed'}; it now overlaps other content.` : null;
     await this.#write(drag.n, drag.keys.map((key) => ({ key, delta: drag.transform })), drag.verb, { said });
+  }
+
+  /**
+   * Reflows the dragged paragraph to the width the hand left it at (session.reflowParagraph), or says
+   * why not. The width is measured as the paragraph is shown; the engine decides the rest.
+   */
+  async #reflow(drag) {
+    const page = this.#pages.get(drag.n);
+    if (page) this.#draw(page); // the width preview goes with the hand
+    if (drag.right === null) return;
+    await this.#settled();
+    this.#warnTagged('text');
+    try {
+      const changed = await this.#view.textEditing.reflowParagraph(drag.n, drag.keys, drag.right - drag.box[0]);
+      if (changed) this.#announce('Paragraph reflowed.');
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That change couldn’t be made: ${err.message}`);
+    }
   }
 
   /** Selects what a selection rectangle enclosed: instead of the selection, or added to it. */

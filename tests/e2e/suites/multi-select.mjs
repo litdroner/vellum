@@ -554,5 +554,78 @@ export async function run(t) {
   check('the warning goes when the hand lets go, and the move is still made', (await overlapOutlines()) === 0
     && Math.abs((await objectAt(PARA, 1, cellA1.key)).cyp - cell.cyp) > 5);
 
+  // ---- 12. reflowing a paragraph from its right-edge handle -----------------------------------------------------
+
+  area('reflow');
+  await q(`(() => { const v = ${V(PARA)}; while (v.annotations.canUndo) v.annotations.undo(); })()`);
+  await rest(PARA);
+  await q(`${V(PARA)}.focus()`);
+  await c.key('Escape');
+  await sleep(300);
+  const reflowHandles = () => q(`${V(PARA)}.el.querySelectorAll('.vl-object-handle.reflow').length`);
+  const shiftSelect = async (keys, n = 1) => {
+    for (const key of keys) {
+      const o = await objectAt(PARA, n, key);
+      await c.mouse(o.cx, o.cy, { modifiers: SHIFT });
+      await sleep(250);
+    }
+  };
+  await revealAll(PARA, 1, paraKeys);
+  check('a single line has no reflow handle', await (async () => { await shiftSelect([paraKeys[0]]); return (await reflowHandles()) === 0; })());
+  await shiftSelect(paraKeys.slice(1));
+  check('the whole paragraph selected has one reflow handle', sameSet(await selectedKeys(PARA), paraKeys) && (await reflowHandles()) === 1);
+  const lineQuads = await Promise.all(paraKeys.map((k) => objectAt(PARA, 1, k)));
+  const x1 = Math.min(...lineQuads.map((o) => o.x1p));
+  const x2 = Math.max(...lineQuads.map((o) => o.x2p));
+  const ymid = (Math.min(...lineQuads.map((o) => o.y1p)) + Math.max(...lineQuads.map((o) => o.y2p))) / 2;
+  const grip = await clientOf(PARA, 1, x2, ymid);
+  const wide = await clientOf(PARA, 1, x1 + 400, ymid);
+  const depthBefore = await undoDepth(PARA);
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: grip[0], y: grip[1] });
+  await mouseEvent('mousePressed', grip[0], grip[1]);
+  for (let i = 1; i <= 10; i++) await mouseEvent('mouseMoved', grip[0] + ((wide[0] - grip[0]) * i) / 10, grip[1]);
+  await sleep(300);
+  check('dragging the handle shows the new width', Boolean(await q(`${V(PARA)}.el.querySelector('.vl-reflow-width')`)));
+  await mouseEvent('mouseReleased', wide[0], grip[1]);
+  await sleep(800);
+  await rest(PARA);
+  const reflowed = await records(PARA);
+  check('released: every line gets a record, in its own font or emptied', reflowed.length === 4 && reflowed.every((r) => r.mode === 'font' || r.mode === 'none') && reflowed.some((r) => r.mode === 'none'), JSON.stringify(reflowed));
+  check('…as one undo step', (await undoDepth(PARA)) === depthBefore + 1);
+  const pageWords = await q(`(async () => {
+    const v = ${V(PARA)};
+    const { runs } = await v.textEditing.page(1);
+    return runs.filter((r) => ${JSON.stringify(paraKeys)}.includes('run:' + r.run.key)).sort((a, b) => b.run.quad[1] - a.run.quad[1]).map((r) => r.text).filter(Boolean).join(' ');
+  })()`);
+  check('…with every word of the paragraph, in order', pageWords === TEXTS.join(' '), pageWords);
+  check('pdf.js draws the reflowed lines', await waitFor(`[...${V(PARA)}.el.querySelectorAll('.textLayer span')].some((s) => s.textContent.startsWith(${JSON.stringify(TEXTS[0] + ' runs')}))`, 8000));
+
+  await clearToasts();
+  const kept = (await objectsOn(PARA, 1)).filter((o) => paraKeys.includes(o.key) && !o.gone).map((o) => o.key);
+  await q(`${V(PARA)}.focus()`);
+  await c.key('Escape');
+  await sleep(300);
+  await shiftSelect(kept);
+  const keptQuads = await Promise.all(kept.map((k) => objectAt(PARA, 1, k)));
+  const ymid2 = (Math.min(...keptQuads.map((o) => o.y1p)) + Math.max(...keptQuads.map((o) => o.y2p))) / 2;
+  check('the reflowed paragraph, selected again, still has its handle', (await reflowHandles()) === 1);
+  const grip2 = await clientOf(PARA, 1, Math.max(...keptQuads.map((o) => o.x2p)), ymid2);
+  const narrow = await clientOf(PARA, 1, x1 + 20, ymid2);
+  const heldReflow = JSON.stringify(await records(PARA));
+  await c.drag(grip2, [narrow[0], grip2[1]], 10);
+  check('a width narrower than a word is refused, saying so', await toast('/narrower than the word/'));
+  await sleep(500);
+  check('…and changes nothing', JSON.stringify(await records(PARA)) === heldReflow);
+
+  await q(`${V(PARA)}.viewer.currentPageNumber = 2`);
+  await rest(PARA);
+  await q(`${V(PARA)}.focus()`);
+  await c.key('Escape');
+  const page2 = await objectsOn(PARA, 2);
+  const kernedKeys = page2.filter((o) => /ave line|oward line/.test(o.text ?? '')).map((o) => o.key);
+  await revealAll(PARA, 2, kernedKeys);
+  await shiftSelect(kernedKeys, 2);
+  check('a kerned paragraph is selected but offers no reflow handle', kernedKeys.length === 2 && sameSet(await selectedKeys(PARA), kernedKeys) && (await reflowHandles()) === 0);
+
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }

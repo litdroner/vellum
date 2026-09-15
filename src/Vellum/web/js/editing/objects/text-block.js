@@ -27,8 +27,9 @@
 
 import { boxQuad } from './geometry.js';
 
-const MIN_STEP = 0.9;
-const MAX_STEP = 1.6;
+/** A paragraph's line spacing, as a multiple of its text size: shared with objects/reflow.js. */
+export const MIN_STEP = 0.9;
+export const MAX_STEP = 1.6;
 /** A line spacing that differs from the block's by more than this (× size) ends the block. */
 const STEP_DRIFT = 0.05;
 /** Left edges this close (× size) are the same edge. */

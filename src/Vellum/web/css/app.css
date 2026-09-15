@@ -1268,6 +1268,15 @@ kbd {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+/* The width a paragraph is being reflowed to, while its right-edge handle is dragged. */
+.vl-reflow-width {
+  fill: color-mix(in srgb, var(--accent) 5%, transparent);
+  stroke: var(--accent);
+  stroke-width: 1px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
 /* What a drag would newly cover: a warning only, and only while the hand is moving. Amber on the page's
    paper, whatever the app theme. */
 .vl-overlap {

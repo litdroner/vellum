@@ -788,7 +788,9 @@ export async function run(t) {
   })()`);
   const insertDepth = await undoDepth(OBJ);
   const countBefore = (await objectsOn(OBJ, 1)).length;
-  check('inserting a PNG succeeds', (await insertWith(MAGENTA_PNG, 'magenta.png')) === true);
+  const insertStarted = Date.now();
+  const inserted = await insertWith(MAGENTA_PNG, 'magenta.png');
+  check('inserting a PNG succeeds', inserted === true, JSON.stringify({ inserted, ms: Date.now() - insertStarted, toasts: await q(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent)`) }));
   await rest(OBJ);
   const newKey = (await selection(OBJ))?.key ?? '';
   check('the new picture is selected', newKey.startsWith('inserted:'), JSON.stringify(await selection(OBJ)));
