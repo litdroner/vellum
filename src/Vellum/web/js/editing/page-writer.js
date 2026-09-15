@@ -19,8 +19,11 @@ import { EditError } from './edits.js';
 import { handlerFor } from './objects/registry.js';
 import { ascii, concat } from './content/writer.js';
 
-/** Applies content edits to arranged pages. pages[i] shows plan[i]. Returns { changed } (pages rewritten). */
-export function applyObjectEdits({ lib, doc, pages, plan, edits }) {
+/**
+ * Applies content edits to arranged pages. pages[i] shows plan[i]. Resolves { changed } (pages
+ * rewritten). `sources` is the document's Map of id → bytes, where a replacement picture's image is.
+ */
+export async function applyObjectEdits({ lib, doc, pages, plan, edits, sources = new Map() }) {
   const byEntry = new Map();
   const byKind = new Map();
   for (const e of edits) {
@@ -39,19 +42,23 @@ export function applyObjectEdits({ lib, doc, pages, plan, edits }) {
   if (!byEntry.size) return { changed: 0 };
   // Whole-document checks first, so a refusal happens before any page is touched.
   for (const [kind, records] of byKind) handlerFor(kind).precheck?.({ lib, doc, records });
+  // Then what a handler must add to the document once for all its pages (an embedded image), and
+  // hands to each page it writes. Still before any page is touched.
+  const prepared = new Map();
+  for (const [kind, records] of byKind) prepared.set(kind, await handlerFor(kind).prepare?.({ lib, doc, records, sources }));
 
   const source = new PdfSource(lib, doc);
   let changed = 0;
   plan.forEach((entry, i) => {
     const records = byEntry.get(entry.id);
     if (!records || !pages[i]) return;
-    rewritePage(lib, doc, source, pages[i], i, records);
+    rewritePage(lib, doc, source, pages[i], i, records, prepared);
     changed++;
   });
   return { changed };
 }
 
-function rewritePage(lib, doc, source, page, index, records) {
+function rewritePage(lib, doc, source, page, index, records, prepared) {
   const analysis = analyzePage(source.pageFor(page, index));
   if (analysis.summary.kind === 'unreadable' || analysis.tainted || analysis.unbalanced) {
     throw new EditError('content', `Page ${index + 1}’s content couldn’t be read reliably, so it wasn’t changed.`);
@@ -60,7 +67,7 @@ function rewritePage(lib, doc, source, page, index, records) {
   const patches = [];
   const appended = [];
   for (const [kind, list] of groupByKind(records)) {
-    const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list });
+    const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list, prepared: prepared.get(kind) });
     patches.push(...result.patches);
     appended.push(...result.append);
   }

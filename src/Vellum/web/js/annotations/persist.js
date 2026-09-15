@@ -44,7 +44,7 @@ export function writeAnnotations(bytes, annotations) {
  * Builds a PDF from a page plan (see pages/plan.js).
  *   base         bytes of the opened file; Vellum annotations already in it are replaced
  *   plan         page plan, or null for "the file's own pages, unchanged"
- *   sources      Map of sourceId → bytes, for pages inserted from other PDFs
+ *   sources      Map of sourceId → bytes: pages inserted from other PDFs, and images replacing pictures
  *   annotations  Vellum annotations to write; .page is the 1-based position in the plan
  *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/page-writer.js
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
@@ -61,7 +61,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
 
   // Text edits rewrite only their own pages' content streams.
-  const { changed } = edits.length && plan ? applyObjectEdits({ lib, doc, pages, plan, edits }) : { changed: 0 };
+  const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources }) : { changed: 0 };
 
   for (const a of annotations) {
     const page = pages[a.page - 1];

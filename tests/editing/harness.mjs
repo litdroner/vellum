@@ -106,7 +106,7 @@ export async function analyzeFile(bytes, { pages } = {}) {
 /**
  * Drives the editing session (editing/session.js) in Node over a document as the app would give it:
  * the edit store, the page plan the pages on screen were built from, the pdf.js document, and the
- * file's bytes. `run` gets { bytes, plan, store, session }; the pdf.js document is closed afterwards
+ * file's bytes. `run` gets { bytes, plan, store, session, sources }; the pdf.js document is closed afterwards
  * whatever happens.
  */
 export async function withSession(bytes, run) {
@@ -126,7 +126,7 @@ export async function withSession(bytes, run) {
     profile: async () => inspectDocument(await loadPdfLib(), bytes),
   };
   try {
-    return await run({ bytes, plan, store, session: new TextEditing(view) });
+    return await run({ bytes, plan, store, session: new TextEditing(view), sources: view.sources });
   } finally {
     await js.close();
   }

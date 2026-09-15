@@ -1,4 +1,5 @@
 import { h, clamp } from '../dom.js';
+import { bridge } from '../bridge.js';
 import { icon } from '../icons.js';
 import { PAGE_KINDS, explainRun } from '../editing/runs.js';
 import { EditError } from '../editing/edits.js';
@@ -36,6 +37,8 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     Ctrl, adds it), and Ctrl+A selects everything on the page. A drag, the handles around the whole
 //     group and every key then act on all of them together — as one undo step, and only when every
 //     one of them allows it.
+//   - replacing a picture: with one picture selected, the bar over it (or the command palette) asks
+//     the host for a PNG or JPEG file, and the picture's image becomes that one, in the same frame.
 //
 // Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
 //
@@ -141,13 +144,13 @@ export class TextEditor {
   #gesture = 0; // serial number: an async hit test whose gesture has moved on is dropped
   #clickAfterDrag = false;
   #editor = null; // { n, key, item, el, paper, input, bar, status, done, pending }
-  #arrangeBar = null; // { el, spacing } - shown over a selection of several objects
+  #arrangeBar = null; // { el, arrange, spacing, replace } - over several objects, or one picture
   #committing = null;
   #tip = null;
   #hoverQueued = false;
   #previewTimer = 0;
   #announcer;
-  #warnedTagged = false;
+  #warnedTagged = new Set(); // what the tagged-PDF warning has been given for: 'text', 'picture'
 
   constructor(view, { notify }) {
     this.#view = view;
@@ -220,6 +223,59 @@ export class TextEditor {
     const changed = await this.#write(current.page, deltas, 'move', { said: distribute ? 'Spaced evenly.' : 'Lined up.' });
     if (!changed) this.#announce(distribute ? 'They were already evenly spaced.' : 'They were already lined up.');
     return changed;
+  }
+
+  /**
+   * Replaces the one selected picture's image with a PNG or JPEG the host's file dialog picks. The bar
+   * over a selected picture and the command (commands.js) both call this. Resolves true when replaced.
+   */
+  async replacePicture() {
+    if (!this.#replaceable()) return false;
+    let file;
+    try {
+      ({ file } = await bridge.request('pictureDialog'));
+    } catch (err) {
+      this.#notify(`That picture couldn’t be opened: ${err.message}`);
+      return false;
+    }
+    if (!file) return false;
+    const binary = atob(file.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return this.replacePictureWith({ name: file.name, bytes });
+  }
+
+  /**
+   * Replaces the one selected picture's image with `bytes` (a PNG or JPEG file's contents, named
+   * `name`): the picture keeps its frame and its selection, and the change is one undo step. What
+   * replacePicture() does once the file has been chosen.
+   */
+  async replacePictureWith({ name, bytes }) {
+    const target = this.#replaceable();
+    if (!target) return false;
+    if (!(await this.commitPending())) return false;
+    this.#flushNudge();
+    await this.#settled();
+    try {
+      await this.#view.textEditing.replaceImage(target.page, target.key, bytes);
+      this.#announce(`Picture replaced with “${name}”.`);
+      this.#warnTagged('picture');
+      return true;
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That picture couldn’t be replaced: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** The one selected picture as { page, key } when it can be replaced; otherwise says why, and null. */
+  #replaceable() {
+    const current = this.#selection.current;
+    const object = this.active && current?.keys.length === 1 ? this.#liveObject(current.page, current.keys[0]) : null;
+    if (object?.kind !== 'image') {
+      this.#notify('Select one picture in Edit mode to replace it.');
+      return null;
+    }
+    return this.#allow([object], 'replace') ? { page: current.page, key: current.keys[0] } : null;
   }
 
   // ---- entering and leaving edit mode ---------------------------------------------------
@@ -497,13 +553,16 @@ export class TextEditor {
 
   // ---- the arrange bar ---------------------------------------------------------------------------------
   // Over a selection of several objects, a small floating bar lines them up or spaces them evenly
-  // (arrange()). It sits by the frame around the selection, steps aside while a drag is under way or
-  // text is being typed, and never takes the keyboard focus from the page, so the object keys keep
-  // working with it on screen. Every one of its actions is also a command, for the palette.
+  // (arrange()); over one picture that can be replaced, the same bar holds only "Replace picture…"
+  // (replacePicture()). It sits by the frame around the selection, steps aside while a drag is under
+  // way or text is being typed, and never takes the keyboard focus from the page, so the object keys
+  // keep working with it on screen. Every one of its actions is also a command, for the palette.
 
   #syncArrangeBar() {
     const selection = this.#selection;
-    const page = this.active && !this.#editor && !this.#drag?.moved && selection.size >= MINIMUM.align
+    const single = selection.size === 1 ? this.#liveObject(selection.page, selection.keys[0]) : null;
+    const replacing = single?.kind === 'image' && single.capabilities.replace === true;
+    const page = this.active && !this.#editor && !this.#drag?.moved && (selection.size >= MINIMUM.align || replacing)
       ? this.#pages.get(selection.page) : null;
     const pageView = page?.data ? this.#view.viewer.getPageView(page.n - 1) : null;
     const quads = pageView ? selection.keys.map((key) => {
@@ -518,7 +577,10 @@ export class TextEditor {
       return;
     }
     const bar = this.#arrangeBar ??= this.#buildArrangeBar();
-    for (const el of bar.spacing) el.hidden = selection.size < MINIMUM.distribute;
+    for (const el of bar.arrange) el.hidden = replacing;
+    for (const el of bar.spacing) el.hidden = replacing || selection.size < MINIMUM.distribute;
+    bar.replace.hidden = !replacing;
+    bar.el.setAttribute('aria-label', replacing ? 'The selected picture' : 'Arrange the selected objects');
     const xs = corners.map((p) => p[0]);
     const ys = corners.map((p) => p[1]);
     const left = Math.min(...xs);
@@ -538,9 +600,13 @@ export class TextEditor {
     // Spacing evenly needs three objects: those buttons, and the separator before them, come and go.
     const first = ARRANGE_BUTTONS.findIndex((entry) => entry && DISTRIBUTIONS.includes(entry[0]));
     const spacing = children.slice(ARRANGE_BUTTONS[first - 1] === null ? first - 1 : first);
-    const el = h('div', { class: 'vl-pop vl-arrange-bar ui', role: 'toolbar', 'aria-label': 'Arrange the selected objects' }, ...children);
+    const replace = h('button', {
+      class: 'tb-btn small vl-replace-picture', title: 'Replace picture…', 'aria-label': 'Replace picture…',
+      html: icon('image', 16), onMousedown: keep, onClick: () => this.replacePicture(),
+    });
+    const el = h('div', { class: 'vl-pop vl-arrange-bar ui', role: 'toolbar', 'aria-label': 'Arrange the selected objects' }, ...children, replace);
     this.#view.container.append(el);
-    return { el, spacing };
+    return { el, arrange: children, spacing, replace };
   }
 
   /**
@@ -1308,16 +1374,21 @@ export class TextEditor {
     input.focus({ preventScroll: true });
     input.select();
     this.#preview();
-    if (item.run.tagged) this.#warnTagged();
+    if (item.run.tagged) this.#warnTagged('text');
   }
 
-  /** Tagged PDFs (an accessibility structure): said once, the first time tagged text is opened. */
-  async #warnTagged() {
-    if (this.#warnedTagged) return;
+  /**
+   * Tagged PDFs (an accessibility structure): said once, the first time tagged text is opened, and
+   * once the first time a picture is replaced.
+   */
+  async #warnTagged(what) {
+    if (this.#warnedTagged.has(what)) return;
     const profile = await this.#view.profile().catch(() => null);
-    if (!profile?.tagged || this.#warnedTagged) return;
-    this.#warnedTagged = true;
-    this.#notify('This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
+    if (!profile?.tagged || this.#warnedTagged.has(what)) return;
+    this.#warnedTagged.add(what);
+    this.#notify(what === 'picture'
+      ? 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it replaces a picture, so a description of the old picture may still be read out.'
+      : 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
   }
 
   async #commit() {

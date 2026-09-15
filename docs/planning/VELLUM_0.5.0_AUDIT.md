@@ -742,3 +742,94 @@ paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated
 **Recommended next step: image replacement** — replace a selected picture's image with one from a
 local file, keeping its placement (host file dialog, pdf-lib image embedding, a new XObject resource
 for the replaced draw, the old one released only when provably unused, as delete already does).
+
+## 16. Image replacement record (should-have)
+
+With one picture selected in Edit mode, **Replace picture…** — the only button on the bar over it, or
+a command in the palette (`edit.replacePicture`) — opens a Windows file dialog for a PNG or JPEG. The
+picture's image becomes that one, in exactly the frame it had, as the same object and one undo step.
+
+### Decisions worth keeping
+
+- **The draw is kept; only its name changes.** Every image is drawn into its unit square, so the
+  writer swaps the operator `/Im1 Do` for `/VlImgN Do` (inside the existing `q … cm … Q` when the
+  picture has also been moved) and adds the new name to the page's `/XObject` resources. The CTM,
+  clip, marked content, ExtGState and place in the drawing order all stay, so position, size, turn,
+  mirror and shear are preserved by construction. The new image fills the frame; it is not letterboxed.
+- **One record per picture.** An image record gains `replacement: { source, format, width, height }`.
+  A move keeps it (`#plan` in `session.js`), a replaced picture moved back where it started keeps its
+  record, a second replacement replaces the first, a delete drops it, and undo/redo are the store's.
+- **The bytes live in the document's `sources` map**, the one pages inserted from other PDFs already
+  keep their bytes in, and which `composeDocument` already receives. Undo, redo, duplicated pages
+  (`followEdits` copies the record) and Save As reach them with no new plumbing.
+- **The old resource is released on the deletion rule**: `releaseResources` became `updateResources`,
+  counting replaced draws as gone. A name still drawn elsewhere on the page stays, a page that draws a
+  form keeps every name, the page's resources are cloned first (inherited resources never change other
+  pages), and garbage collection removes the image bytes only when nothing in the file reaches them.
+  A new name is never one the page's dictionary already had.
+- **Embedding is asynchronous in pdf-lib**, so the page writer gained one hook beside `precheck`: an
+  async `prepare` per kind, run before any page is touched, whose result is handed to that kind's
+  `write`. `applyObjectEdits` is now async; `composeDocument` awaits it.
+- **Embedded once per file, copied per compose.** Measured: embedding a PNG costs 180 ms (1200×900)
+  to 730 ms (2400×1800), and every change rebuilds the document. `readPicture` embeds into a scratch
+  document once per chosen file (kept in a WeakMap keyed by the bytes), and `prepare` copies the
+  finished streams, soft mask included, with pdf-lib's `PDFObjectCopier`: 3–9 ms per compose for the
+  2400×1800 PNG. A JPEG is embedded as it is (`DCTDecode`, byte for byte).
+- **Refused, with a reason, before anything is stored**: a file that isn't a PNG or JPEG pdf-lib can
+  really embed (checked by embedding it, so a damaged file can't fail every later save); an inline
+  image (`replaceRefusal` → `unsupported`; inline replacement stays deferred, §1); anything
+  `imageRefusal` already refuses (form, layer, ExtGState soft mask, clip, degenerate); a PDF/A document
+  (the standard constrains an image's colour space and transparency against the output intent, which
+  Vellum doesn't check; refused in the session and again in the writer's `precheck`). Text never
+  answers `replace` true. A tagged PDF is told once that its tags (such as a picture's description)
+  aren't updated.
+- **The host reads the file and returns its bytes** (`pictureDialog`, base64, at most 25 MB) instead of
+  registering it with the resource server, which would also make it writable by the page.
+- **The capability model answers seven verbs**: `replace` joined, true for a picture exactly when
+  `move` is and the picture isn't inline. The tests that pin the verb set changed with it.
+
+### Test results
+
+**Node**: `node --test "tests/editing/*.test.mjs"`: **321 tests, 319 pass, 2 skipped, 0 fail**. New
+`picture-replace.test.mjs` (9): a replaced picture keeps its frame and drawing order and the file holds
+the new JPEG byte for byte, the other draw of the shared resource untouched; replacing every draw
+releases `Im1` and no 32-pixel image is left in the file; a page drawing a form keeps `Im1`, and a PNG
+with transparency gets its own `/SMask`; a moved, turned and mirrored picture lands exactly where it
+was and can be replaced again after a save; pages inheriting one resource: only the replaced page (and
+its duplicate, sharing one embedded object) change; the capability against `replaceRefusal`, inline
+refused, text never; GIF, cut-off PNG, a PNG header claiming 20000 × 20000 pixels (refused before decoding: at most 40
+megapixels), empty and non-byte input refused; the session: one record
+through move and replace, kept when moved back, one undo step, redo, refusals store nothing, delete
+after replace; PDF/A refused by the session and the writer, and a missing source refuses the save.
+
+**End-to-end**: `manipulation` gains a *replace picture* area (21 checks): a clicked picture gets the
+bar with only "Replace picture…"; a 40 × 20 PNG made in the page replaces it through
+`TextEditor.replacePictureWith` (the rest of what the dialog starts); one record with the replacement,
+the frame unchanged to 0.01 pt, pdf.js paints magenta at its centre, still selected, one undo step;
+undo brings the old image back and redo the new; a GIF changes nothing; a clicked inline image gets no
+button and is refused; the palette offers the command; saved, closed and reopened, the file draws the
+40 × 20 image in exactly that frame, replaceable again, painted by pdf.js.
+The whole default set in one batch: **390 of 390 checks in 8 suites** (text-editor 43, regression 48,
+editing-store 14, phase0 30, selection 51, manipulation 121, multi-select 66, page-changes 17); the
+multiple-selection arrange bar still shows its eight actions, with the replace button hidden. After the
+last small changes (the PNG pixel limit, message wording) manipulation was run again alone: 121/121.
+
+**The native dialog, by hand** (Debug build, scratch data folder, a copy of the `images` fixture): the
+command opens a Windows dialog titled "Replace picture with" whose file type reads "Pictures
+(*.png;*.jpg;*.jpeg)"; closing it resolves `replacePicture()` false with no edit and nothing dirty.
+Choosing a file inside the dialog could not be automated from this environment (UI Automation and
+window messages didn't reach its file-name box, and Windows wouldn't bring it to the front); the JS side
+of that answer was checked instead by answering `pictureDialog` with a real 60 × 30 PNG in base64,
+which `replacePicture()` decoded and applied (`png`, 60 × 30). Picking a file in the real dialog
+remains to be tried by a person.
+
+### Remaining for 0.5.0 (after §16) — and the next step
+
+Should-haves left, each only if its strict tests pass: **image insertion**, paragraph grouping, overlap
+warnings, single-style paragraph reflow (last, gated).
+
+**Recommended next step: image insertion** — place a PNG or JPEG from a file on a page in Edit mode as
+a new picture. It can reuse `readPicture`, the scratch-document embedding, `prepare` and
+`updateResources`' naming from replacement; what is new is a record that draws something not in the
+original content (appended after the page, like moved text), its identity and selection, and a default
+size and place.

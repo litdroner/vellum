@@ -671,6 +671,110 @@ export async function run(t) {
   await rest(SIMPLE);
   await shot('snapped');
 
+  // ---- replacing a picture's image from a file ------------------------------------------------------
+  // The host's file dialog is a native window the DevTools client can't work, so the file comes in
+  // where the dialog hands it over: TextEditor.replacePictureWith(), the rest of replacePicture().
+
+  area('replace picture');
+  const OBJ = F('objects');
+  await activate(OBJ);
+  await editMode(OBJ);
+  await q(`${V(OBJ)}.objectSelection.clear()`);
+  const replaceable = (await objectsOn(OBJ, 1)).filter((o) => o.kind === 'image' && !o.gone && o.caps.replace === true)
+    .sort((a, b) => b.wp * b.hp - a.wp * a.hp)[0];
+  check('the objects page has a picture that can be replaced', Boolean(replaceable));
+  const picked = await selectObject(OBJ, 1, replaceable.key);
+  check('clicking it selects it', (await selection(OBJ))?.key === replaceable.key, JSON.stringify(await selection(OBJ)));
+  const barButtons = () => q(`[...(${V(OBJ)}.el.querySelector('.vl-arrange-bar')?.querySelectorAll('button') ?? [])].filter((b) => !b.hidden).map((b) => b.getAttribute('aria-label'))`);
+  check('one selected picture gets the bar with only “Replace picture…”', JSON.stringify(await barButtons()) === '["Replace picture…"]', JSON.stringify(await barButtons()));
+  /** The colour pdf.js painted at the middle of an object, read off the page canvas. */
+  const paintedAt = (o) => q(`(() => {
+    const pv = ${V(OBJ)}.viewer.getPageView(0);
+    const canvas = pv.canvas ?? pv.div.querySelector('canvas');
+    const r = canvas.getBoundingClientRect();
+    const x = Math.round((${o.cx} - r.left) * canvas.width / r.width);
+    const y = Math.round((${o.cy} - r.top) * canvas.height / r.height);
+    return [...canvas.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)];
+  })()`);
+  const magenta = (rgb) => rgb[0] > 200 && rgb[1] < 60 && rgb[2] > 200;
+  const replaceWith = (bytesExpr, name) => q(`(async () => {
+    const bytes = await (${bytesExpr});
+    return ${V(OBJ)}.textEditor.replacePictureWith({ name: ${JSON.stringify(name)}, bytes });
+  })()`);
+  const MAGENTA_PNG = `(async () => {
+    const canvas = new OffscreenCanvas(40, 20);
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#ff00ff';
+    g.fillRect(0, 0, 40, 20);
+    return new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer());
+  })()`;
+  const replaceRecord = () => q(`(() => {
+    const e = ${V(OBJ)}.annotations.edits.find((r) => r.target.key === ${JSON.stringify(replaceable.key)});
+    return e ? { replacement: e.replacement ?? null, transform: e.transform ?? null, count: ${V(OBJ)}.annotations.edits.filter((r) => r.target.key === e.target.key).length } : null;
+  })()`);
+
+  check('before: the picture isn’t magenta', !magenta(await paintedAt(picked)), JSON.stringify(await paintedAt(picked)));
+  const replaceDepth = await undoDepth(OBJ);
+  check('replacing it with a PNG succeeds', (await replaceWith(MAGENTA_PNG, 'magenta.png')) === true);
+  await rest(OBJ);
+  let replacedNow = await objectAt(OBJ, 1, replaceable.key);
+  const replacedRecord = await replaceRecord();
+  check('one record, holding the replacement: a 40 × 20 PNG', replacedRecord?.count === 1 && replacedRecord.replacement?.format === 'png'
+    && replacedRecord.replacement.width === 40 && replacedRecord.replacement.height === 20, JSON.stringify(replacedRecord));
+  check('the picture’s frame is exactly what it was', near(replacedNow.quad, replaceable.quad, 0.01),
+    `${replaceable.quad.map((v) => v.toFixed(2))} → ${replacedNow.quad.map((v) => v.toFixed(2))}`);
+  check('the page now shows the new image there', magenta(await paintedAt(replacedNow)), JSON.stringify(await paintedAt(replacedNow)));
+  check('it is still selected, with the bar', (await selection(OBJ))?.key === replaceable.key && (await barButtons()).length === 1);
+  check('one undo step', (await undoDepth(OBJ)) === replaceDepth + 1);
+  await shot('picture-replaced');
+
+  await q(`${V(OBJ)}.annotations.undo()`);
+  await rest(OBJ);
+  check('undo brings the old image back', !magenta(await paintedAt(await objectAt(OBJ, 1, replaceable.key))) && !(await replaceRecord())?.replacement);
+  await q(`${V(OBJ)}.annotations.redo()`);
+  await rest(OBJ);
+  check('redo replaces it again', magenta(await paintedAt(await objectAt(OBJ, 1, replaceable.key))) && Boolean((await replaceRecord())?.replacement));
+
+  // What isn't a usable picture changes nothing.
+  const GIF = 'Promise.resolve(new Uint8Array([71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0, 59]))';
+  check('a GIF is refused and nothing changes', (await replaceWith(GIF, 'x.gif')) === false && (await undoDepth(OBJ)) === replaceDepth + 1);
+  const inline = (await objectsOn(OBJ, 1)).find((o) => o.kind === 'image' && !o.gone && o.caps.replace === 'unsupported');
+  check('an inline image says it can’t be replaced', Boolean(inline));
+  if (inline) {
+    await selectObject(OBJ, 1, inline.key);
+    check('clicking the inline image selects it', (await selection(OBJ))?.key === inline.key, JSON.stringify(await selection(OBJ)));
+    check('and it gets no replace button', (await barButtons()).length === 0, JSON.stringify(await barButtons()));
+    check('and a replacement is refused, changing nothing',
+      (await replaceWith(MAGENTA_PNG, 'magenta.png')) === false && (await undoDepth(OBJ)) === replaceDepth + 1);
+  }
+  await q(`${V(OBJ)}.focus()`);
+  await c.key('Ctrl+K');
+  await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+  await c.type('Replace picture');
+  await sleep(300);
+  check('the command palette offers “Replace picture…”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Replace picture'))`));
+  await c.key('Escape');
+  await sleep(300);
+
+  // The file itself: saved, closed, reopened.
+  await q('__vellum.actions.save()');
+  await waitFor(`!${V(OBJ)}.annotations.dirty`, 25000);
+  replacedNow = await objectAt(OBJ, 1, replaceable.key);
+  await q(`__vellum.app.close(${V(OBJ)})`);
+  await waitFor(`!${V(OBJ)}`);
+  await q(`__vellum.actions.openRecent(${JSON.stringify(OBJ)})`);
+  await rest(OBJ);
+  const reread = await q(`(async () => {
+    const { objects } = await ${V(OBJ)}.textEditing.objects(1);
+    return objects.filter((o) => o.kind === 'image').map((o) => ({ quad: o.geometry.quad, w: o.record.info?.width ?? null, h: o.record.info?.height ?? null, replace: o.capabilities.replace }));
+  })()`);
+  const savedPicture = reread.find((o) => near(o.quad, replacedNow.quad, 0.05));
+  check('the saved file draws the 40 × 20 image in exactly that frame', savedPicture?.w === 40 && savedPicture?.h === 20,
+    JSON.stringify(reread.map((o) => [o.w, o.h, o.quad.map((v) => Math.round(v))])));
+  check('and it can be replaced again', savedPicture?.replace === true);
+  const reopenedPicture = (await objectsOn(OBJ, 1)).find((o) => o.kind === 'image' && near(o.quad, replacedNow.quad, 0.05));
+  check('pdf.js paints the new image from the saved file', Boolean(reopenedPicture) && magenta(await paintedAt(await reveal(OBJ, 1, reopenedPicture.key))));
+
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }

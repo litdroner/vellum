@@ -125,7 +125,7 @@ const MATRIX_FIXTURES = ['images', 'objects', 'constructs', 'cropbox', 'transpar
 
 /** The cells Step 4 turned true, and the only ones any fixture may report as true. */
 const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete',
-  'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.delete']);
+  'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.replace', 'image.delete']);
 
 test('capability matrix: a verb is true only where a writer exists for that kind', async () => {
   const seen = new Map(); // `${kind}.${verb}` → the answers seen across every fixture
@@ -143,7 +143,7 @@ test('capability matrix: a verb is true only where a writer exists for that kind
     }
   }
   // Text is never rotated or stretched, an image is never text-edited, and a path or a form is never anything.
-  for (const cell of ['text-run.rotate', 'text-run.stretch', 'image.editText',
+  for (const cell of ['text-run.rotate', 'text-run.stretch', 'text-run.replace', 'image.editText',
     ...['path', 'form'].flatMap((k) => VERBS.map((v) => `${k}.${v}`))]) {
     const answers = [...(seen.get(cell) ?? [])];
     assert.ok(answers.length, `no object was examined for ${cell}`);

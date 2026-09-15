@@ -185,7 +185,7 @@ test('only text says anything about editing; every kind answers the same verbs',
   // What must not change is the rest: `editable` and `reasons` stay a text-run affair.
   const page = (await analyzed('objects')).pages[0];
   for (const o of objectsOf(page)) {
-    assert.deepEqual(Object.keys(o.capabilities), ['move', 'scale', 'stretch', 'rotate', 'editText', 'delete'], o.kind);
+    assert.deepEqual(Object.keys(o.capabilities), ['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete'], o.kind);
     if (o.kind === 'text-run') continue;
     assert.equal(o.editable, undefined, `${o.kind} must not claim editability`);
     assert.equal(o.reasons, undefined, `${o.kind} must not carry reasons`);

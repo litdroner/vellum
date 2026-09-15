@@ -85,18 +85,18 @@ test('every capability is true or a key of the one REASONS table', async () => {
   }
 });
 
-test('every object answers the same six verbs, in the same order', async () => {
-  assert.deepEqual([...VERBS], ['move', 'scale', 'stretch', 'rotate', 'editText', 'delete']);
+test('every object answers the same seven verbs, in the same order', async () => {
+  assert.deepEqual([...VERBS], ['move', 'scale', 'stretch', 'rotate', 'replace', 'editText', 'delete']);
   for await (const { name, page, o } of everyObject()) {
     assert.deepEqual(Object.keys(o.capabilities), [...VERBS], `${name} page ${page} ${o.kind}`);
   }
 });
 
 test('only the verbs with a writer are ever true, and only on the kinds that have one', async () => {
-  // Phase 3, Step 4 turned cells true, and the picture stretch added one more; this is the whole of
-  // what is true:
-  //   text-run   move, scale, editText, delete        - never stretch or rotate (the glyphs would need re-laying out)
-  //   image      move, scale, stretch, rotate, delete - never editText (a picture has no text)
+  // Phase 3, Step 4 turned cells true, and the picture stretch and replacement added one more each;
+  // this is the whole of what is true:
+  //   text-run   move, scale, editText, delete                 - never stretch, rotate or replace (the glyphs would need re-laying out)
+  //   image      move, scale, stretch, rotate, replace, delete - never editText (a picture has no text)
   //   path, form nothing: neither has a writer at all.
   const trues = new Map();
   for await (const { name, page, o } of everyObject()) {
@@ -106,12 +106,13 @@ test('only the verbs with a writer are ever true, and only on the kinds that hav
         `${name} page ${page} ${o.kind} ${o.ref.key}: ${verb} claims a permission no writer can honour`);
       assert.notEqual(`${o.kind}.${verb}`, 'text-run.rotate', `${name} page ${page}: text cannot be rotated`);
       assert.notEqual(`${o.kind}.${verb}`, 'text-run.stretch', `${name} page ${page}: text cannot be stretched`);
+      assert.notEqual(`${o.kind}.${verb}`, 'text-run.replace', `${name} page ${page}: text is not a picture to replace`);
       assert.notEqual(`${o.kind}.${verb}`, 'image.editText', `${name} page ${page}: an image has no text`);
       trues.set(`${o.kind}.${verb}`, (trues.get(`${o.kind}.${verb}`) ?? 0) + 1);
     }
   }
   assert.deepEqual([...trues.keys()].sort(),
-    ['image.delete', 'image.move', 'image.rotate', 'image.scale', 'image.stretch',
+    ['image.delete', 'image.move', 'image.replace', 'image.rotate', 'image.scale', 'image.stretch',
       'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.scale'],
     'the sweep must find every writable cell, and no other');
 });

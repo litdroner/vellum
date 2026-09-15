@@ -13,10 +13,11 @@ import { analyzePage, verifyPage } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
 import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
-import { planImageEdit } from './objects/image.js';
+import { planImageEdit, readPicture } from './objects/image.js';
 import { IDENTITY, multiply } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
+import { newId } from '../annotations/model.js';
 
 export class TextEditing {
   #view;
@@ -244,14 +245,45 @@ export class TextEditing {
   }
 
   /**
+   * Replaces a picture's image with one from a file (`bytes`, PNG or JPEG), in exactly the frame it
+   * has now — placed, sized, turned and mirrored as it is, and still where it was in the drawing
+   * order. One undo step, and the picture's one record: a moved picture stays where it was moved to,
+   * and a replaced picture replaced again holds only the latest image.
+   *
+   * The bytes are kept in the document's sources (where pages inserted from other PDFs keep theirs)
+   * for as long as the document is open, so undo, redo and every later save can still reach them.
+   * Throws EditError when it can't be done: an unusable file, a picture that can't be replaced, a
+   * PDF/A document.
+   */
+  async replaceImage(pageNumber, key, bytes) {
+    const view = this.#view;
+    const lib = await loadPdfLib();
+    const picture = await readPicture(lib, bytes);
+    if ((await this.#constraints()).embeddedFontsOnly) {
+      throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, and Vellum can’t check that a new picture meets it, so the picture wasn’t replaced.');
+    }
+    const { entry, found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
+    this.#refuse(object, 'replace'); // never true for text, which is not a picture
+    const source = newId();
+    const next = planImageEdit({
+      object, transform: record?.transform ?? null, replacement: { source, ...picture }, entry: entry.id, id: record?.id,
+    });
+    view.sources.set(source, bytes);
+    view.annotations.applyEdits([[record, next]]);
+    return true;
+  }
+
+  /**
    * The record for one absolute placement — or null when there is nothing left to say, which is
    * what "back where it started" means. Text that was only ever moved has no record without its
-   * transform; text that was retyped keeps its own record, untransformed.
+   * transform; text that was retyped keeps its own record, untransformed. A replaced picture keeps
+   * its replacement wherever it is put, and so keeps its record even back where it started.
    */
   #plan(entry, object, record, absolute) {
     if (object.kind !== 'text-run') {
-      if (isIdentity(absolute)) return null;
-      return planImageEdit({ object, transform: absolute, entry: entry.id, id: record?.id });
+      const replacement = record?.removed ? null : record?.replacement ?? null;
+      if (isIdentity(absolute) && !replacement) return null;
+      return planImageEdit({ object, transform: absolute, replacement, entry: entry.id, id: record?.id });
     }
     const next = planTextTransform({
       run: record ? null : object.record, record, transform: absolute, entry: entry.id, id: record?.id,

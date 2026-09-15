@@ -66,7 +66,8 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
   bottom edges | space evenly across, down — the last two only from three objects up). The arrange
   bar is floating glass (`.vl-pop`) set just above the selection's frame; it steps aside during a
   drag or while text is typed, and its buttons never take focus, so the object keys keep working.
-  Its edges are the ones on screen, whatever the page's or the view's rotation.
+  Its edges are the ones on screen, whatever the page's or the view's rotation. One selected
+  picture that can be replaced gets the same bar with a single "Replace picture…" button (image icon).
 - **Edit text**: editable text gets a quiet dashed accent outline (hover fills it, keyboard focus
   thickens it, edited text uses `accent2`); text that can't be edited shows a dotted grey outline and
   explains itself when clicked. The editor sits exactly on the text, in the page's own font and paper

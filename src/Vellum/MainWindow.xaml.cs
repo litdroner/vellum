@@ -215,6 +215,23 @@ public partial class MainWindow : Window
             return Done(new { files });
         });
 
+        // Replace picture: the chosen image's bytes come back in the answer itself, so the file is only
+        // read, never registered with the resource server (which would make it writable by the page).
+        bridge.Register("pictureDialog", _ =>
+        {
+            const long MaxPictureBytes = 25 * 1024 * 1024;
+            var dialog = new OpenFileDialog
+            {
+                Title = "Replace picture with",
+                Filter = "Pictures (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
+                InitialDirectory = LastFolder(),
+            };
+            if (dialog.ShowDialog(this) != true) return Done(new { file = (object?)null });
+            var info = new FileInfo(dialog.FileName);
+            if (info.Length > MaxPictureBytes) throw new InvalidDataException("it is larger than 25 MB.");
+            return Done(new { file = new { name = info.Name, data = Convert.ToBase64String(File.ReadAllBytes(info.FullName)) } });
+        });
+
         // Drag-and-drop: the page sends the dropped File objects, WebView2 gives us their real paths.
         bridge.Register("openDropped", request =>
         {
