@@ -104,14 +104,31 @@ export async function run(t) {
   const duplicate = (await objects()).find((o) => o.kind === 'image' && o.key.startsWith('copy:'));
   check('Ctrl+D duplicates the picture a step along', offsetBy(picture, duplicate, 10, -10), JSON.stringify(duplicate));
   check('and selects the duplicate', sameSet(await selected(), [duplicate?.key]), JSON.stringify(await selected()));
+  // Replaced where the file dialog hands the picture over (TextEditor.replacePictureWith).
+  const replacedCopy = await q(`(async () => {
+    const canvas = new OffscreenCanvas(40, 20);
+    canvas.getContext('2d').fillRect(0, 0, 40, 20);
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/png' })).arrayBuffer());
+    return ${V(IMAGES)}.textEditor.replacePictureWith({ name: 'black.png', bytes });
+  })()`);
+  await rest();
+  const copyRecords = await q(`${V(IMAGES)}.annotations.edits.filter((e) => e.kind === 'image-copy').map((e) => ['copy:' + e.id, e.replacement ? e.replacement.width : null])`);
+  check('the duplicate picture is replaced in its own record', replacedCopy === true && JSON.stringify(copyRecords) === JSON.stringify([[duplicate?.key, 40]]), JSON.stringify([replacedCopy, copyRecords]));
 
   const textCopy = (await objects()).find((o) => o.key === captionCopy.key);
   await c.key('Escape');
   await sleep(300);
   await c.mouse(textCopy.cx, textCopy.cy);
   await sleep(600);
-  check('clicking pasted text selects it and opens no editor', sameSet(await selected(), [captionCopy.key]) && !(await editorOpen()),
+  check('clicking pasted text selects it and opens an editor on the copy', sameSet(await selected(), [captionCopy.key]) && (await editorOpen()),
     JSON.stringify(await selected()));
+  await c.type('Pasted caption');
+  await c.key('Enter');
+  await rest();
+  const retyped = await q(`${V(IMAGES)}.annotations.edits.filter((e) => e.kind === 'text-copy').map((e) => ['copy:' + e.id, e.text, e.encoding.mode])`);
+  check('typing and Enter retype the copy in its own record, in its own font', JSON.stringify(retyped) === JSON.stringify([[captionCopy.key, 'Pasted caption', 'font']]),
+    JSON.stringify(retyped));
+  check('and the original caption is untouched', (await objects()).some((o) => o.key === caption.key && o.text === caption.text));
 
   area('save and reopen');
   await c.key('Escape');
@@ -124,12 +141,14 @@ export async function run(t) {
   await q(`${V(IMAGES)}.setTool('edit')`);
   await sleep(600);
   all = await objects();
-  const captions = all.filter((o) => o.text === caption.text);
-  check('the saved file has the caption twice', captions.length === 2, JSON.stringify(all.map((o) => [o.kind, o.text])));
-  check('ten points apart', captions.length === 2 && Math.abs(Math.abs(captions[1].cxp - captions[0].cxp) - 10) < 0.6);
+  const captions = [all.find((o) => o.text === caption.text), all.find((o) => o.text === 'Pasted caption')];
+  check('the saved file has the caption and its retyped copy', captions.every(Boolean), JSON.stringify(all.map((o) => [o.kind, o.text])));
+  check('ten points below it', captions.every(Boolean) && Math.abs(captions[0].cyp - captions[1].cyp - 10) < 0.6, JSON.stringify(captions));
   const pictures = all.filter((o) => o.kind === 'image');
   check('and three pictures: two of its own and the duplicate', pictures.length === 3, JSON.stringify(pictures));
   check('the duplicate is where it was put', pictures.some((o) => offsetBy(picture, o, 10, -10)));
+  const widths = await q(`(async () => (await ${V(IMAGES)}.textEditing.objects(1)).objects.filter((o) => o.kind === 'image').map((o) => o.record.info ? o.record.info.width : null))()`);
+  check('drawing the picture it was replaced with', widths.includes(40), JSON.stringify(widths));
   await shot('reopened');
 
   // ---- onto another page: Ctrl+X then Ctrl+V, and a drag let go over the other page ----------------

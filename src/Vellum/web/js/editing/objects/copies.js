@@ -40,8 +40,8 @@
 // is simply another inserted-image record (inserted-image.js), which can go on any page.
 //
 // To the object model a copy is the object it was copied from under a key of its own, `copy:<id>`
-// (copiedObject): same kind, geometry and capabilities, less retyping and replacing, which a copy
-// doesn't offer yet.
+// (copiedObject): same kind, geometry and capabilities. Retyping, reflowing and replacing a copy change
+// `text` and `encoding`, or `replacement`, in its record and nothing else (session.js).
 
 import { EditError, textTransformRefusal } from '../edits.js';
 import { REASONS } from '../runs.js';
@@ -126,19 +126,16 @@ export function planCopy({ kind, target, text, encoding, replacement = null, tra
 
 /**
  * A copy as an object on its page: the object it was copied from (`source`, the page's own), under
- * the copy's key, drawn after everything the page has. It can be moved, scaled, deleted and copied
- * on the terms its original can; it isn't retyped or replaced yet, and says so.
+ * the copy's key, drawn after everything the page has. It can be moved, scaled, deleted, copied,
+ * retyped and reflowed (text) or replaced (a picture) on the terms its original can: each of those
+ * changes its one record (session.js), which this writer already draws in any encoding or image.
  */
 export function copiedObject(source, record, index = 0) {
-  const capabilities = { ...source.capabilities };
-  if (record.kind === TEXT) capabilities.editText = 'unsupported';
-  capabilities.replace = 'unsupported';
   return Object.freeze({
     ...source,
     ...(record.kind === TEXT ? { text: record.text } : {}),
     ref: Object.freeze({ ...source.ref, key: keyOf(record), copy: true }),
     order: Object.freeze([Number.MAX_SAFE_INTEGER, index]),
-    capabilities: Object.freeze(capabilities),
   });
 }
 

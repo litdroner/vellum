@@ -89,10 +89,12 @@ export class TextEditing {
     // again — from this page, or from the page it names in `from`; one whose original isn't there
     // can't be drawn, and the writer refuses it.
     const origins = new Map([['', own]]);
+    const analyses = new Map(analysis ? [['', analysis]] : []);
     for (const r of records.values()) {
       if (!isCopy(r.kind) || !r.from || origins.has(originKey(r.from))) continue;
       const origin = await this.#origin(r.from.src, r.from.index).catch(() => null);
       origins.set(originKey(r.from), origin ? selectableObjects(origin) : []);
+      if (origin) analyses.set(originKey(r.from), origin);
     }
     const added = [];
     for (const r of records.values()) {
@@ -108,6 +110,8 @@ export class TextEditing {
       objects: [...own, ...added],
       analysis,
       records,
+      // The analysis each copy's run or picture belongs to: '' for this page's own, else by originKey.
+      origins: analyses,
     };
   }
 
@@ -136,6 +140,7 @@ export class TextEditing {
   async edit(pageNumber, runKey, text) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    if (isCopyKey(runKey)) return this.#retypeCopy(pageNumber, runKey, text);
     const { entry, runs } = await this.page(pageNumber);
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) throw new EditError('missing', 'That text isn’t on this page any more.');
@@ -164,6 +169,55 @@ export class TextEditing {
     return true;
   }
 
+  // ---- retyping pasted text ------------------------------------------------------------------------
+  //
+  // A pasted copy of text (`copy:<id>`) is retyped through its one record, on exactly the terms its
+  // original is: the text is planned against the run it draws (planTextEdit — its own font's codes, a
+  // standard font of the same style, or a refusal), and the copy record takes that text and encoding,
+  // keeping its id, target, origin and placement. The copy writer already draws text in any of those
+  // encodings. Emptied, the copy goes, as deleting it does; typed back to the run's own text it draws
+  // the file's own glyph bytes again.
+
+  /** Retypes one pasted copy of text: one undo step, false when nothing changed. */
+  async #retypeCopy(pageNumber, key, text) {
+    const next = text.replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
+    const { glyphs, constraints } = await this.#copyPlanning(pageNumber, [key]);
+    const { entry, found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
+    const planned = this.#retyped(object, record, next, glyphsFor(glyphs, record, entry), constraints);
+    if (planned && planned.text === record.text && planned.encoding.mode === record.encoding.mode) return false;
+    this.#view.annotations.applyEdits([[record, planned]]);
+    return true;
+  }
+
+  /** The copy record that retypes `object` (a text copy) to `text`, null when it empties it. EditError when it can't. */
+  #retyped(object, record, text, glyphs, constraints) {
+    if (object.kind !== 'text-run' || !object.ref.copy || record?.kind !== textCopyKind) {
+      throw new EditError('missing', 'That text isn’t on this page any more.');
+    }
+    this.#refuse(object, 'editText');
+    const run = object.record;
+    if (text === run.text) return planCopy({ ...record, text: run.text, encoding: { mode: 'original' } });
+    const planned = planTextEdit({ run, text, entry: record.entry, glyphs, id: record.id, ...constraints });
+    if (planned.encoding.mode === 'none') return null;
+    return planCopy({ ...record, text: planned.text, encoding: planned.encoding });
+  }
+
+  /**
+   * What planning text for these copies needs, read BEFORE the records are read: the glyph data of each
+   * PDF they draw from, by src, and the document's constraints — so nothing is awaited between reading
+   * the records and storing what replaces them.
+   */
+  async #copyPlanning(pageNumber, keys) {
+    const constraints = await this.#constraints();
+    const { entry, found } = await this.#objectsAt(pageNumber, keys);
+    const glyphs = new Map();
+    for (const { record } of found) {
+      const src = record?.from?.src ?? entry.src;
+      if (src !== 'blank' && !glyphs.has(src)) glyphs.set(src, (await this.#source(src)).glyphs);
+    }
+    return { glyphs, constraints };
+  }
+
   // ---- moving, scaling, turning, flipping and deleting objects ----------------------------------
   //
   // Both kinds go through here, one object or several selected together, and every object keeps
@@ -187,7 +241,7 @@ export class TextEditing {
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     if (!keys.length) throw new EditError('missing', 'Nothing is selected.');
     if (new Set(keys).size !== keys.length) throw new EditError('changed', 'One object was asked for twice, so nothing was changed.');
-    const { entry, objects, records, analysis } = await this.objects(pageNumber);
+    const { entry, objects, records, analysis, origins } = await this.objects(pageNumber);
     const byKey = new Map(objects.map((o) => [o.ref.key, o]));
     const found = keys.map((key) => {
       const object = byKey.get(key) ?? null;
@@ -197,7 +251,7 @@ export class TextEditing {
       }
       return { object, record };
     });
-    return { entry, found, analysis };
+    return { entry, found, analysis, origins };
   }
 
   /** Refuses a verb in the words the capability already answered with — for a group, saying so. */
@@ -257,17 +311,27 @@ export class TextEditing {
    */
   async reflowParagraph(pageNumber, keys, width) {
     const view = this.#view;
-    const entry = view.shownPlan?.[pageNumber - 1];
-    const glyphs = entry && entry.src !== 'blank' ? (await this.#source(entry.src)).glyphs : null;
-    const constraints = await this.#constraints();
-    const { entry: current, found, analysis } = await this.#objectsAt(pageNumber, keys);
+    const { glyphs, constraints } = await this.#copyPlanning(pageNumber, keys);
+    const { entry: current, found, analysis: own, origins } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) {
       if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
-      if (object.ref.copy) throw new EditError('reflow', 'Pasted text can’t be reflowed yet.', { key: object.ref.key });
       this.#refuse(object, 'editText', found.length);
     }
+    // Pasted lines are reflowed as the paragraph they were copied from, in that page's analysis, and only
+    // together: all of them copies drawn from one page, or none of them.
+    const copies = found.filter(({ object }) => object.ref.copy);
+    const drawnFrom = new Set(found.map(({ object, record }) => (object.ref.copy ? (record.from ? originKey(record.from) : '') : null)));
+    if (copies.length && (copies.length !== found.length || drawnFrom.size !== 1)) {
+      throw new EditError('reflow', 'Pasted text can be reflowed only with the lines pasted from the same paragraph.', { reason: 'copy' });
+    }
+    const analysis = copies.length ? origins.get([...drawnFrom][0]) : own;
+    if (!analysis) throw new EditError('missing', 'The page this text was pasted from isn’t available any more, so it can’t be reflowed.');
     const lines = found.map(({ object, record }) => ({ run: object.record, record }));
-    const pairs = planReflow({ analysis, lines, width, entry: current.id, glyphs, ...constraints });
+    const planned = planReflow({ analysis, lines, width, entry: current.id, glyphs: glyphsFor(glyphs, found[0].record, current), ...constraints });
+    // A copy takes the reflowed line's text and encoding into its own record; an emptied copy goes.
+    const pairs = planned.map(([record, next]) => (record && isCopy(record.kind)
+      ? [record, next && next.encoding.mode !== 'none' ? planCopy({ ...record, text: next.text, encoding: next.encoding }) : null]
+      : [record, next]));
     if (!pairs.length) return false;
     view.annotations.applyEdits(pairs);
     return true;
@@ -324,7 +388,9 @@ export class TextEditing {
     const { entry, found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
     this.#refuse(object, 'replace'); // never true for text, which is not a picture
     const source = newId();
-    const next = object.ref.inserted
+    // A pasted copy keeps its record — origin, fingerprint and placement — with the new image in it.
+    const next = object.ref.copy ? planCopy({ ...record, replacement: { source, ...picture } })
+      : object.ref.inserted
       ? planInsertion({ picture: { source, ...picture }, transform: record.transform, entry: entry.id, id: record.id })
       : planImageEdit({
         object, transform: record?.transform ?? null, replacement: { source, ...picture }, entry: entry.id, id: record?.id,
@@ -568,6 +634,7 @@ export class TextEditing {
    * font, missing } or { ok: false, message } — so the editor can say so while you type.
    */
   async preview(pageNumber, runKey, text) {
+    if (isCopyKey(runKey)) return this.#previewCopy(pageNumber, runKey, text);
     const { entry, runs } = await this.page(pageNumber);
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) return { ok: false, message: 'That text isn’t on this page any more.' };
@@ -576,6 +643,21 @@ export class TextEditing {
     try {
       const record = planTextEdit({ run: item.run, text, entry: entry.id, glyphs: source.glyphs, ...constraints });
       return { ok: true, mode: record.encoding.mode, font: record.encoding.font ?? null, missing: record.encoding.missing ?? [] };
+    } catch (err) {
+      if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };
+      throw err;
+    }
+  }
+
+  /** preview() for a pasted copy of text: what retyping it to `text` would do. */
+  async #previewCopy(pageNumber, key, text) {
+    try {
+      const clean = text.replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
+      const { glyphs, constraints } = await this.#copyPlanning(pageNumber, [key]);
+      const { entry, found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
+      const planned = this.#retyped(object, record, clean, glyphsFor(glyphs, record, entry), constraints);
+      if (!planned) return { ok: true, mode: 'none', font: null, missing: [] };
+      return { ok: true, mode: planned.encoding.mode, font: planned.encoding.font ?? null, missing: planned.encoding.missing ?? [] };
     } catch (err) {
       if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };
       throw err;
@@ -650,6 +732,16 @@ export class TextEditing {
 const sourceObject = (objects, item) => {
   const key = item.kind === textCopyKind ? `run:${item.target.key}` : item.target.key;
   return objects?.find((o) => o.ref.key === key) ?? null;
+};
+
+/** Is this object key a pasted copy's? (A run key is `<show>:<glyph>`, never this.) */
+const isCopyKey = (key) => typeof key === 'string' && key.startsWith('copy:');
+
+/** The glyph data #copyPlanning read for the PDF a copy's run is in; EditError when it read another. */
+const glyphsFor = (glyphs, record, entry) => {
+  const found = glyphs.get(record?.from?.src ?? entry.src);
+  if (!found) throw new EditError('changed', 'That text changed while it was being retyped, so nothing was changed.');
+  return found;
 };
 
 /** The object-model key of a record pasted or moved onto a page. */

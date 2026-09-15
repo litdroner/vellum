@@ -11,6 +11,7 @@ import { textBlocks, blockOf } from '../editing/objects/text-block.js';
 import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
+import { originKey } from '../editing/objects/copies.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
@@ -51,7 +52,9 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //   - copy, paste and duplicate (Ctrl+C, Ctrl+V, Ctrl+D, commands.js): the selected objects are copied
 //     as they are now, and pasted a step right and down as new objects (editing/objects/copies.js),
 //     selected, as one undo step; pasted on another page or document, or after Ctrl+X (cut), they land
-//     where they were.
+//     where they were. A pasted copy is changed like its original: clicking copied text opens the
+//     editor on the copy, lines pasted together are a paragraph of their own with a reflow handle, and
+//     a copied picture is replaced from the bar — each changing only the copy's record.
 //   - moving to another page: a move drag let go over another page puts the objects there, under the
 //     pointer, as one undo step (session.moveObjectsToPage).
 //
@@ -128,6 +131,20 @@ function decodeBase64(data) {
 
 /** A text run's object key in the model: the one place the two namings meet. */
 const runKeyOf = (key) => `run:${key}`;
+
+/**
+ * The object key of what the text editor is open on: a run of the page (by its run key), or a pasted
+ * copy of text, which the editor names by its object key, `copy:<id>`, as the session does.
+ */
+const editedKeyOf = (key) => (key.startsWith('copy:') ? key : runKeyOf(key));
+
+/**
+ * A pasted copy of text as the editor's item: the run it draws (under the copy's key), the text it
+ * reads now and its record — the shape of the page's own runs in TextEditing.page().
+ */
+const copyItemOf = (object) => (object?.kind === 'text-run' && object.ref.copy
+  ? { run: { ...object.record, key: object.ref.key }, text: object.text, edit: object.edit ?? null }
+  : null);
 
 /** Shift or Ctrl held: a click adds to the selection, and a rectangle adds what it encloses. */
 const additive = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
@@ -671,7 +688,7 @@ export class TextEditor {
    */
   #handleFrame(page, objects) {
     if (!objects.length || sharedCapability(objects, 'scale') !== true) return null;
-    if (this.#editor?.n === page.n && objects.some((o) => o.ref.key === runKeyOf(this.#editor.key))) return null;
+    if (this.#editor?.n === page.n && objects.some((o) => o.ref.key === editedKeyOf(this.#editor.key))) return null;
     const quads = objects.map((o) => this.#shownQuad(page, o.ref.key, o.geometry.quad));
     if (quads.some((q) => !q)) return null;
     return quads.length === 1 ? quads[0] : boxQuad(unionBox(quads));
@@ -713,7 +730,7 @@ export class TextEditor {
     // drawn above, in the outline Edit mode has always used for it.
     const selected = selectedKeys.map((key) => this.#liveObject(page.n, key)).filter(Boolean);
     for (const object of selected) {
-      if (object.kind === 'text-run') continue;
+      if (object.kind === 'text-run' && (!object.ref.copy || this.#editor?.key === object.ref.key)) continue;
       const quad = this.#shownQuad(page, object.ref.key, object.geometry.quad);
       if (quad) shapes.push(svg('polygon', { class: 'vl-object-sel', points: quadPoints(quad) }));
     }
@@ -892,10 +909,10 @@ export class TextEditor {
     const tol = tolerancePoints(at.pageView, 2);
     const object = hitTest(this.#liveOf(page).objects, point, tol);
     if (object) {
-      // A pasted copy of text is not its original: clicking it selects it, and opens no editor.
-      const item = object.kind === 'text-run' && !object.ref.copy
-        ? page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null
-        : null;
+      // A pasted copy of text is not its original: clicking it opens an editor on the copy itself.
+      const item = object.kind !== 'text-run' ? null
+        : object.ref.copy ? copyItemOf(object)
+          : page.data.runs.find((r) => r.run.key === object.ref.runKey) ?? null;
       return { n: at.n, page, object, item, pageView: at.pageView };
     }
     return { n: at.n, page, object: null, item: this.#explainableAt(page, point, tol), pageView: at.pageView };
@@ -1068,8 +1085,15 @@ export class TextEditor {
    */
   #paragraphOf(page, key) {
     const live = this.#liveOf(page);
-    // Pasted copies stand apart: a copy dropped beside a paragraph must not join it.
-    live.blocks ??= textBlocks([...live.objects.filter((o) => !o.ref.copy), ...(page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [])]);
+    // Pasted copies stand apart: a copy dropped beside a paragraph must not join it. Lines pasted
+    // together make paragraphs of their own, among the copies only.
+    if (!live.blocks) {
+      const paths = page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [];
+      live.blocks = [
+        ...textBlocks([...live.objects.filter((o) => !o.ref.copy), ...paths]),
+        ...textBlocks([...live.objects.filter((o) => o.ref.copy), ...paths]),
+      ];
+    }
     return blockOf(live.blocks, key)?.keys ?? null;
   }
 
@@ -1080,7 +1104,11 @@ export class TextEditor {
    * its own grounds. Only a width can still be refused, when the hand lets go. Kept with the live objects.
    */
   #reflowable(page, objects) {
-    if (objects.length < 2 || objects.some((o) => o.kind !== 'text-run' || o.ref.copy) || !page.objects?.analysis) return false;
+    if (objects.length < 2 || objects.some((o) => o.kind !== 'text-run')) return false;
+    // Pasted lines are judged in the analysis of the page they draw from, all of them one page's.
+    const drawnFrom = new Set(objects.map((o) => (!o.ref.copy ? null : o.edit?.from ? originKey(o.edit.from) : '')));
+    const analysis = drawnFrom.size === 1 ? page.objects?.origins?.get([...drawnFrom][0] ?? '') : null;
+    if (!analysis) return false;
     const keys = objects.map((o) => o.ref.key);
     const paragraph = this.#paragraphOf(page, keys[0]);
     if (!paragraph || !sameKeys(paragraph, keys)) return false;
@@ -1091,7 +1119,7 @@ export class TextEditor {
       const q = objects[0].geometry.quad;
       const upright = q[2] - q[0] > 0 && Math.abs(q[3] - q[1]) < 1e-3 * (q[2] - q[0]);
       const lines = objects.map((o) => ({ run: o.record, record: o.edit }));
-      live.reflowable.set(id, upright && reflowRefusal(page.objects.analysis, lines) === null);
+      live.reflowable.set(id, upright && reflowRefusal(analysis, lines) === null);
     }
     return live.reflowable.get(id);
   }
@@ -1595,6 +1623,7 @@ export class TextEditor {
    */
   #focusRun() {
     const { page, primary } = this.#selection;
+    if (copyItemOf(primary?.startsWith('copy:') ? this.#liveObject(page, primary) : null)) return { n: page, key: primary };
     if (!primary?.startsWith('run:')) return null;
     return { n: page, key: primary.slice('run:'.length) };
   }
@@ -1703,7 +1732,7 @@ export class TextEditor {
     }
     await this.#settled();
     const page = await this.#ensurePage(n);
-    const item = page?.data?.runs.find((r) => r.run.key === key);
+    const item = key.startsWith('copy:') ? copyItemOf(this.#liveObject(n, key)) : page?.data?.runs.find((r) => r.run.key === key);
     if (!item?.run.editable || !this.active || this.#editor) return;
     this.#hideTip();
     const input = h('input', {
@@ -1863,7 +1892,7 @@ export class TextEditor {
     const pageView = this.#view.viewer.getPageView(n - 1);
     const page = this.#pages.get(n);
     if (!pageView?.div) return null;
-    const quad = page ? this.#shownQuad(page, runKeyOf(run.key), run.quad) : run.quad;
+    const quad = page ? this.#shownQuad(page, editedKeyOf(run.key), run.quad) : run.quad;
     return quad ? toClientQuad(pageView, quad) : null;
   }
 

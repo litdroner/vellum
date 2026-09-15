@@ -102,9 +102,9 @@ test('copy and paste text and a picture: one undo step, selected keys back, and 
     const [textCopy, imageCopy] = keys.map((key) => after.find((o) => o.ref.key === key));
     assert.deepEqual([textCopy.kind, textCopy.text, imageCopy.kind], ['text-run', 'Caption under the picture', 'image']);
     for (const verb of ['move', 'scale', 'delete', 'copy']) assert.equal(textCopy.capabilities[verb], true, verb);
-    assert.equal(textCopy.capabilities.editText, 'unsupported', 'a copy is not retyped yet');
+    assert.equal(textCopy.capabilities.editText, true, 'a copy is retyped on its original’s terms (copy-edits.test.mjs)');
     assert.equal(imageCopy.capabilities.rotate, true);
-    assert.equal(imageCopy.capabilities.replace, 'unsupported');
+    assert.equal(imageCopy.capabilities.replace, true);
 
     // Saved and reopened.
     const saved = await composeDocument({ base: bytes, plan, edits: store.edits, sources });
@@ -175,11 +175,10 @@ test('a copy is an object: moved, copied again and deleted, each through its one
     assert.equal(store.edits.length, 0, 'deleting a copy takes its record away');
     assert.equal(store.undo(), true);
     assert.equal(store.edits.length, 2);
-    // Reflowing and retyping are not offered on a copy.
+    // One pasted line is not a paragraph.
     const text = (await session.objects(1)).objects.find((o) => o.kind === 'text-run');
     const [textKey] = await session.pasteObjects(1, await session.copyObjects(1, [text.ref.key]), OFFSET);
     await assert.rejects(session.reflowParagraph(1, [textKey], 100), (err) => err.kind === 'reflow');
-    await assert.rejects(session.replaceImage(1, again, png(2, 2)), (err) => err.kind === 'not-editable');
   });
 });
 
