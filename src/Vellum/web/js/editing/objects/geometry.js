@@ -115,6 +115,17 @@ export function quadWithin(quad, box) {
   return true;
 }
 
+/**
+ * The affine map that takes the unit square onto a quad: (0, 0) to ll, (1, 0) to lr and (0, 1) to ul.
+ * For a picture this is exactly its placement, because its quad IS its unit square in user space —
+ * so the quad a picture is drawn with now gives the basis to stretch it in, with nothing remembered.
+ * null for a quad with no area, which has no basis to speak of.
+ */
+export function quadBasis(quad) {
+  if (quadArea(quad) < MIN_AREA) return null;
+  return [quad[2] - quad[0], quad[3] - quad[1], quad[6] - quad[0], quad[7] - quad[1], quad[0], quad[1]];
+}
+
 /** The centre of a quad — the mean of its four corners, which is its centre of symmetry. */
 export function quadCentre(quad) {
   if (!quad || quad.length < 8) return null;
@@ -128,10 +139,9 @@ export function quadCentre(quad) {
  * corners rather than from a bounding box.
  *
  * The first four — the corners — are what Edit mode draws and drags for a uniform scale, anchored
- * at the corner opposite the one being pulled. The edge midpoints are computed but not drawn: a
- * non-proportional resize needs a builder in the object's own axes that objects/transform.js does
- * not have, and text could not be written that way at all, so an edge handle would promise a drag
- * nothing can honour.
+ * at the corner opposite the one being pulled. The edge midpoints are drawn only for an object that
+ * can be stretched — a picture, stretched along its own axes by objects/transform.js stretch(),
+ * anchored at the opposite edge — and never for text, which cannot be written that way at all.
  */
 export function handlePoints(quad) {
   if (!quad || quad.length < 8) return null;

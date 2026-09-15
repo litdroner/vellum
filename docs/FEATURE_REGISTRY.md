@@ -22,10 +22,11 @@ Vision.
   0.5.0 object-editing plan: in Edit mode, select a text run or a picture; move and uniformly scale both;
   quarter-turn and mirror pictures; nudge; delete. These rows are marked done below.
 - **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
-  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Phases 0–3 are done, same-page multi-select included; it is on
-  `main` and not yet in a release (marked *done, unreleased* below). What remains for 0.5.0 is the
-  first two Roadmap rows. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in
-  order, within the audit's scope and its "Never" list, without a separate approval for each step.
+  `docs/planning/VELLUM_0.5.0_AUDIT.md`. Every 0.5.0 must-have is done: phases 0–3, with same-page
+  multi-select and picture stretching on `main` and not yet in a release (marked *done, unreleased*
+  below). What remains for 0.5.0 is the should-haves (the first Roadmap row), each only if its strict
+  tests pass. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
+  the audit's scope and its "Never" list, without a separate approval for each step.
 
 ## Reading
 
@@ -68,6 +69,7 @@ Vision.
 | Select an object in Edit mode: a text run or a picture, outlined where it is; identity only ({ page, key }) | done | editing/objects/selection.js, ui/text-editor.js |
 | What may be done to an object, verb by verb, in the one reason vocabulary; a verb is true only where a writer exists | done | editing/objects/capabilities.js |
 | Move and uniformly scale text and pictures: drag the object, or drag a corner handle | done | ui/text-editor.js, editing/objects/transform.js |
+| Stretch a picture (non-proportional resize): drag an edge handle, along the picture's own width or height, from the opposite edge; never text, and one picture at a time | done, unreleased | editing/objects/transform.js (stretch), editing/objects/capabilities.js, ui/text-editor.js |
 | Turn a picture a quarter turn ([ and ]) and mirror it in its own axes (Shift+H, Shift+V) | done | ui/text-editor.js, editing/objects/image.js |
 | Nudge with the arrow keys: one point, ten with Shift; a whole burst is one undo step | done | ui/text-editor.js, annotations/model.js |
 | Delete a selected run or picture (Delete / Backspace); a picture's XObject is released when provably unused | done | editing/session.js, editing/objects/image.js |
@@ -107,8 +109,7 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 must-have left: non-proportional picture resize (edge handles, in the picture's own axes; never for text) | next | §3.2 |
-| 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | planned | §3.2 |
+| 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | next | §3.2 |
 | Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |

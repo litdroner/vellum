@@ -214,9 +214,9 @@ test('handle points turn, mirror and shear with the quad', () => {
   assert.equal(handlePoints([1, 2]), null);
 });
 
-test('only Edit mode draws a handle, and only the four corners of one', () => {
-  // A handle promises a drag, so exactly one module may draw one, and only where a corner drag can
-  // be honoured. If another module starts calling handlePoints, it has to answer for that promise.
+test('only Edit mode draws a handle, and an edge handle only where a stretch can be written', () => {
+  // A handle promises a drag, so exactly one module may draw one, and only where the drag can be
+  // honoured. If another module starts calling handlePoints, it has to answer for that promise.
   const js = new URL('../../src/Vellum/web/js/', import.meta.url);
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const at = new URL(`${e.name}${e.isDirectory() ? '/' : ''}`, dir);
@@ -225,11 +225,22 @@ test('only Edit mode draws a handle, and only the four corners of one', () => {
   const users = walk(js).filter((f) => /\bhandlePoints\b/.test(fs.readFileSync(f, 'utf8')));
   assert.deepEqual(users.map((u) => u.pathname.split('/').pop()).sort(), ['geometry.js', 'text-editor.js'],
     'handlePoints is defined here and used by Edit mode alone');
-  // The edge midpoints stay unused: a non-proportional resize has no builder in transform.js and
-  // could not be written for text at all, so an edge handle would promise what nothing can do.
+  // Until a stretch existed the edge midpoints were never offered (Phase 2). Now they are offered
+  // behind one gate: #stretchable, which asks the object's own `stretch` capability — true for a
+  // picture, never for text — for exactly one object. Every use of the edge midpoints has to sit
+  // right after that gate.
   const ui = fs.readFileSync(new URL('ui/text-editor.js', js), 'utf8');
+  const gate = ui.match(/#stretchable\(objects\) \{[^}]*\}/)?.[0] ?? '';
+  assert.match(gate, /objects\.length === 1/, 'one object at a time');
+  assert.match(gate, /capabilities\.stretch === true/, 'and only where its stretch capability says yes');
+  const lines = ui.split('\n');
+  const edgeUses = lines.map((line, i) => [line, i]).filter(([line]) => /\.slice\(4\)|grabbed\(4 \+/.test(line));
+  assert.ok(edgeUses.length >= 2, 'the edge handles are drawn and grabbed');
+  for (const [line, i] of edgeUses) {
+    assert.ok(lines.slice(Math.max(0, i - 3), i).some((l) => l.includes('#stretchable(')), `an edge handle is offered without the stretch gate: ${line.trim()}`);
+  }
   for (const call of ui.match(/handlePoints\([^)]*\)[^;\n]*/g) ?? []) {
-    assert.match(call, /\.slice\(0, 4\)/, `a handle beyond the four corners is offered: ${call.trim()}`);
+    assert.doesNotMatch(call, /\.slice\((?!0, 4\))/, `handle points sliced some other way: ${call.trim()}`);
   }
 });
 

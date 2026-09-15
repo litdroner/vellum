@@ -125,7 +125,7 @@ const MATRIX_FIXTURES = ['images', 'objects', 'constructs', 'cropbox', 'transpar
 
 /** The cells Step 4 turned true, and the only ones any fixture may report as true. */
 const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete',
-  'image.move', 'image.scale', 'image.rotate', 'image.delete']);
+  'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.delete']);
 
 test('capability matrix: a verb is true only where a writer exists for that kind', async () => {
   const seen = new Map(); // `${kind}.${verb}` → the answers seen across every fixture
@@ -142,8 +142,8 @@ test('capability matrix: a verb is true only where a writer exists for that kind
       }
     }
   }
-  // Text is never rotated, an image is never text-edited, and a path or a form is never anything.
-  for (const cell of ['text-run.rotate', 'image.editText',
+  // Text is never rotated or stretched, an image is never text-edited, and a path or a form is never anything.
+  for (const cell of ['text-run.rotate', 'text-run.stretch', 'image.editText',
     ...['path', 'form'].flatMap((k) => VERBS.map((v) => `${k}.${v}`))]) {
     const answers = [...(seen.get(cell) ?? [])];
     assert.ok(answers.length, `no object was examined for ${cell}`);
@@ -177,10 +177,10 @@ test('capability matrix: the refusals Phase 3 must keep, named exactly, on the o
   assert.equal(move(9), 'layer', 'the image’s own /OC');
   assert.equal(move(10), true, 'an inline image is wrapped without its data being touched');
   assert.equal(move(11), 'form', 'drawn by a Form XObject');
-  // The whole verb row moves together for an image, because one `cm` patch writes all four.
+  // The whole verb row moves together for an image, because one `cm` patch writes any of them.
   for (const i of [0, 3, 4, 8, 9, 10, 11]) {
-    assert.deepEqual(['scale', 'rotate', 'delete'].map((v) => images[i].capabilities[v]),
-      [move(i), move(i), move(i)], `image ${i}: the four verbs disagree`);
+    assert.deepEqual(['scale', 'stretch', 'rotate', 'delete'].map((v) => images[i].capabilities[v]),
+      [move(i), move(i), move(i), move(i)], `image ${i}: the five verbs disagree`);
     assert.notEqual(images[i].capabilities.editText, true, `image ${i} claims text`);
   }
 });

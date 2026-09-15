@@ -69,7 +69,9 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
 - **Selected object**: a picture selected in Edit mode gets a solid accent outline on its own oriented
   quad, not a bounding box, so a turned or mirrored picture is outlined as it looks. Four small white
   corner handles appear only where a uniform scale can really be written — never on an object whose
-  capabilities refuse it, and never on the edge midpoints, which no writer could honour. A movable
+  capabilities refuse it. A single picture also gets the same handles on its edge midpoints, which
+  stretch it along its own width or height from the opposite edge; text never gets them, because a
+  stretch can't be written for text, and neither does a group. A movable
   picture takes the `move` cursor; text keeps the caret, because clicking text types rather than
   moves. While a gesture is under way only the outline follows the pointer: the page is re-rendered
   once, when the change is written, so nothing is dragged around at the cost of a repaint per frame.

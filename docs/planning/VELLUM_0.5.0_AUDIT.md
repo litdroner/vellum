@@ -12,7 +12,9 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
 - Same-page multi-select: done on `main`, not yet released (2026-09-15). See "Multi-select record".
 - Survival through page changes, file integrity and refusal messaging: proved (2026-09-15). See "Page
   changes and file integrity record".
-- **0.5.0 is not complete.** What remains is listed at the end of "Page changes and file integrity record".
+- Non-proportional picture resize (stretch): done on `main`, not yet released (2026-09-15). See
+  "Picture stretch record". Every must-have is now done.
+- **0.5.0 is not complete**: the should-haves remain. See the end of "Picture stretch record".
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -564,3 +566,57 @@ and the untouched page is exactly as the file had it.
 - **Should-haves**, each only if its strict tests pass (otherwise deferred, not faked): paragraph
   grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings,
   single-style paragraph reflow (last, gated).
+
+## 13. Picture stretch record (non-proportional resize)
+
+The last open must-have: images were to "move, resize, rotate 90°, flip and delete", and 0.4.1 shipped
+"resize" as a uniform scale only. A single selected picture now also has handles on its four edge
+midpoints; dragging one stretches the picture along its own width or height, from the opposite edge.
+
+### Decisions worth keeping
+
+- **A verb of its own: `stretch`.** `scale` stays uniform. The two have different answers for text —
+  a moved, scaled line is its own glyphs redrawn, but a stretched one would need them laid out again —
+  so they are separate verbs rather than one verb with a kind check in the interaction. `stretch` is
+  true exactly where `move` is for a picture (one `cm` patch writes any affine transform) and never for
+  text. The capability model now answers six verbs; the tests that pin the verb set were updated in
+  the same change.
+- **In the picture's own axes.** `stretch(basis, axis, factor, fixedAt)` in `transform.js` is
+  B⁻¹ · S · B, like `flip()`: a turned, mirrored or sheared picture stretches along its own width or
+  height, not along the page's. The basis is read from the quad the picture is drawn with at that
+  moment (`quadBasis()` in `geometry.js`) — a picture's quad *is* its unit square in user space — so
+  nothing about its placement is remembered between gestures.
+- **The factor comes from the picture's own unit square**: the pointer is taken into it through B⁻¹,
+  and how far along the axis it is, from the fixed edge, is the factor — kept to the same limits as a
+  corner drag (0.05× to 20×). Dragging past the fixed edge is not a stretch but a mirror, which Shift+H
+  and Shift+V already do properly, so it stops at the limit instead.
+- **One picture at a time.** A group stretched along the page's axes would shear any turned picture in
+  it, and text cannot be stretched at all, so a group keeps its four corner handles only.
+- **The Phase 2 guard evolved, not removed.** The geometry test that forbade edge handles now requires
+  every use of the edge midpoints to sit right behind the `#stretchable` gate, which asks for exactly
+  one object and its own `stretch` capability.
+
+### Test results
+
+**Node engine suite**: **300 tests, 298 pass, 2 skipped, 0 fail**. New in `picture-stretch.test.mjs`
+(7): the builder on upright, turned, mirrored and sheared placements (fixed edge exact, the other axis
+unchanged), what is refused (zero, negative and non-finite factors, a non-axis, a non-edge, a collapsed
+basis), `quadBasis` against every picture's CTM on the objects fixture, the capability on six fixtures,
+the session (a picture stretched as one record and one undo step; text refused, alone and in a group),
+and the saved file (an upright and a turned picture exactly where the stretch put them, and still
+movable and stretchable).
+
+**End-to-end**: the `manipulation` suite now checks that a picture offers four edge handles and text
+none, and stretches the scaled, turned and flipped picture from whichever of its edges is on the right
+of the screen: it widens by exactly the drag, its height and left edge do not move, it is one record
+and one undo step, and the saved file has it there. The whole default set in one batch gave 346 of
+348: text-editor 43, regression 48, selection 51, manipulation 89, multi-select 56, page-changes 17 all
+passed; phase0 missed one check that passes alone (30/30), and editing-store's "thumbnails still
+render" was caught between a thumbnail going and its redraw arriving — it now waits for the redraw
+(14/14), as the suites' own rule says.
+
+### Remaining for 0.5.0 (after §13)
+
+Every must-have is done. The should-haves remain, each only if its strict tests pass (otherwise it
+moves to a later release): paragraph grouping, alignment, distribution, snapping, image replacement,
+image insertion, overlap warnings, single-style paragraph reflow (last, gated).

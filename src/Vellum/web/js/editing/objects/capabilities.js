@@ -2,21 +2,24 @@
 // already made (editing/runs.js) and from the refusals each handler already publishes — it decides
 // nothing new and parses nothing.
 //
-//   capabilities = { move, scale, rotate, editText, delete }
+//   capabilities = { move, scale, stretch, rotate, editText, delete }
 //
 // Each value is `true` (Vellum can do this today) or a key from the ONE reason vocabulary in
 // runs.js, which is what turns it into a sentence a person reads. There is no second table.
+//
+// `scale` is uniform — the same factor both ways — and `stretch` is not: a different factor along
+// one of the object's own axes. They are separate verbs because they have separate answers for text.
 //
 // A verb is true only where a writer can honour it:
 //
 //   text    move, scale and delete follow `editText` exactly — the 0.4 engine's own verdict. Moved
 //           and scaled text is redrawn from the file's own glyphs (objects/text-run.js), and
-//           deleting is what writing empty text has always done. `rotate` is not offered: the
-//           glyphs would have to be laid out again, which Vellum can't do.
-//   images  move, scale, rotate and delete are true together, because one `cm` patch writes all
-//           four (objects/image.js). They are true when imageRefusal() — the handler's own gate,
-//           the same one the writer checks again before any byte is written — says nothing is
-//           wrong. `editText` is never true: an image has no text.
+//           deleting is what writing empty text has always done. `stretch` and `rotate` are not
+//           offered: the glyphs would have to be laid out again, which Vellum can't do.
+//   images  move, scale, stretch, rotate and delete are true together, because one `cm` patch
+//           writes any of them (objects/image.js). They are true when imageRefusal() — the handler's
+//           own gate, the same one the writer checks again before any byte is written — says nothing
+//           is wrong. `editText` is never true: an image has no text.
 //   paths
 //   forms   nothing: neither has a writer, and neither has an oriented outline to grab.
 //
@@ -31,7 +34,7 @@ import { imageRefusal } from './image.js';
 import { REASONS } from '../runs.js';
 
 /** The verbs an object answers for, in this order. */
-export const VERBS = Object.freeze(['move', 'scale', 'rotate', 'editText', 'delete']);
+export const VERBS = Object.freeze(['move', 'scale', 'stretch', 'rotate', 'editText', 'delete']);
 
 /**
  * Refusals that are about the object or the page as a whole rather than about text, in the order
@@ -81,7 +84,8 @@ export function capabilitiesFor(analysis, kind, record, ref) {
   if (kind === 'text-run') {
     // One verdict answers four verbs. Moving, scaling and deleting text all go through the same
     // writer as retyping it, so text that can't be edited can't be moved either, and says so in
-    // the same words. A rotation has no writer at all, so it keeps the plain `unsupported`.
+    // the same words. A stretch or a rotation has no writer at all, so each keeps the plain
+    // `unsupported` (or the structural reason, when there is one).
     const verdict = editTextOf(record);
     capabilities.editText = verdict;
     capabilities.move = verdict;
@@ -95,6 +99,7 @@ export function capabilitiesFor(analysis, kind, record, ref) {
     if (!reason) {
       capabilities.move = true;
       capabilities.scale = true;
+      capabilities.stretch = true;
       capabilities.rotate = true;
       capabilities.delete = true;
     } else {
@@ -120,7 +125,7 @@ export function sharedCapability(objects, verb) {
 }
 
 /** How a refused verb is named in a sentence about several objects. */
-const REFUSED = Object.freeze({ move: 'moved', scale: 'resized', rotate: 'turned', editText: 'edited', delete: 'deleted' });
+const REFUSED = Object.freeze({ move: 'moved', scale: 'resized', stretch: 'stretched', rotate: 'turned', editText: 'edited', delete: 'deleted' });
 
 /**
  * The sentence a refusal is reported in: the reason in its own words, and for a selection of

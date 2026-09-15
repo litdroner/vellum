@@ -17,8 +17,9 @@
 //
 // Composition, inversion, point application, the identity and translation are matrix.js's own
 // (multiply, invert, apply, IDENTITY, translate) and are used unwrapped — a second name for one of
-// them would be a second vocabulary. What is here is only what matrix.js does not have: the four
-// builders Phase 3 needs, and the checks that keep a transform safe to store and to write.
+// them would be a second vocabulary. What is here is only what matrix.js does not have: the builders
+// manipulation needs (uniform scale, quarter turn, flip, stretch), and the checks that keep a
+// transform safe to store and to write.
 
 import { IDENTITY, multiply, invert, translate } from '../matrix.js';
 
@@ -125,6 +126,26 @@ const FLIPS = Object.freeze({
 export function flip(basis, axis) {
   const local = FLIPS[axis];
   const inverse = local ? invert(basis) : null;
+  return inverse ? multiply(multiply(inverse, local), basis) : null;
+}
+
+/**
+ * A stretch along one of the object's OWN axes, as a page-space transform: the unit square is scaled
+ * by `factor` along `axis` ('x' or 'y') about its edge at `fixedAt` (0 or 1), which does not move, and
+ * the other axis is left exactly as it is. T = B⁻¹ · S · B, as for flip(), so a turned or mirrored
+ * picture is stretched along its own width or height rather than along the page's.
+ *
+ * Only a positive factor is a stretch: zero would collapse the object and a negative factor would
+ * mirror it, which flip() does properly. null for either, for an axis or edge that isn't one, and for
+ * a basis that has collapsed.
+ *
+ * For pictures only. Text is redrawn from its own glyphs and can take a move and a uniform scale and
+ * nothing else, so a stretch is never offered for it (capabilities.js) and the writer refuses one.
+ */
+export function stretch(basis, axis, factor, fixedAt) {
+  if (!(Number.isFinite(factor) && factor > 0) || (fixedAt !== 0 && fixedAt !== 1)) return null;
+  const local = { x: [factor, 0, 0, 1, (1 - factor) * fixedAt, 0], y: [1, 0, 0, factor, 0, (1 - factor) * fixedAt] }[axis];
+  const inverse = local && isValid(basis) ? invert(basis) : null;
   return inverse ? multiply(multiply(inverse, local), basis) : null;
 }
 

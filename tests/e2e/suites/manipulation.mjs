@@ -110,7 +110,9 @@ export async function run(t) {
     return s ? { page: s.page, key: s.keys.length === 1 ? s.keys[0] : null, keys: [...s.keys], fields: Object.keys(s).sort() } : null;
   })()`);
   const editorOpen = (path) => q(`Boolean(${V(path)}.el.querySelector('.vl-text-editor'))`);
-  const handles = (path) => q(`${V(path)}.el.querySelectorAll('.vl-object-handle').length`);
+  /** Corner handles only: they scale. Edge handles stretch, and are counted by edgeHandles. */
+  const handles = (path) => q(`${V(path)}.el.querySelectorAll('.vl-object-handle:not(.edge)').length`);
+  const edgeHandles = (path) => q(`${V(path)}.el.querySelectorAll('.vl-object-handle.edge').length`);
   const records = (path) => q(`${V(path)}.annotations.edits.map((e) => ({
     kind: e.kind, key: e.target.key, transform: e.transform || null,
     removed: Boolean(e.removed), mode: e.encoding ? e.encoding.mode : null,
@@ -186,11 +188,13 @@ export async function run(t) {
   check('clicking a picture selects it', (await selection(F('images')))?.key === image0.key);
   check('the selection is identity and nothing else', (await selection(F('images')))?.fields.join(',') === 'keys,page');
   check('no editor opens for a picture', (await editorOpen(F('images'))) === false);
-  check('four corner handles are offered, and no more', (await handles(F('images'))) === 4);
+  check('four corner handles are offered', (await handles(F('images'))) === 4);
+  check('and four edge handles, because a picture can be stretched', (await edgeHandles(F('images'))) === 4);
 
   await selectObject(F('images'), 1, text0.key);
   check('clicking editable text selects the run', (await selection(F('images')))?.key === text0.key);
-  check('and handles are offered for it too, because text scales', (await handles(F('images'))) === 4);
+  check('and corner handles are offered for it too, because text scales', (await handles(F('images'))) === 4);
+  check('but no edge handles: text is never stretched', (await edgeHandles(F('images'))) === 0);
   await shot('selected');
 
   // ---- 3. dragging text --------------------------------------------------------------------------
@@ -356,7 +360,7 @@ export async function run(t) {
   check('the objects fixture offers a picture that can be scaled', movable.length > 0, `${movable.length} of them`);
   const key = movable[0].key;
   const target = await selectObject(F('objects'), 1, key);
-  check('it is selected, with handles', (await handles(F('objects'))) === 4);
+  check('it is selected, with corner handles', (await handles(F('objects'))) === 4);
   // Pull the bottom-left corner away from the top-right one, which must not move.
   const anchor = [target.right, target.top];
   const corner = [target.left, target.bottom];
@@ -413,6 +417,36 @@ export async function run(t) {
     JSON.stringify((await recordFor(F('objects'), key))?.transform));
   await shot('scaled-turned-flipped');
 
+  // ---- stretch: an edge handle, along the picture's own axis ------------------------------------------
+
+  area('stretch');
+  // Counted first: counting rewinds and replays the history, and every step of that rebuilds the
+  // pages, which can leave the view scrolled a little differently from where a handle was just read.
+  const stretchDepth = await undoDepth(F('objects'));
+  const unstretched = await reveal(F('objects'), 1, key);
+  check('the turned, flipped picture still has four edge handles', (await edgeHandles(F('objects'))) === 4);
+  // Whichever of its own edges is on the right of the screen now: drag that one further right.
+  const rightEdge = await q(`(() => {
+    const els = [...${V(F('objects'))}.el.querySelectorAll('.vl-object-handle.edge')];
+    const boxes = els.map((el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    return boxes.sort((a, b) => b.x - a.x)[0] ?? null;
+  })()`);
+  check('an edge handle is on the right of the picture', Boolean(rightEdge) && Math.abs(rightEdge.x - unstretched.right) < 3,
+    JSON.stringify({ rightEdge, right: unstretched.right }));
+  const zoomNow = await zoom(F('objects'));
+  await c.drag([rightEdge.x, rightEdge.y], [rightEdge.x + 40, rightEdge.y], 10);
+  await rest(F('objects'));
+  const stretched = await objectAt(F('objects'), 1, key);
+  check('dragging it widens the picture by exactly the drag',
+    Math.abs((stretched.wp - unstretched.wp) - 40 / zoomNow) < 0.5, `${unstretched.wp.toFixed(1)} → ${stretched.wp.toFixed(1)} pt (wanted +${(40 / zoomNow).toFixed(1)})`);
+  check('its height is unchanged: a stretch is not a scale', Math.abs(stretched.hp - unstretched.hp) < 0.3,
+    `${unstretched.hp.toFixed(2)} → ${stretched.hp.toFixed(2)} pt`);
+  check('and its left edge stays exactly where it was', Math.abs(stretched.x1p - unstretched.x1p) < 0.3 && Math.abs(stretched.y1p - unstretched.y1p) < 0.3,
+    `${unstretched.x1p.toFixed(2)}, ${unstretched.y1p.toFixed(2)} → ${stretched.x1p.toFixed(2)}, ${stretched.y1p.toFixed(2)}`);
+  check('still one record for the picture, and one undo step for the stretch',
+    (await records(F('objects'))).filter((r) => r.key === key).length === 1 && (await undoDepth(F('objects'))) === stretchDepth + 1);
+  await shot('stretched');
+
   // The whole sequence survives a save: the file, not the record, is what has to be right.
   await q('__vellum.actions.save()');
   await waitFor(`!${V(F('objects'))}.annotations.dirty`, 25000);
@@ -423,7 +457,7 @@ export async function run(t) {
   await rest(F('objects'));
   const savedBack = (await objectsOn(F('objects'), 1)).filter((o) => o.kind === 'image')
     .find((o) => near(o.quad, afterSave.quad, 1));
-  check('scaled, turned and flipped: the saved file has the picture exactly there', Boolean(savedBack),
+  check('scaled, turned, flipped and stretched: the saved file has the picture exactly there', Boolean(savedBack),
     `wanted ${afterSave.quad.map((v) => Math.round(v))}`);
 
   // ---- 10. refusals: nothing is offered that cannot be honoured --------------------------------------

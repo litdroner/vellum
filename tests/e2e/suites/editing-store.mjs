@@ -47,7 +47,9 @@ export async function run(t) {
   }
   check('undo → B, undo → A, redo → B, redo → C', JSON.stringify(history) === JSON.stringify(['Hello, Vellum', 'Hello, world', 'Hello, Vellum', 'Goodbye, Vellum']), JSON.stringify(history));
   check('the tab shows unsaved changes', await q(`${V(simplePath)}.annotations.dirty && Boolean(document.querySelector('.tab.active.dirty'))`));
-  const thumbs = await q(`(() => { const t = document.querySelector('.thumbs .thumb canvas'); return Boolean(t); })()`);
+  // Thumbnails are drawn again after each rebuild, in their own time: wait for one rather than
+  // catching the moment between the old canvas going and the new one arriving.
+  const thumbs = await waitFor(`Boolean(document.querySelector('.thumbs .thumb canvas'))`, 8000);
   check('thumbnails still render', thumbs);
 
   await q('__vellum.actions.save()');

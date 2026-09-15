@@ -16,52 +16,27 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { analyzeFile, engine, loadPdfLib, loadPdfjs, openWithPdfjs, webModule } from './harness.mjs';
+import { analyzeFile, engine, webModule, withSession } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { ObjectSelection, selectableObjects } = await engine('objects/selection.js');
 const { sharedCapability, refusalMessage } = await engine('objects/capabilities.js');
 const { objectsOf } = await engine('objects/page-objects.js');
 const { unionBox, boxQuad, quadWithin, quadBox } = await engine('objects/geometry.js');
-const { TextEditing, isRemoved } = await engine('session.js');
+const { isRemoved } = await engine('session.js');
 const { EditError } = await engine('edits.js');
 const { REASONS } = await engine('runs.js');
-const { inspectDocument } = await engine('source.js');
 const { apply, translate } = await engine('matrix.js');
 const { scaleAbout, quarterTurn } = await engine('objects/transform.js');
 const { AnnotationStore } = await webModule('annotations/model.js');
 const { composeDocument } = await webModule('annotations/persist.js');
-const { identityPlan } = await webModule('pages/plan.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
 const read = (name) => new Uint8Array(fs.readFileSync(files[name]));
 
-/**
- * A document as the session sees it from the app: the edit store, the page plan the pages on
- * screen were built from, the pdf.js document, and the file's bytes. `run` gets it and it is closed
- * afterwards whatever happens.
- */
-async function withDocument(name, run) {
-  const bytes = read(name);
-  const pdfjs = await loadPdfjs();
-  const js = await openWithPdfjs(bytes);
-  const store = new AnnotationStore();
-  const plan = identityPlan(js.doc.numPages);
-  store.initPlan(plan);
-  const view = {
-    status: 'ready', encrypted: false, rebuilding: false, shownPlan: plan, annotations: store,
-    sources: new Map(), pdfjsLib: pdfjs, pdf: js.doc,
-    baseBytes: async () => bytes,
-    profile: async () => inspectDocument(await loadPdfLib(), bytes),
-  };
-  const session = new TextEditing(view);
-  try {
-    return await run({ bytes, plan, store, session });
-  } finally {
-    await js.close();
-  }
-}
+/** The session over one fixture, as the app would drive it (harness.mjs withSession). */
+const withDocument = (name, run) => withSession(read(name), run);
 
 /** Undo steps, counted by rewinding the whole history and replaying it. */
 function depth(store) {

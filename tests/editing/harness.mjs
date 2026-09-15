@@ -103,6 +103,35 @@ export async function analyzeFile(bytes, { pages } = {}) {
   return { source, pages: results, timing };
 }
 
+/**
+ * Drives the editing session (editing/session.js) in Node over a document as the app would give it:
+ * the edit store, the page plan the pages on screen were built from, the pdf.js document, and the
+ * file's bytes. `run` gets { bytes, plan, store, session }; the pdf.js document is closed afterwards
+ * whatever happens.
+ */
+export async function withSession(bytes, run) {
+  const pdfjs = await loadPdfjs();
+  const js = await openWithPdfjs(bytes);
+  const { AnnotationStore } = await webModule('annotations/model.js');
+  const { identityPlan } = await webModule('pages/plan.js');
+  const { TextEditing } = await engine('session.js');
+  const { inspectDocument } = await engine('source.js');
+  const store = new AnnotationStore();
+  const plan = identityPlan(js.doc.numPages);
+  store.initPlan(plan);
+  const view = {
+    status: 'ready', encrypted: false, rebuilding: false, shownPlan: plan, annotations: store,
+    sources: new Map(), pdfjsLib: pdfjs, pdf: js.doc,
+    baseBytes: async () => bytes,
+    profile: async () => inspectDocument(await loadPdfLib(), bytes),
+  };
+  try {
+    return await run({ bytes, plan, store, session: new TextEditing(view) });
+  } finally {
+    await js.close();
+  }
+}
+
 /** Plain summary of a page's runs, for assertions and reports. */
 export function describeRuns(analysis) {
   return analysis.runs.map((r) => ({

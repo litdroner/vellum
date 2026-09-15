@@ -5,10 +5,10 @@ import { EditError } from '../editing/edits.js';
 import { isRemoved } from '../editing/session.js';
 import { sharedCapability, refusalMessage } from '../editing/objects/capabilities.js';
 import {
-  quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin,
+  quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
-import { IDENTITY, multiply, translate } from '../editing/matrix.js';
-import { scaleAbout, quarterTurn, flip, isIdentity } from '../editing/objects/transform.js';
+import { IDENTITY, apply, invert, multiply, translate } from '../editing/matrix.js';
+import { scaleAbout, quarterTurn, flip, stretch, isIdentity } from '../editing/objects/transform.js';
 import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints } from '../page-space.js';
 
 // Edit mode ("Edit text", E): shows what on a page can be selected and changed, and edits text in
@@ -23,10 +23,10 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints } 
 //   - a small glass bar: which font the text will use, and Cancel / Done
 // Enter keeps the change, Escape cancels, Tab moves to the next text (Shift+Tab to the previous).
 //
-//   - manipulation: dragging a selected object moves it, a corner handle scales it uniformly, and
-//     the keyboard nudges, turns, flips and deletes it. Every gesture ends as ONE edit record per
-//     object with an ABSOLUTE transform, so one gesture is one undo and a second gesture replaces
-//     the first.
+//   - manipulation: dragging a selected object moves it, a corner handle scales it uniformly, an
+//     edge handle stretches a picture along its own width or height, and the keyboard nudges,
+//     turns, flips and deletes it. Every gesture ends as ONE edit record per object with an
+//     ABSOLUTE transform, so one gesture is one undo and a second gesture replaces the first.
 //   - several objects on one page: Shift- or Ctrl-click adds an object to the selection or takes it
 //     out, dragging over bare paper draws a rectangle that selects what it encloses (with Shift or
 //     Ctrl, adds it), and Ctrl+A selects everything on the page. A drag, the handles around the whole
@@ -52,8 +52,13 @@ const DRAG_THRESHOLD = 3;
 const HANDLE_GRAB = 8;
 /** What one arrow key moves an object, in points; with Shift, ten times as far. */
 const NUDGE_STEP = 1;
-/** Bounds on a corner drag, so a slip of the hand can't collapse an object or throw it off the page. */
+/** Bounds on a corner or edge drag, so a slip of the hand can't collapse an object or throw it off the page. */
 const SCALE_LIMITS = [0.05, 20];
+/**
+ * What each edge handle stretches, in the order handlePoints() lists the edge midpoints — bottom,
+ * right, top, left — as [the picture's own axis, the edge that stays put along it].
+ */
+const EDGES = Object.freeze([['y', 1], ['x', 0], ['y', 0], ['x', 1]]);
 let nudgeSeq = 0;
 const STANDARD_CSS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
 
@@ -74,6 +79,19 @@ const runKeyOf = (key) => `run:${key}`;
 
 /** Shift or Ctrl held: a click adds to the selection, and a rectangle adds what it encloses. */
 const additive = (e) => e.shiftKey || e.ctrlKey || e.metaKey;
+
+/**
+ * The stretch an edge drag asks for with the pointer at `to` (PDF user space): where the pointer is
+ * along the picture's own axis, measured in the picture's own unit square from the edge that stays.
+ * Past that edge is not a stretch but a mirror, so the factor is kept to the scale limits.
+ */
+function stretchTo(drag, to) {
+  const inverse = invert(drag.basis);
+  if (!inverse) return null;
+  const [u, v] = apply(inverse, to[0], to[1]);
+  const along = drag.axis === 'x' ? u : v;
+  return stretch(drag.basis, drag.axis, clamp(drag.fixedAt === 0 ? along : 1 - along, ...SCALE_LIMITS), drag.fixedAt);
+}
 
 /** The run's fill colour as CSS (DeviceGray / RGB / CMYK; anything else shows as ink). */
 function cssColor(fill) {
@@ -321,6 +339,15 @@ export class TextEditor {
     return quads.length === 1 ? quads[0] : boxQuad(unionBox(quads));
   }
 
+  /**
+   * May these selected objects be stretched from an edge handle? Only one object at a time — a group
+   * stretched along the page's axes would shear any picture in it that is turned — and only an object
+   * whose capabilities allow it, which is a picture and never text.
+   */
+  #stretchable(objects) {
+    return objects.length === 1 && objects[0].capabilities.stretch === true;
+  }
+
   #draw(page) {
     const layer = this.#view.annotLayer;
     if (!this.active || !page.data) {
@@ -358,8 +385,11 @@ export class TextEditor {
     if (frame) {
       if (selected.length > 1) shapes.push(svg('polygon', { class: 'vl-object-group', points: quadPoints(frame) }));
       const r = tolerancePoints(this.#view.viewer.getPageView(page.n - 1), 4);
-      for (const [x, y] of (handlePoints(frame) ?? []).slice(0, 4)) {
-        shapes.push(svg('circle', { class: 'vl-object-handle', cx: x, cy: y, r }));
+      const points = handlePoints(frame) ?? [];
+      for (const [x, y] of points.slice(0, 4)) shapes.push(svg('circle', { class: 'vl-object-handle', cx: x, cy: y, r }));
+      // Edge handles stretch, so they are only for one object that can be stretched: a picture.
+      if (this.#stretchable(selected)) {
+        for (const [x, y] of points.slice(4)) shapes.push(svg('circle', { class: 'vl-object-handle edge', cx: x, cy: y, r }));
       }
     }
     // The selection rectangle being dragged out over the paper.
@@ -555,14 +585,28 @@ export class TextEditor {
     const objects = current.keys.map((key) => this.#liveObject(current.page, key));
     if (objects.some((o) => !o)) return null;
     const frame = this.#handleFrame(page, objects);
-    const corners = frame ? handlePoints(frame).slice(0, 4) : null;
-    if (!corners) return null;
+    const points = frame ? handlePoints(frame) : null;
+    if (!points) return null;
+    const grabbed = (i) => {
+      const at = toClientPoint(pageView, points[i][0], points[i][1]);
+      return Boolean(at) && Math.hypot(at[0] - clientX, at[1] - clientY) <= HANDLE_GRAB;
+    };
     for (let i = 0; i < 4; i++) {
-      const at = toClientPoint(pageView, corners[i][0], corners[i][1]);
-      if (!at || Math.hypot(at[0] - clientX, at[1] - clientY) > HANDLE_GRAB) continue;
+      if (!grabbed(i)) continue;
       return {
         mode: 'scale', verb: 'scale', n: current.page, keys: [...current.keys], pageView,
-        quads: this.#quadsOf(page, objects), from: corners[i], anchor: corners[(i + 2) % 4],
+        quads: this.#quadsOf(page, objects), from: points[i], anchor: points[(i + 2) % 4],
+      };
+    }
+    // An edge handle stretches the picture along its own axis, from the opposite edge. The basis is
+    // read from the quad it is drawn with now, which for a picture is its placement exactly.
+    const basis = this.#stretchable(objects) ? quadBasis(frame) : null;
+    for (let i = 0; basis && i < 4; i++) {
+      if (!grabbed(4 + i)) continue;
+      const [axis, fixedAt] = EDGES[i];
+      return {
+        mode: 'stretch', verb: 'stretch', n: current.page, keys: [...current.keys], pageView,
+        quads: this.#quadsOf(page, objects), basis, axis, fixedAt,
       };
     }
     return null;
@@ -637,7 +681,8 @@ export class TextEditor {
     }
     const transform = drag.mode === 'scale'
       ? scaleAbout(drag.anchor, clamp(distance(to, drag.anchor) / (distance(drag.from, drag.anchor) || 1), ...SCALE_LIMITS))
-      : translate(to[0] - drag.from[0], to[1] - drag.from[1]);
+      : drag.mode === 'stretch' ? stretchTo(drag, to)
+        : translate(to[0] - drag.from[0], to[1] - drag.from[1]);
     if (!transform) return;
     drag.transform = transform;
     this.#showPreview(drag.n, new Map([...drag.quads].map(([key, quad]) => [key, transformQuad(quad, transform)])));
@@ -720,7 +765,7 @@ export class TextEditor {
     await this.#settled();
     try {
       const changed = await this.#view.textEditing.transformObjects(n, moves, { verb, coalesce });
-      if (changed) this.#announce({ move: 'Moved.', scale: 'Resized.', rotate: 'Turned.' }[verb] ?? 'Changed.');
+      if (changed) this.#announce({ move: 'Moved.', scale: 'Resized.', stretch: 'Resized.', rotate: 'Turned.' }[verb] ?? 'Changed.');
       else this.#clearPreview();
       return changed;
     } catch (err) {
