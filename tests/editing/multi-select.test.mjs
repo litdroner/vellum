@@ -280,7 +280,8 @@ test('a verb is shared only when every object allows it, and says which refused 
   assert.deepEqual([answer.reason, answer.object.ref.key], ['clipped', clipped.ref.key]);
   const text = movable.find((o) => o.kind === 'text-run');
   const picture = movable.find((o) => o.kind === 'image');
-  assert.equal(sharedCapability([picture, text], 'rotate').reason, 'unsupported', 'text is never turned, so neither is a selection with text in it');
+  assert.equal(sharedCapability([picture, text], 'rotate'), true, 'text and pictures both turn');
+  assert.equal(sharedCapability([picture, text], 'stretch').reason, 'unsupported', 'text is never stretched or flipped, so neither is a selection with text in it');
   assert.equal(sharedCapability([], 'move').reason, 'unsupported', 'nothing selected allows nothing');
 });
 
@@ -408,17 +409,21 @@ test('one refusal holds back the whole gesture: nothing at all is stored', async
   });
 });
 
-test('a selection with text in it is not turned, and a picture alone still is', async () => {
+test('a selection of text and a picture turns as one undo step, and is never flipped with text in it', async () => {
   await withDocument('images', async ({ store, session }) => {
     const { objects } = await session.objects(1);
     const picture = objects.find((o) => o.kind === 'image');
     const text = objects.find((o) => o.kind === 'text-run');
     const turn = (o) => ({ key: o.ref.key, delta: quarterTurn([100, 100], 1) });
-    await assert.rejects(session.transformObjects(1, [turn(picture), turn(text)], { verb: 'rotate' }),
-      (err) => err.detail?.reason === 'unsupported' && /turned/.test(err.message));
+    const mirror = (o) => ({ key: o.ref.key, delta: [-1, 0, 0, 1, 200, 0] });
+    await assert.rejects(session.transformObjects(1, [mirror(picture), mirror(text)], { verb: 'stretch' }),
+      (err) => err.detail?.reason === 'unsupported' && /stretched/.test(err.message));
+    assert.deepEqual(store.edits, [], 'a flip with text in it writes nothing, not even the picture');
+    assert.equal(await session.transformObjects(1, [turn(picture), turn(text)], { verb: 'rotate' }), true);
+    assert.equal(store.edits.length, 2);
+    assert.equal(depth(store), 1, 'one gesture, one undo step');
+    store.undo();
     assert.deepEqual(store.edits, []);
-    assert.equal(await session.transformObjects(1, [turn(picture)], { verb: 'rotate' }), true);
-    assert.equal(store.edits.length, 1);
   });
 });
 

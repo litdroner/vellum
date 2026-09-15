@@ -9,7 +9,7 @@
 //               { mode: 'standard', font } a standard font of the same style (the original can't)
 //               { mode: 'original' }       the file's own glyph bytes, redrawn somewhere else
 //               { mode: 'none' }            the text was removed
-//     transform [a b c d e f], and only once the run has been moved or scaled: an ABSOLUTE affine
+//     transform [a b c d e f], and only once the run has been moved, turned or scaled: an ABSOLUTE affine
 //               transform in the ORIGINAL page's user space, applied AFTER the text's own
 //               placement. Absolute, so a second drag of one run replaces the first in the same
 //               record instead of adding another; and left out altogether when it would be the
@@ -22,7 +22,7 @@
 import { newId } from '../annotations/model.js';
 import { fallbackFontFor, charactersOutsideWinAnsi } from './fonts.js';
 import { explainRun, REASONS } from './runs.js';
-import { isIdentity, moveAndScaleOf, quantize } from './objects/transform.js';
+import { isIdentity, quantize, similarityOf, similarityScaleOf } from './objects/transform.js';
 
 export class EditError extends Error {
   constructor(kind, message, detail = null) {
@@ -52,16 +52,24 @@ const targetOf = (run) => ({ key: run.key, text: run.text, glyphs: run.glyphs.ma
 /**
  * Why `transform` can’t be written for text, or null when it can.
  *
- * Text is redrawn from the file’s own glyphs, in the file’s own font, so only a move, a uniform
- * scale, or both are supported: a rotation, a mirror, a non-uniform scale or a skew would need the
- * glyphs laid out again, which Vellum can’t do yet. Both keys here are classify()’s own (runs.js)
- * — there is no second vocabulary for transforms, and none was added for them.
+ * Text is redrawn from the file’s own glyphs, in the file’s own font, under one `cm` (text-run.js
+ * drawText), so a move, a rotation and a uniform scale — a similarity, exactly [p q −q p] — leave it the
+ * same text with the same glyphs, spacing and baseline, only turned. A mirror, a non-uniform scale or
+ * a skew would distort the glyphs, and is refused. Both keys here are classify()’s own (runs.js) —
+ * there is no second vocabulary for transforms, and none was added for them.
  */
 export function textTransformRefusal(transform) {
-  const factor = moveAndScaleOf(transform);
-  if (factor === null || factor < 0) return 'unsupported';
+  const factor = similarityScaleOf(transform);
+  if (factor === null) return 'unsupported';
   return factor < MIN_SCALE ? 'degenerate' : null;
 }
+
+/**
+ * A text transform as it is stored: the exact similarity nearest to it (similarityOf), so a turn
+ * rounded to four places is still exactly a turn — or the transform as given, for textTransformRefusal
+ * to refuse, when it is not one at all.
+ */
+export const textPlacement = (transform) => similarityOf(transform) ?? quantize(transform);
 
 /**
  * The transform to store, or null for one that changes no placement at all — nothing, or the
@@ -71,7 +79,7 @@ export function textTransformRefusal(transform) {
  */
 function placementOf(transform) {
   if (transform === null || transform === undefined) return null;
-  const kept = quantize(transform);
+  const kept = textPlacement(transform);
   if (!kept) throw new EditError('content', 'That change to the text couldn’t be worked out, so nothing was changed.');
   const reason = textTransformRefusal(kept);
   if (reason) throw new EditError('not-editable', REASONS[reason], { reason, transform: kept });
@@ -119,7 +127,7 @@ export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedF
  *
  * `transform` is ABSOLUTE and in the ORIGINAL page’s user space — where the text lands, not how far
  * it was just dragged — so a second drag of the same run replaces the first rather than composing
- * with it, and one object always has exactly one record. Only a move, a uniform scale, or both can
+ * with it, and one object always has exactly one record. Only a move, a rotation and a uniform scale can
  * be written today; anything else raises EditError (textTransformRefusal says which).
  *
  * A run that has not been retyped gets a record in `encoding.mode: 'original'`: its own glyph

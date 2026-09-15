@@ -1238,10 +1238,16 @@ kbd {
   stroke-width: 2px;
   vector-effect: non-scaling-stroke;
 }
-.vl-object-handle {
+.vl-object-handle, .vl-object-rotate {
   fill: #fff; /* the page under it is paper, whatever the app theme is */
   stroke: var(--accent);
   stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+/* The rotate handle stands off the selection's top edge on a short stem, only where a turn can be written. */
+.vl-object-rotate-stem {
+  stroke: var(--accent);
+  stroke-width: 1px;
   vector-effect: non-scaling-stroke;
 }
 /* Several objects selected: one quiet frame around all of them, which the corner handles sit on, so

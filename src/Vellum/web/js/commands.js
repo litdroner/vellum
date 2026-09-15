@@ -114,6 +114,9 @@ export function createCommands(app, ui, actions) {
     'edit.copyObjects': { group: 'Edit', icon: 'copy', doc: true, label: 'Copy objects', keys: ['Ctrl+C'], when: objectsSelected, run: () => doc()?.textEditor?.copySelected() },
     'edit.cutObjects': { group: 'Edit', icon: 'scissors', doc: true, label: 'Cut objects', keys: ['Ctrl+X'], when: objectsSelected, run: () => doc()?.textEditor?.cutSelected() },
     'edit.pasteObjects': { group: 'Edit', icon: 'files', doc: true, label: 'Paste objects', keys: ['Ctrl+V'], when: () => Boolean(doc()?.textEditor?.canPaste), run: () => doc()?.textEditor?.paste() },
+    // [ and ] are Edit mode's own keys (ui/text-editor.js), so these only show them as a hint.
+    'edit.turnObjectsLeft': { group: 'Edit', icon: 'rotate-ccw', doc: true, label: 'Turn objects left 90°', hint: '[', run: () => doc()?.textEditor?.turnSelected(-1) },
+    'edit.turnObjectsRight': { group: 'Edit', icon: 'rotate-cw', doc: true, label: 'Turn objects right 90°', hint: ']', run: () => doc()?.textEditor?.turnSelected(1) },
     'edit.duplicateObjects': { group: 'Edit', icon: 'copy-plus', doc: true, label: 'Duplicate objects', keys: ['Ctrl+D'], when: objectsSelected, run: () => doc()?.textEditor?.duplicateSelected() },
     'edit.selectAll': { group: 'Edit', icon: 'text-select', doc: true, label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },
 

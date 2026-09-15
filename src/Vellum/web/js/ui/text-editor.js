@@ -16,7 +16,7 @@ import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
 import { IDENTITY, apply, applyLinear, invert, multiply, translate } from '../editing/matrix.js';
-import { scaleAbout, quarterTurn, flip, stretch, isIdentity } from '../editing/objects/transform.js';
+import { scaleAbout, quarterTurn, rotateAbout, flip, stretch, isIdentity } from '../editing/objects/transform.js';
 import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, displayBasis } from '../page-space.js';
 
 // Edit mode ("Edit text", E): shows what on a page can be selected and changed, and edits text in
@@ -32,9 +32,11 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 // Enter keeps the change, Escape cancels, Tab moves to the next text (Shift+Tab to the previous).
 //
 //   - manipulation: dragging a selected object moves it, a corner handle scales it uniformly, an
-//     edge handle stretches a picture along its own width or height, and the keyboard nudges,
-//     turns, flips and deletes it. Every gesture ends as ONE edit record per object with an
-//     ABSOLUTE transform, so one gesture is one undo and a second gesture replaces the first.
+//     edge handle stretches a picture along its own width or height, the rotate handle over the top
+//     edge turns text or pictures freely about the selection's centre (Shift: in 15° steps), and the
+//     keyboard nudges, turns ([ and ]), flips (pictures) and deletes. Every gesture ends as ONE edit
+//     record per object with an ABSOLUTE transform, so one gesture is one undo and a second gesture
+//     replaces the first.
 //     A move drag snaps to other objects' and the page's edges and centres (editing/objects/snap.js),
 //     with guide lines while it does; Alt held drags freely.
 //   - several objects on one page: Shift- or Ctrl-click adds an object to the selection or takes it
@@ -67,7 +69,7 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 // frames except the gesture currently under the pointer.
 //
 // Only what an object's capabilities allow is offered: a locked run is never dragged, a clipped
-// picture is never turned, and text is never rotated. The engine refuses all of that again anyway
+// picture is never turned, and text is never stretched or mirrored. The engine refuses all of that again anyway
 // (editing/edits.js, editing/objects/image.js) - the UI simply does not ask.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -81,6 +83,10 @@ const SNAP_DISTANCE = 5;
 const NUDGE_STEP = 1;
 /** Bounds on a corner or edge drag, so a slip of the hand can't collapse an object or throw it off the page. */
 const SCALE_LIMITS = [0.05, 20];
+/** Screen pixels the rotate handle stands off the selection's top edge. */
+const ROTATE_STANDOFF = 22;
+/** The step a rotate drag keeps to with Shift held. */
+const ROTATE_STEP = Math.PI / 12;
 /**
  * What each edge handle stretches, in the order handlePoints() lists the edge midpoints — bottom,
  * right, top, left — as [the picture's own axis, the edge that stays put along it].
@@ -160,6 +166,18 @@ function stretchTo(drag, to) {
   const [u, v] = apply(inverse, to[0], to[1]);
   const along = drag.axis === 'x' ? u : v;
   return stretch(drag.basis, drag.axis, clamp(drag.fixedAt === 0 ? along : 1 - along, ...SCALE_LIMITS), drag.fixedAt);
+}
+
+/**
+ * The turn a rotate drag asks for with the pointer at `to` (PDF user space): the angle swept about the
+ * selection's centre since the press, kept to whole ROTATE_STEPs with `stepped` (Shift). The display
+ * only rotates and flips the page, so an angle measured in user space is the angle a person sees.
+ */
+function rotateTo(drag, to, stepped) {
+  const [cx, cy] = drag.centre;
+  if (Math.hypot(to[0] - cx, to[1] - cy) < 1e-6) return null;
+  const swept = Math.atan2(to[1] - cy, to[0] - cx) - Math.atan2(drag.from[1] - cy, drag.from[0] - cx);
+  return rotateAbout(drag.centre, stepped ? Math.round(swept / ROTATE_STEP) * ROTATE_STEP : swept);
 }
 
 /** The run's fill colour as CSS (DeviceGray / RGB / CMYK; anything else shows as ink). */
@@ -703,6 +721,24 @@ export class TextEditor {
     return objects.length === 1 && objects[0].capabilities.stretch === true;
   }
 
+  /**
+   * Where the rotate handle over `frame` is — { at, stem, centre } in PDF user space — or null when there
+   * is to be none: every selected object has to allow a turn. It stands a few screen pixels off the
+   * middle of the frame's own top edge, away from its centre, so it follows a turned object round.
+   */
+  #rotateHandle(pageView, frame, objects) {
+    if (!frame || sharedCapability(objects, 'rotate') !== true) return null;
+    const points = handlePoints(frame);
+    const centre = quadCentre(frame);
+    const top = points && toClientPoint(pageView, points[6][0], points[6][1]);
+    const middle = centre && toClientPoint(pageView, centre[0], centre[1]);
+    if (!top || !middle) return null;
+    const length = Math.hypot(top[0] - middle[0], top[1] - middle[1]);
+    if (!(length > 0.5)) return null;
+    const at = toPdfPoint(pageView, top[0] + ((top[0] - middle[0]) / length) * ROTATE_STANDOFF, top[1] + ((top[1] - middle[1]) / length) * ROTATE_STANDOFF);
+    return at ? { at, stem: points[6], centre } : null;
+  }
+
   #draw(page) {
     const layer = this.#view.annotLayer;
     if (!this.active || !page.data) {
@@ -744,6 +780,12 @@ export class TextEditor {
       const r = tolerancePoints(handlesView, 4);
       const points = handlePoints(frame) ?? [];
       for (const [x, y] of points.slice(0, 4)) shapes.push(svg('circle', { class: 'vl-object-handle', cx: x, cy: y, r }));
+      // The rotate handle, where every selected object can be turned (#rotateHandle).
+      const turn = this.#rotateHandle(handlesView, frame, selected);
+      if (turn) {
+        shapes.push(svg('line', { class: 'vl-object-rotate-stem', x1: turn.stem[0], y1: turn.stem[1], x2: turn.at[0], y2: turn.at[1] }));
+        shapes.push(svg('circle', { class: 'vl-object-rotate', cx: turn.at[0], cy: turn.at[1], r }));
+      }
       // Edge handles stretch, so they are only for one object that can be stretched: a picture.
       if (this.#stretchable(selected)) {
         for (const [x, y] of points.slice(4)) shapes.push(svg('circle', { class: 'vl-object-handle edge', cx: x, cy: y, r }));
@@ -1023,8 +1065,9 @@ export class TextEditor {
       if (!(await this.commitPending())) return;
       this.#closeEditor();
     }
-    // A corner handle first: it sits on the objects it scales, so hit-testing them would win.
-    const start = (additive(e) ? null : this.#handleAt(e.clientX, e.clientY)) ?? await this.#pressAt(e);
+    // A corner handle first: it sits on the objects it scales, so hit-testing them would win. With
+    // Shift or Ctrl held only the rotate handle counts (Shift keeps a turn to steps from the start).
+    const start = this.#handleAt(e.clientX, e.clientY, additive(e)) ?? await this.#pressAt(e);
     if (!start || seq !== this.#gesture || !this.active || this.#editor) return;
     this.#flushNudge(); // a keyboard burst and a drag are two gestures, and so two undo steps
     // The pointer is NOT captured here. A press that turns out to be a click has to reach the page
@@ -1039,7 +1082,7 @@ export class TextEditor {
    * look — one follows the pointer, the other stays exactly where it is. For several objects the
    * corners are those of the frame around all of them, and every object scales about the same anchor.
    */
-  #handleAt(clientX, clientY) {
+  #handleAt(clientX, clientY, rotateOnly = false) {
     const current = this.#selection.current;
     const page = current && this.#pages.get(current.page);
     const pageView = current && this.#view.viewer.getPageView(current.page - 1);
@@ -1049,10 +1092,20 @@ export class TextEditor {
     const frame = this.#handleFrame(page, objects);
     const points = frame ? handlePoints(frame) : null;
     if (!points) return null;
-    const grabbed = (i) => {
-      const at = toClientPoint(pageView, points[i][0], points[i][1]);
+    const near = (point) => {
+      const at = toClientPoint(pageView, point[0], point[1]);
       return Boolean(at) && Math.hypot(at[0] - clientX, at[1] - clientY) <= HANDLE_GRAB;
     };
+    const grabbed = (i) => near(points[i]);
+    // The rotate handle turns everything selected about the centre of the frame, as one shape.
+    const turn = this.#rotateHandle(pageView, frame, objects);
+    if (turn && near(turn.at)) {
+      return {
+        mode: 'rotate', verb: 'rotate', n: current.page, keys: [...current.keys], pageView,
+        quads: this.#quadsOf(page, objects), from: turn.at, centre: turn.centre,
+      };
+    }
+    if (rotateOnly) return null;
     for (let i = 0; i < 4; i++) {
       if (!grabbed(i)) continue;
       return {
@@ -1203,7 +1256,8 @@ export class TextEditor {
     const transform = drag.mode === 'scale'
       ? scaleAbout(drag.anchor, clamp(distance(to, drag.anchor) / (distance(drag.from, drag.anchor) || 1), ...SCALE_LIMITS))
       : drag.mode === 'stretch' ? stretchTo(drag, to)
-        : this.#snappedMove(drag, to[0] - drag.from[0], to[1] - drag.from[1], e.altKey);
+        : drag.mode === 'rotate' ? rotateTo(drag, to, e.shiftKey)
+          : this.#snappedMove(drag, to[0] - drag.from[0], to[1] - drag.from[1], e.altKey);
     if (!transform) return;
     drag.transform = transform;
     this.#showPreview(drag.n, new Map([...drag.quads].map(([key, quad]) => [key, transformQuad(quad, transform)])));
@@ -1284,7 +1338,7 @@ export class TextEditor {
       await this.#moveToPage(drag, onto, e.clientX, e.clientY);
       return;
     }
-    const said = covers ? `${{ move: 'Moved', scale: 'Resized', stretch: 'Resized' }[drag.verb] ?? 'Changed'}; it now overlaps other content.` : null;
+    const said = covers ? `${{ move: 'Moved', scale: 'Resized', stretch: 'Resized', rotate: 'Turned' }[drag.verb] ?? 'Changed'}; it now overlaps other content.` : null;
     await this.#write(drag.n, drag.keys.map((key) => ({ key, delta: drag.transform })), drag.verb, { said });
   }
 
@@ -1461,21 +1515,39 @@ export class TextEditor {
       return;
     }
     if (e.shiftKey && (e.key === 'H' || e.key === 'V')) {
-      if (!this.#allow(objects, 'rotate')) return;
+      // A flip is a stretch by −1 along one of the object's own axes, so it asks what a stretch asks:
+      // a picture can, text can't (its glyphs would be mirrored).
+      if (!this.#allow(objects, 'stretch')) return;
       // Mirrored in each picture's OWN axes, which is what its current placement says they are:
       // its CTM, with everything already done to it.
       const axis = e.key === 'H' ? 'horizontal' : 'vertical';
-      await this.#gestureNow(page, objects, (o) => flip(multiply(o.record.ctm, o.edit?.transform ?? IDENTITY), axis), 'rotate');
+      await this.#gestureNow(page, objects, (o) => flip(multiply(o.record.ctm, o.edit?.transform ?? IDENTITY), axis), 'stretch', 'Flipped.');
     }
   }
 
+  /**
+   * Turns the selected objects a quarter turn each about its own centre, as [ and ] do: `turns` −1 to
+   * the left as seen, 1 to the right. The commands call this (commands.js). False with nothing selected.
+   */
+  async turnSelected(turns) {
+    const current = this.#selection.current;
+    if (!this.active || !current) {
+      this.#notify('Select text or a picture in Edit mode to turn it.');
+      return false;
+    }
+    if (!(await this.commitPending())) return false;
+    this.#closeEditor();
+    await this.#actOnSelected(current, { key: turns < 0 ? '[' : ']', shiftKey: false });
+    return true;
+  }
+
   /** One keyboard gesture on these objects, written at once: previewed, then handed to the engine. */
-  async #gestureNow(n, objects, deltaOf, verb) {
+  async #gestureNow(n, objects, deltaOf, verb, said = null) {
     const moves = objects.map((o) => ({ key: o.ref.key, delta: deltaOf(o), quad: o.geometry.quad }));
     if (moves.some((m) => !m.delta)) return;
     this.#flushNudge();
     this.#showPreview(n, new Map(moves.map((m) => [m.key, transformQuad(m.quad, m.delta)])));
-    await this.#write(n, moves, verb);
+    await this.#write(n, moves, verb, { said });
   }
 
   async #deleteSelected(n, objects) {

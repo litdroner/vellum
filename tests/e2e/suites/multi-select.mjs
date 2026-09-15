@@ -252,8 +252,8 @@ export async function run(t) {
 
   await clearToasts();
   const held = JSON.stringify(await records(IMAGES));
-  await c.key(']');
-  check('a turn is refused for a selection with text in it, and says why', await toast('/Not all of the selected objects can be turned/'));
+  await c.key('Shift+H');
+  check('a flip is refused for a selection with text in it, and says why', await toast('/Not all of the selected objects can be stretched/'));
   await sleep(600);
   check('and nothing was written', JSON.stringify(await records(IMAGES)) === held);
 

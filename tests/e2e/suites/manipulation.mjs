@@ -189,8 +189,8 @@ export async function run(t) {
     image0.caps.move === true && image0.caps.scale === true && image0.caps.rotate === true && image0.caps.delete === true,
     JSON.stringify(image0.caps));
   check('and is never text-editable', image0.caps.editText !== true, String(image0.caps.editText));
-  check('the text may be moved, scaled and deleted, but never turned',
-    text0.caps.move === true && text0.caps.scale === true && text0.caps.delete === true && text0.caps.rotate !== true,
+  check('the text may be moved, scaled, turned and deleted, but never stretched',
+    text0.caps.move === true && text0.caps.scale === true && text0.caps.delete === true && text0.caps.rotate === true && text0.caps.stretch !== true,
     JSON.stringify(text0.caps));
 
   await selectObject(F('images'), 1, image0.key);
@@ -493,14 +493,70 @@ export async function run(t) {
     const still = await objectAt(F('objects'), 1, clipped.key);
     check('and it has not moved', Math.abs(still.cxp - at.cxp) < 0.1 && Math.abs(still.cyp - at.cyp) < 0.1);
   }
+
+  // ---- text turns (0.6): [ and ], the command, the rotate handle, save and reopen; never a flip ----------
+
+  area('text turns');
   const someText = objects.find((o) => o.kind === 'text-run' && o.caps.move === true);
+  check('editable text may be turned', someText?.caps.rotate === true, JSON.stringify(someText?.caps));
   if (someText) {
-    await selectObject(F('objects'), 1, someText.key);
-    const held = JSON.stringify(await records(F('objects')));
+    const tKey = someText.key;
+    const turnDepth = await undoDepth(F('objects'));
+    const upright = await reveal(F('objects'), 1, tKey);
+    await q(`${V(F('objects'))}.objectSelection.set(1, [${JSON.stringify(tKey)}])`);
+    await q(`${V(F('objects'))}.focus()`);
+    await sleep(500);
     await c.key(']');
+    await sleep(1000);
+    await rest(F('objects'));
+    // objectSelection.set() draws nothing by itself; the turn has redrawn the page with its handles.
+    check('selected text has a rotate handle', await waitFor(`${V(F('objects'))}.el.querySelectorAll('.vl-object-rotate').length === 1`, 4000));
+    const quarter = await objectAt(F('objects'), 1, tKey);
+    check('] turns the text a quarter turn about its own centre',
+      Math.abs(quarter.wp - upright.hp) < 0.3 && Math.abs(quarter.hp - upright.wp) < 0.3
+      && Math.abs(quarter.cxp - upright.cxp) < 0.3 && Math.abs(quarter.cyp - upright.cyp) < 0.3,
+      `${upright.wp.toFixed(1)}×${upright.hp.toFixed(1)} → ${quarter.wp.toFixed(1)}×${quarter.hp.toFixed(1)} pt`);
+    check('one record, one undo step',
+      (await records(F('objects'))).filter((r) => `run:${r.key}` === tKey).length === 1 && (await undoDepth(F('objects'))) === turnDepth + 1);
+    await q(`${V(F('objects'))}.textEditor.turnSelected(-1)`);
+    await sleep(1000);
+    await rest(F('objects'));
+    const unturned = await objectAt(F('objects'), 1, tKey);
+    check('the Turn left command turns it back', Math.abs(unturned.wp - upright.wp) < 0.3 && Math.abs(unturned.hp - upright.hp) < 0.3);
+
+    const heldText = JSON.stringify(await records(F('objects')));
+    await c.key('Shift+H');
     await sleep(900);
-    check('text refuses a quarter turn rather than writing one it cannot',
-      JSON.stringify(await records(F('objects'))) === held);
+    check('text is never flipped: nothing written', JSON.stringify(await records(F('objects'))) === heldText);
+
+    // The rotate handle, dragged about 50° clockwise with Shift held: 45°, in the 15° steps.
+    const at = await reveal(F('objects'), 1, tKey);
+    const grip = await q(`(() => { const r = ${V(F('objects'))}.el.querySelector('.vl-object-rotate')?.getBoundingClientRect(); return r ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()`);
+    check('the rotate handle is on screen', Boolean(grip));
+    if (grip) {
+      const a = (50 * Math.PI) / 180;
+      const [vx, vy] = [grip[0] - at.cx, grip[1] - at.cy];
+      await c.drag(grip, [at.cx + vx * Math.cos(a) - vy * Math.sin(a), at.cy + vx * Math.sin(a) + vy * Math.cos(a)], 12, { modifiers: SHIFT });
+      await sleep(900);
+      await rest(F('objects'));
+      const r = (await recordFor(F('objects'), tKey))?.transform;
+      const angle = r ? (Math.atan2(r[1], r[0]) * 180) / Math.PI : NaN;
+      check('the handle turns the text 45° clockwise, exactly a turn', Math.abs(angle + 45) < 0.05 && r[0] === r[3] && r[1] === -r[2], JSON.stringify(r));
+      const turnedText = await objectAt(F('objects'), 1, tKey);
+      check('about its own centre', Math.abs(turnedText.cxp - at.cxp) < 0.5 && Math.abs(turnedText.cyp - at.cyp) < 0.5);
+      await shot('text-turned');
+
+      await q('__vellum.actions.save()');
+      await waitFor(`!${V(F('objects'))}.annotations.dirty`, 25000);
+      await q(`__vellum.app.close(${V(F('objects'))})`);
+      await waitFor(`!${V(F('objects'))}`);
+      await q(`__vellum.actions.openRecent(${JSON.stringify(F('objects'))})`);
+      await rest(F('objects'));
+      const kept = (await objectsOn(F('objects'), 1)).find((o) => o.kind === 'text-run' && o.text === someText.text);
+      const slope = kept ? (Math.atan2(kept.quad[3] - kept.quad[1], kept.quad[2] - kept.quad[0]) * 180) / Math.PI : NaN;
+      check('saved and reopened: the same text, still turned 45°, and editable', Math.abs(slope + 45) < 0.5 && kept.caps.editText === true,
+        `${kept?.text} at ${slope}`);
+    }
   }
 
   // ---- 11. z-order: a gesture acts on the object a click would pick ------------------------------------

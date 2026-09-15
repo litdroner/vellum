@@ -43,7 +43,7 @@
 // (copiedObject): same kind, geometry and capabilities. Retyping, reflowing and replacing a copy change
 // `text` and `encoding`, or `replacement`, in its record and nothing else (session.js).
 
-import { EditError, textTransformRefusal } from '../edits.js';
+import { EditError, textPlacement, textTransformRefusal } from '../edits.js';
 import { REASONS } from '../runs.js';
 import { pdfaClaim } from '../source.js';
 import { num, pdfName } from '../content/writer.js';
@@ -106,7 +106,7 @@ export function snapshotOf(object, record = null) {
  * change to one (same `id`). EditError when it can't be written.
  */
 export function planCopy({ kind, target, text, encoding, replacement = null, transform, entry, from = null, id = newId() }) {
-  const kept = quantize(transform ?? []);
+  const kept = kind === TEXT ? textPlacement(transform ?? []) : quantize(transform ?? []);
   if (!kept || !target) throw unusable();
   if (from && !(typeof from.src === 'string' && from.src !== 'blank' && Number.isInteger(from.index) && from.index >= 0)) throw unusable();
   const origin = from ? { from: { src: from.src, index: from.index } } : {};
@@ -126,7 +126,7 @@ export function planCopy({ kind, target, text, encoding, replacement = null, tra
 
 /**
  * A copy as an object on its page: the object it was copied from (`source`, the page's own), under
- * the copy's key, drawn after everything the page has. It can be moved, scaled, deleted, copied,
+ * the copy's key, drawn after everything the page has. It can be moved, scaled, turned, deleted, copied,
  * retyped and reflowed (text) or replaced (a picture) on the terms its original can: each of those
  * changes its one record (session.js), which this writer already draws in any encoding or image.
  */

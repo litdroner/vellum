@@ -95,7 +95,7 @@ test('every object answers the same eight verbs, in the same order', async () =>
 test('only the verbs with a writer are ever true, and only on the kinds that have one', async () => {
   // Phase 3, Step 4 turned cells true, and the picture stretch and replacement added one more each;
   // this is the whole of what is true:
-  //   text-run   move, scale, editText, delete                 - never stretch, rotate or replace (the glyphs would need re-laying out)
+  //   text-run   move, scale, rotate, editText, delete, copy   - never stretch or replace (a stretch distorts the glyphs)
   //   image      move, scale, stretch, rotate, replace, delete - never editText (a picture has no text)
   //   path, form nothing: neither has a writer at all.
   const trues = new Map();
@@ -104,7 +104,6 @@ test('only the verbs with a writer are ever true, and only on the kinds that hav
       if (o.capabilities[verb] !== true) continue;
       assert.ok(['text-run', 'image'].includes(o.kind),
         `${name} page ${page} ${o.kind} ${o.ref.key}: ${verb} claims a permission no writer can honour`);
-      assert.notEqual(`${o.kind}.${verb}`, 'text-run.rotate', `${name} page ${page}: text cannot be rotated`);
       assert.notEqual(`${o.kind}.${verb}`, 'text-run.stretch', `${name} page ${page}: text cannot be stretched`);
       assert.notEqual(`${o.kind}.${verb}`, 'text-run.replace', `${name} page ${page}: text is not a picture to replace`);
       assert.notEqual(`${o.kind}.${verb}`, 'image.editText', `${name} page ${page}: an image has no text`);
@@ -113,16 +112,16 @@ test('only the verbs with a writer are ever true, and only on the kinds that hav
   }
   assert.deepEqual([...trues.keys()].sort(),
     ['image.copy', 'image.delete', 'image.move', 'image.replace', 'image.rotate', 'image.scale', 'image.stretch',
-      'text-run.copy', 'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.scale'],
+      'text-run.copy', 'text-run.delete', 'text-run.editText', 'text-run.move', 'text-run.rotate', 'text-run.scale'],
     'the sweep must find every writable cell, and no other');
 });
 
-test('a text run move, scale and delete are its editText, exactly: one verdict, four verbs', async () => {
+test('a text run move, scale, rotate, delete and copy are its editText, exactly: one verdict', async () => {
   // They all go through the same writer, so they cannot disagree: text that cannot be edited cannot
   // be moved, and refuses in the very same words.
   for await (const { name, page, o } of everyObject()) {
     if (o.kind !== 'text-run') continue;
-    for (const verb of ['move', 'scale', 'delete', 'copy']) {
+    for (const verb of ['move', 'scale', 'rotate', 'delete', 'copy']) {
       assert.equal(o.capabilities[verb], o.capabilities.editText,
         `${name} page ${page} ${JSON.stringify(o.text)}: ${verb} disagrees with editText`);
     }

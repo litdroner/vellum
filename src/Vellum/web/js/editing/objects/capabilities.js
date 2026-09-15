@@ -12,12 +12,13 @@
 //
 // A verb is true only where a writer can honour it:
 //
-//   text    move, scale and delete follow `editText` exactly — the 0.4 engine's own verdict. Moved
-//           and scaled text is redrawn from the file's own glyphs (objects/text-run.js), and
-//           deleting is what writing empty text has always done. `stretch` and `rotate` are not
-//           offered: the glyphs would have to be laid out again, which Vellum can't do; nor is
-//           `replace`, which is swapping one picture for another. `copy` follows `editText` too: a
-//           pasted copy is the same glyphs drawn again by the same writer (objects/copies.js).
+//   text    move, scale, rotate and delete follow `editText` exactly — the 0.4 engine's own verdict.
+//           Moved, scaled and turned text is redrawn from the file's own glyphs under one `cm`
+//           (objects/text-run.js), and deleting is what writing empty text has always done. `stretch`
+//           is not offered — nor a flip, which the UI asks as a stretch — because it would distort
+//           the glyphs; nor is `replace`, which is swapping one picture for another. `copy` follows
+//           `editText` too: a pasted copy is the same glyphs drawn again by the same writer
+//           (objects/copies.js).
 //   images  move, scale, stretch, rotate and delete are true together, because one `cm` patch
 //           writes any of them (objects/image.js). They are true when imageRefusal() — the handler's
 //           own gate, the same one the writer checks again before any byte is written — says nothing
@@ -87,14 +88,15 @@ export function capabilitiesFor(analysis, kind, record, ref) {
   const capabilities = {};
   for (const verb of VERBS) capabilities[verb] = blocked ?? 'unsupported';
   if (kind === 'text-run') {
-    // One verdict answers four verbs. Moving, scaling and deleting text all go through the same
-    // writer as retyping it, so text that can't be edited can't be moved either, and says so in
-    // the same words. A stretch or a rotation has no writer at all, so each keeps the plain
-    // `unsupported` (or the structural reason, when there is one).
+    // One verdict answers six verbs. Moving, scaling, turning and deleting text all go through the
+    // same writer as retyping it, so text that can't be edited can't be moved either, and says so in
+    // the same words. A stretch has no writer for text, so it keeps the plain `unsupported` (or the
+    // structural reason, when there is one).
     const verdict = editTextOf(record);
     capabilities.editText = verdict;
     capabilities.move = verdict;
     capabilities.scale = verdict;
+    capabilities.rotate = verdict;
     capabilities.delete = verdict;
     capabilities.copy = verdict;
   } else if (kind === 'image') {

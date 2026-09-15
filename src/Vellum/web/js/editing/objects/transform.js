@@ -62,11 +62,9 @@ export const isIdentity = (t, tol = 1e-9) => sameTransform(t, IDENTITY, tol);
  * multiple of the identity. The factor comes back unjudged (it may be zero or negative); what
  * counts as usable is the caller's to say.
  *
- * Text asks this before it is redrawn. An image can be wrapped in any transform at all, because its
- * `cm` carries the whole matrix; text is redrawn glyph by glyph, from the codes the file already
- * holds, and only a move and a uniform scale leave those glyphs reading as the same text on the
- * same baseline. Ask it of quantize()d values, so that what is stored and what is written answer
- * the same way.
+ * Reflow asks this: it measures a paragraph along the page's x axis, which a turned paragraph no longer
+ * runs along. Text itself may also be turned (similarityScaleOf, edits.js). Ask it of quantize()d
+ * values, so that what is stored and what is written answer the same way.
  */
 export function moveAndScaleOf(t, tol = 1e-9) {
   if (!isValid(t)) return null;
@@ -74,8 +72,58 @@ export function moveAndScaleOf(t, tol = 1e-9) {
   return Math.abs(b) <= tol && Math.abs(c) <= tol && Math.abs(a - d) <= tol ? (a + d) / 2 : null;
 }
 
+/**
+ * How far a similarity's linear part may be from exact, relative to its scale, and still be taken as
+ * one: rotations are built from cos and sin, composed with the transform already stored and rounded
+ * to four places, so the two halves of a rotation can come out 1e-4 apart. Anything further is a
+ * mirror, a skew or a non-uniform scale, and is not a similarity at all.
+ */
+const SIMILAR = 1e-3;
+
+/**
+ * The exact similarity — a move, a rotation and a uniform scale, and nothing else — closest to `t`,
+ * quantized to what the writer holds, or null when `t` is not one to within SIMILAR: a mirror, a skew
+ * or a non-uniform scale. Its linear part is [p q −q p] with p = s·cos θ and q = s·sin θ exactly, so a
+ * stored text placement never picks up a skew however often it is turned, and is judged strictly.
+ */
+export function similarityOf(t) {
+  if (!isValid(t)) return null;
+  const [a, b, c, d, e, f] = t;
+  const p = (a + d) / 2;
+  const q = (b - c) / 2;
+  const scale = Math.hypot(p, q);
+  if (!(Math.hypot(a - d, b + c) / 2 <= SIMILAR * scale + 1e-9)) return null;
+  const kept = quantize([p, q, 0, p, e, f]);
+  kept[2] = kept[1] === 0 ? 0 : -kept[1];
+  return kept;
+}
+
+/**
+ * The uniform scale of a transform that is exactly a similarity (see similarityOf), or null. Unjudged,
+ * like moveAndScaleOf(): zero is possible, and whether that is usable is the caller's to say.
+ */
+export function similarityScaleOf(t, tol = 1e-9) {
+  if (!isValid(t)) return null;
+  const [a, b, c, d] = t;
+  return Math.abs(a - d) <= tol && Math.abs(b + c) <= tol ? Math.hypot(a, b) : null;
+}
+
 /** A linear transform applied about a fixed point: move the point to the origin, act, move back. */
 const about = ([px, py], linear) => multiply(multiply(translate(-px, -py), linear), translate(px, py));
+
+/**
+ * A rotation by `radians` counter-clockwise in PDF user space (y up) about `centre`, which does not
+ * move: the free rotation a rotate handle drags. A whole quarter turn is quarterTurn()'s exact matrix,
+ * so a handle snapped to 90° writes the same numbers the keyboard does.
+ */
+export function rotateAbout(centre, radians) {
+  if (!Number.isFinite(radians)) return null;
+  const turns = radians / (Math.PI / 2);
+  if (Math.abs(turns - Math.round(turns)) < 1e-9) return quarterTurn(centre, Math.round(turns));
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return about(centre, [cos, sin, -sin, cos, 0, 0]);
+}
 
 /**
  * Uniform scale by `factor` about `anchor`, which does not move. Phase 3 anchors a corner drag at
@@ -139,8 +187,8 @@ export function flip(basis, axis) {
  * mirror it, which flip() does properly. null for either, for an axis or edge that isn't one, and for
  * a basis that has collapsed.
  *
- * For pictures only. Text is redrawn from its own glyphs and can take a move and a uniform scale and
- * nothing else, so a stretch is never offered for it (capabilities.js) and the writer refuses one.
+ * For pictures only. Text is redrawn from its own glyphs and can take a move, a rotation and a uniform
+ * scale and nothing else, so a stretch is never offered for it (capabilities.js) and the writer refuses one.
  */
 export function stretch(basis, axis, factor, fixedAt) {
   if (!(Number.isFinite(factor) && factor > 0) || (fixedAt !== 0 && fixedAt !== 1)) return null;

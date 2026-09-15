@@ -124,7 +124,7 @@ test('an edited page composed twice from the same base is byte-identical, record
 const MATRIX_FIXTURES = ['images', 'objects', 'constructs', 'cropbox', 'transparency', 'tagged', 'pdfa', 'scanned', 'overlap'];
 
 /** The cells Step 4 turned true, and the only ones any fixture may report as true. */
-const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.editText', 'text-run.delete', 'text-run.copy',
+const WRITABLE = new Set(['text-run.move', 'text-run.scale', 'text-run.rotate', 'text-run.editText', 'text-run.delete', 'text-run.copy',
   'image.move', 'image.scale', 'image.stretch', 'image.rotate', 'image.replace', 'image.delete', 'image.copy']);
 
 test('capability matrix: a verb is true only where a writer exists for that kind', async () => {
@@ -142,8 +142,8 @@ test('capability matrix: a verb is true only where a writer exists for that kind
       }
     }
   }
-  // Text is never rotated or stretched, an image is never text-edited, and a path or a form is never anything.
-  for (const cell of ['text-run.rotate', 'text-run.stretch', 'text-run.replace', 'image.editText',
+  // Text is never stretched (0.6 turns it), an image is never text-edited, and a path or a form is never anything.
+  for (const cell of ['text-run.stretch', 'text-run.replace', 'image.editText',
     ...['path', 'form'].flatMap((k) => VERBS.map((v) => `${k}.${v}`))]) {
     const answers = [...(seen.get(cell) ?? [])];
     assert.ok(answers.length, `no object was examined for ${cell}`);
@@ -194,7 +194,8 @@ test('capability matrix: an unbalanced page refuses structurally, and PDF/A text
   const [run] = objectsOf((await analyzed('pdfa')).pages[0]).filter((o) => o.kind === 'text-run');
   assert.equal(run.capabilities.editText, true, 'PDF/A text in an embedded font is editable');
   assert.equal(run.capabilities.move, true, 'and movable: mode `original` redraws its own glyphs, embedding nothing');
-  assert.equal(run.capabilities.rotate, 'unsupported', 'a rotation would need the glyphs laid out again');
+  assert.equal(run.capabilities.rotate, true, 'and turnable: the same glyphs under one `cm` (0.6)');
+  assert.equal(run.capabilities.stretch, 'unsupported', 'a stretch would distort the glyphs');
 });
 
 // ---- 3. the untransformed text writer, on the cases Phase 3 will extend -------------------------
@@ -379,7 +380,7 @@ test('everything the contest can pick on the overlap page is movable, so the win
   for (const object of selectableObjects((await analyzed('overlap')).pages[0])) {
     assert.equal(object.capabilities.move, true, `${object.ref.key} move`);
     assert.equal(object.capabilities.delete, true, `${object.ref.key} delete`);
-    assert.equal(object.capabilities.rotate, object.kind === 'image' ? true : 'unsupported', `${object.ref.key} rotate`);
+    assert.equal(object.capabilities.rotate, true, `${object.ref.key} rotate`);
   }
 });
 

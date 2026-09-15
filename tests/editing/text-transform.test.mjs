@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import { analyzeFile, engine, loadPdfLib, webModule } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
-const { planTextEdit, planTextTransform, textTransformRefusal, EditError } = await engine('edits.js');
+const { planTextEdit, planTextTransform, textTransformRefusal, textPlacement, EditError } = await engine('edits.js');
 const { IDENTITY, translate, multiply, apply } = await engine('matrix.js');
 const { scaleAbout, quarterTurn, flip } = await engine('objects/transform.js');
 const { AnnotationStore } = await webModule('annotations/model.js');
@@ -315,12 +315,12 @@ test('moved text that is then retyped keeps the move: still one record, still in
 });
 
 // ---- 5. what is refused ------------------------------------------------------------------------
-// Text is redrawn from the file's own glyphs, so only a move and a uniform scale can be written.
-// Everything else is refused twice: at the planner, and again at the writer, because what goes into
-// the file must not depend on the UI having asked the right question. Every refusal uses a key
-// classify() already has (runs.js) — Step 3 added none.
+// Text is redrawn from the file's own glyphs, so only a move, a rotation and a uniform scale can be
+// written (rotation since 0.6: text-rotation.test.mjs). Everything else is refused twice: at the
+// planner, and again at the writer, because what goes into the file must not depend on the UI having
+// asked the right question. Every refusal uses a key classify() already has (runs.js).
 
-test('a rotation is refused, in the engine’s own words', async () => {
+test('a rotation is not refused: quarter, half and free turns are similarities', async () => {
   const d = await open('simple');
   const run = runOf(d, 0, 'Hello, world');
   for (const [what, transform] of [
@@ -328,13 +328,8 @@ test('a rotation is refused, in the engine’s own words', async () => {
     ['a small angle', [Math.cos(0.5), Math.sin(0.5), -Math.sin(0.5), Math.cos(0.5), 0, 0]],
     ['a half turn', [-1, 0, 0, -1, 0, 0]],
   ]) {
-    assert.equal(textTransformRefusal(transform), 'unsupported', what);
-    assert.throws(() => move(d, 0, 'Hello, world', transform), (e) => {
-      assert.ok(e instanceof EditError && e.kind === 'not-editable', `${what}: ${e.message}`);
-      assert.equal(e.detail.reason, 'unsupported');
-      assert.equal(e.message, 'Vellum can’t do this to this object yet.');
-      return true;
-    }, what);
+    assert.equal(textTransformRefusal(textPlacement(transform)), null, what);
+    assert.equal(move(d, 0, 'Hello, world', transform).kind, 'text', what);
   }
 });
 
@@ -412,7 +407,7 @@ test('an unsupported transform that reaches the writer is refused there too, and
   const d = await open('simple');
   const run = runOf(d, 0, 'Hello, world');
   const good = move(d, 0, 'Hello, world', translate(10, 10));
-  for (const transform of [quarterTurn(run.origin, 1), [2, 0, 0, 1, 0, 0], [1, 0, 0.4, 1, 0, 0], [0, 0, 0, 0, 0, 0]]) {
+  for (const transform of [[-1, 0, 0, 1, 0, 0], [2, 0, 0, 1, 0, 0], [1, 0, 0.4, 1, 0, 0], [0, 0, 0, 0, 0, 0]]) {
     await assert.rejects(() => compose(d, [{ ...good, transform }]), (err) => {
       assert.ok(err instanceof EditError && err.kind === 'content', `${JSON.stringify(transform)}: ${err.message}`);
       assert.match(err.message, /^Text on page 1 is being moved or scaled in a way Vellum can’t write, so nothing was changed\.$/);
