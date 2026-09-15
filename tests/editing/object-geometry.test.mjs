@@ -239,12 +239,13 @@ test('only Edit mode draws a handle, and an edge handle only where a stretch can
   for (const [line, i] of edgeUses) {
     assert.ok(lines.slice(Math.max(0, i - 3), i).some((l) => l.includes('#stretchable(')), `an edge handle is offered without the stretch gate: ${line.trim()}`);
   }
-  // One more edge handle exists (0.5.0 reflow): the right edge of a whole paragraph, behind its own
-  // gate, #reflowable, which asks the reflow engine's refusal — never offered on its own.
+  // Two more edge handles exist, each behind its own gate and never offered on its own: the right edge of
+  // a whole paragraph (0.5.0 reflow, #reflowable, which asks the reflow engine's refusal) and the right
+  // edge of one new text box (0.6, #wrappable, which is only ever new text).
   const rightEdge = lines.map((line, i) => [line, i]).filter(([line]) => /points\[5\]|grabbed\(5\)/.test(line));
   assert.ok(rightEdge.length >= 2, 'the reflow handle is drawn and grabbed');
   for (const [line, i] of rightEdge) {
-    assert.ok(lines.slice(Math.max(0, i - 2), i + 1).some((l) => l.includes('#reflowable(')), `a right-edge handle is offered without the reflow gate: ${line.trim()}`);
+    assert.ok(lines.slice(Math.max(0, i - 2), i + 1).some((l) => /#reflowable\(|#wrappable\(/.test(l)), `a right-edge handle is offered without its gate: ${line.trim()}`);
   }
   assert.match(ui.match(/#reflowable\(page, objects\) \{[\s\S]*?\n  \}/)?.[0] ?? '', /reflowRefusal\(/, 'the reflow gate is the engine’s own');
   for (const call of ui.match(/handlePoints\([^)]*\)[^;\n]*/g) ?? []) {
