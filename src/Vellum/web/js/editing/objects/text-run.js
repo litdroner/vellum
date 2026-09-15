@@ -27,6 +27,7 @@ import { EditError, textTransformRefusal } from '../edits.js';
 import { pdfaClaim } from '../source.js';
 import { multiply } from '../matrix.js';
 import { num, hexString, pdfName, operand } from '../content/writer.js';
+import { PdfName } from '../content/lexer.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
 
@@ -194,14 +195,13 @@ function gapBefore(previous, glyph) {
  * `transform`, which is why it is applied to the CTM and not to the text matrix: multiply(ctm, T)
  * is "the original placement, then T", and T is in the page's own user space.
  */
-export function drawText(analysis, run, fontName, items, transform = null) {
+export function drawText(analysis, run, fontName, items, transform = null, rename = null) {
   const [si, gi] = run.glyphs[0];
   const show = analysis.shows[si];
   const first = show.glyphs[gi];
-  const replay = (state) => [state.space, state.color].filter(Boolean).map(({ op, args }) => `${args.map(operand).join(' ')} ${op}`.trim());
-  const lines = ['q', ...replay(show.fill)];
-  if (show.tr === 1 || show.tr === 2) lines.push(...replay(show.stroke), `${num(show.lineWidth)} w`);
-  for (const name of show.gsNames) lines.push(`${pdfName(name)} gs`);
+  const lines = ['q', ...replayColour(show.fill, rename)];
+  if (show.tr === 1 || show.tr === 2) lines.push(...replayColour(show.stroke, rename), `${num(show.lineWidth)} w`);
+  for (const name of show.gsNames) lines.push(`${pdfName(rename ? rename('ExtGState', name) : name)} gs`);
   const placed = transform ? multiply(show.ctm, transform) : show.ctm;
   lines.push(
     `${placed.map(num).join(' ')} cm`,
@@ -214,6 +214,24 @@ export function drawText(analysis, run, fontName, items, transform = null) {
     'Q',
   );
   return lines.join('\n');
+}
+
+const DEVICE_SPACES = new Set(['DeviceGray', 'DeviceRGB', 'DeviceCMYK', 'Pattern']);
+
+/**
+ * The operators that set a colour (the interpreter's { space, color } state), written again. With
+ * `rename(category, name)`, the resources they name — a colour space set by cs/CS, a pattern painted
+ * by scn/SCN — are written under the names `rename` gives them (objects/copies.js, drawing another
+ * page's content); the device spaces are operators' own names, not resources.
+ */
+export function replayColour(state, rename = null) {
+  return [state?.space, state?.color].filter(Boolean).map(({ op, args }) => {
+    const category = op === 'cs' || op === 'CS' ? 'ColorSpace' : op === 'scn' || op === 'SCN' ? 'Pattern' : null;
+    const written = args.map((a) => (rename && category && a instanceof PdfName && !(category === 'ColorSpace' && DEVICE_SPACES.has(a.name))
+      ? new PdfName(rename(category, a.name))
+      : a));
+    return `${written.map(operand).join(' ')} ${op}`.trim();
+  });
 }
 
 function textArray(items) {

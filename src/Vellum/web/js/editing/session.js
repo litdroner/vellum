@@ -17,7 +17,9 @@ import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { insertedObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
-import { copiedObject, isCopy, keyOf as copyKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';import { IDENTITY, multiply } from './matrix.js';
+import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
+import { transformQuad, unionBox } from './objects/geometry.js';
+import { IDENTITY, multiply, translate } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
 import { newId } from '../annotations/model.js';
@@ -26,6 +28,7 @@ export class TextEditing {
   #view;
   #sources = new Map(); // src → Promise<PdfSource>
   #pages = new Map(); // `${src}:${index}` → verified analysis
+  #origins = new Map(); // `${src}:${index}` → Promise<analysis> of a page copies draw from (#origin)
 
   constructor(view) {
     this.#view = view;
@@ -83,13 +86,19 @@ export class TextEditing {
     const own = analysis ? selectableObjects(analysis) : [];
     // Pictures put on the page from a file, and pasted copies, are objects too: after everything the
     // page draws itself, in the order they were added. A copy is the object it was copied from, drawn
-    // again; one whose original the page doesn't have can't be drawn, and the writer refuses it.
-    const byKey = new Map(own.map((o) => [o.ref.key, o]));
+    // again — from this page, or from the page it names in `from`; one whose original isn't there
+    // can't be drawn, and the writer refuses it.
+    const origins = new Map([['', own]]);
+    for (const r of records.values()) {
+      if (!isCopy(r.kind) || !r.from || origins.has(originKey(r.from))) continue;
+      const origin = await this.#origin(r.from.src, r.from.index).catch(() => null);
+      origins.set(originKey(r.from), origin ? selectableObjects(origin) : []);
+    }
     const added = [];
     for (const r of records.values()) {
       if (r.kind === insertedKind) added.push(insertedObject(analysis, r, added.length));
       else if (isCopy(r.kind)) {
-        const source = byKey.get(r.kind === textCopyKind ? `run:${r.target.key}` : r.target.key);
+        const source = sourceObject(origins.get(r.from ? originKey(r.from) : ''), r);
         if (source) added.push(copiedObject(source, r, added.length));
       }
     }
@@ -266,6 +275,12 @@ export class TextEditing {
 
   /** Deletes several objects on one page as ONE undo step — all of them, or none if any refuses. */
   async removeObjects(pageNumber, keys) {
+    this.#view.annotations.applyEdits(await this.#removals(pageNumber, keys));
+    return true;
+  }
+
+  /** The [record, replacement] pairs that delete these objects of one page; EditError if any refuses. */
+  async #removals(pageNumber, keys) {
     const view = this.#view;
     const entry = view.shownPlan?.[pageNumber - 1];
     // What planning needs is read first, so nothing is awaited between reading the records and
@@ -285,8 +300,7 @@ export class TextEditing {
       // A picture put there from a file is its record, so deleting it is taking the record away.
       : object.ref.inserted ? null
         : planImageEdit({ object, removed: true, entry: current.id, id: record?.id })]);
-    view.annotations.applyEdits(pairs);
-    return true;
+    return pairs;
   }
 
   /**
@@ -358,76 +372,168 @@ export class TextEditing {
   // on a page, as ONE undo step, and hands back their keys so they can be selected.
 
   /**
-   * What copying these objects of one page takes: { owner, from: { src, index }, items, sources }, to
-   * give to pasteObjects(). `sources` holds the bytes of any picture from a file among them, so it can
-   * be pasted into another document too. EditError when one of them can't be copied.
+   * What copying these objects of one page takes: { owner, from: { entry, src, index }, items,
+   * sources, documents }, to give to pasteObjects(). Each item of the page's own content names the page
+   * whose original content it draws from (`from`); `sources` holds the bytes of any picture from a
+   * file among them and `documents` those of the PDFs that content is in, so they can be pasted into
+   * another document too. EditError when one of them can't be copied.
    */
   async copyObjects(pageNumber, keys) {
+    const view = this.#view;
     const { entry, found } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) this.#refuse(object, 'copy', found.length);
     const items = found.map(({ object, record }) => snapshotOf(object, record));
     const sources = new Map();
+    const documents = new Map();
+    const analyses = new Map(); // `${src}:${index}` → the verified analysis of a page they draw from
     for (const item of items) {
-      if (item.kind !== insertedKind) continue;
-      const bytes = this.#view.sources.get(item.picture.source);
-      if (!bytes) throw new EditError('missing', 'A picture being copied isn’t available any more, so nothing was copied.');
-      sources.set(item.picture.source, bytes);
+      const picture = item.kind === insertedKind ? item.picture : item.replacement;
+      if (picture) {
+        const bytes = view.sources.get(picture.source);
+        if (!bytes) throw new EditError('missing', 'A picture being copied isn’t available any more, so nothing was copied.');
+        sources.set(picture.source, bytes);
+      }
+      if (item.kind === insertedKind) continue;
+      item.from ??= { src: entry.src, index: entry.index };
+      const verified = this.#pages.get(originKey(item.from));
+      if (verified) analyses.set(originKey(item.from), verified);
+      if (documents.has(item.from.src)) continue;
+      const bytes = item.from.src === 'base' ? await view.baseBytes() : view.sources.get(item.from.src);
+      if (!bytes) throw new EditError('missing', 'The PDF these objects come from isn’t available any more, so nothing was copied.');
+      documents.set(item.from.src, bytes);
     }
-    return { owner: this.#view, from: { src: entry.src, index: entry.index }, items, sources };
+    return { owner: view, from: { entry: entry.id, src: entry.src, index: entry.index }, items, sources, documents, analyses };
   }
 
   /**
    * Pastes what copyObjects() took onto a page, each object moved by `offset` (a page-space transform)
    * from where it was copied: ONE undo step, and the new objects' keys, in the order copied.
    *
-   * Text and pictures the page itself draws are drawn again from that page's original content, so they
-   * can only be pasted on a page showing the same content — the page they came from or a duplicate of
-   * it — in the same document. A picture put there from a file can go on any page of any document.
-   * All or nothing: EditError, with nothing stored, when any of them can't be pasted.
+   * Text and pictures a page draws are drawn again from that page's ORIGINAL content: on the page they
+   * came from or a duplicate of it, by that page's own resources; on any other page, carrying those
+   * resources along (objects/copies.js). From another document, that document's PDF is kept in this
+   * one's sources, as a PDF pages were inserted from is — refused for a PDF/A document, whose fonts and
+   * colours Vellum can't check. A picture put there from a file carries its own image.
+   *
+   * Pasted on a page other than the one they were copied from, objects that would land wholly off it
+   * (a smaller page, an offset crop box) are brought to its middle, together. All or nothing: EditError,
+   * with nothing stored, when any of them can't be pasted.
    */
   async pasteObjects(pageNumber, clip, offset = IDENTITY) {
+    const view = this.#view;
+    const { records, adopt } = await this.#pasted(pageNumber, clip, offset, { fit: true });
+    for (const [id, bytes] of adopt) if (!view.sources.has(id)) view.sources.set(id, bytes);
+    view.annotations.applyEdits(records.map((r) => [null, r]));
+    return records.map(keyOfRecord);
+  }
+
+  /**
+   * Moves objects of one page onto another page, each moved by `delta` (a transform in the page
+   * spaces' shared coordinates): ONE undo step that takes them off their page and puts them, as they
+   * are now, on the other — on the terms of copying and pasting them, and only when every one of them
+   * may be moved, copied and deleted. Resolves the moved objects' keys on the new page. On the same
+   * page this is an ordinary move, and resolves the same keys.
+   */
+  async moveObjectsToPage(pageNumber, keys, toPageNumber, delta = IDENTITY) {
+    const view = this.#view;
+    if (toPageNumber === pageNumber) {
+      await this.transformObjects(pageNumber, keys.map((key) => ({ key, delta })));
+      return [...keys];
+    }
+    if (!view.shownPlan?.[toPageNumber - 1]) throw new EditError('missing', 'That page isn’t in the document.');
+    const { found } = await this.#objectsAt(pageNumber, keys);
+    for (const verb of ['move', 'copy', 'delete']) for (const { object } of found) this.#refuse(object, verb, found.length);
+    const clip = await this.copyObjects(pageNumber, keys);
+    const { records, adopt } = await this.#pasted(toPageNumber, clip, delta, { fit: false });
+    // Read last, so nothing is awaited between reading the records and storing what replaces them.
+    const removals = await this.#removals(pageNumber, keys);
+    for (const [id, bytes] of adopt) if (!view.sources.has(id)) view.sources.set(id, bytes);
+    view.annotations.applyEdits([...removals, ...records.map((r) => [null, r])]);
+    return records.map(keyOfRecord);
+  }
+
+  /**
+   * The records pasting `clip` on a page makes, and the bytes this document's sources must `adopt`
+   * ([id, bytes]) for them to be written. Nothing is stored here.
+   */
+  async #pasted(pageNumber, clip, offset, { fit }) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     if (!clip?.items?.length) throw new EditError('missing', 'Nothing has been copied.');
     if (!isValid(offset)) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
     const constraints = await this.#constraints();
-    const { entry, analysis, objects } = await this.objects(pageNumber);
+    const { entry, analysis } = await this.objects(pageNumber);
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
-    const sameContent = clip.owner === view && entry.src === clip.from?.src && entry.index === clip.from?.index;
-    const byKey = new Map(objects.map((o) => [o.ref.key, o]));
+    const foreign = clip.owner !== view;
     const count = clip.items.length;
-    const records = clip.items.map((item) => {
-      const transform = quantize(multiply(item.transform, offset));
-      if (!transform) throw new EditError('content', 'That copy couldn’t be worked out, so nothing was pasted.');
+    const adopt = new Map();
+
+    // Where each item's content is, in this document's terms, and the object it is drawn from.
+    const placed = [];
+    for (const item of clip.items) {
       if (item.kind === insertedKind) {
         if (constraints.embeddedFontsOnly) {
           throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, and Vellum can’t check that a new picture meets it, so nothing was pasted.');
         }
-        if (!clip.sources?.get(item.picture.source) && !view.sources.get(item.picture.source)) {
-          throw new EditError('missing', 'A picture being pasted isn’t available any more, so nothing was pasted.');
+        const bytes = clip.sources?.get(item.picture.source) ?? view.sources.get(item.picture.source);
+        if (!bytes) throw new EditError('missing', 'A picture being pasted isn’t available any more, so nothing was pasted.');
+        adopt.set(item.picture.source, bytes);
+        placed.push({ item, quad: UNIT_QUAD });
+        continue;
+      }
+      if (!item.from) throw new EditError('paste', 'What was copied can’t be pasted, so nothing was pasted.');
+      let src = item.from.src;
+      if (foreign) {
+        if (constraints.embeddedFontsOnly) {
+          throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, and Vellum can’t check that text or pictures from another PDF meet it, so nothing was pasted.');
         }
-        return planInsertion({ picture: item.picture, transform, entry: entry.id });
+        const bytes = clip.documents?.get(src);
+        if (!bytes) throw new EditError('missing', 'The PDF these objects were copied from isn’t available any more, so nothing was pasted.');
+        // The same PDF is kept once, however many times something is pasted from it.
+        src = [...view.sources].find(([, b]) => b === bytes)?.[0] ?? [...adopt].find(([, b]) => b === bytes)?.[0] ?? newId();
+        adopt.set(src, bytes);
+        // That document already checked this very page, from these very bytes, against what pdf.js
+        // drew: its verified analysis is this page's here too.
+        const verified = clip.analyses?.get(originKey(item.from));
+        const here = `${src}:${item.from.index}`;
+        if (verified?.verified && !this.#pages.has(here)) this.#pages.set(here, verified);
       }
-      if (!sameContent) {
-        throw new EditError('paste', count > 1
-          ? 'Some of these objects are part of the page they were copied from, and can only be pasted on that page (or a duplicate of it) for now, so nothing was pasted.'
-          : 'This object is part of the page it was copied from, and can only be pasted on that page (or a duplicate of it) for now.');
+      if (item.replacement) {
+        const bytes = clip.sources?.get(item.replacement.source) ?? view.sources.get(item.replacement.source);
+        if (!bytes) throw new EditError('missing', 'A picture being pasted isn’t available any more, so nothing was pasted.');
+        adopt.set(item.replacement.source, bytes);
       }
-      // Drawn from the page's own object, so that object has to allow it still.
-      const source = byKey.get(item.kind === textCopyKind ? `run:${item.target.key}` : item.target.key);
-      if (!source) throw new EditError('missing', 'What was copied isn’t on this page, so nothing was pasted.');
+      const origin = await this.#origin(src, item.from.index, adopt.get(src));
+      const originBlocked = origin.tainted || origin.summary.kind === 'unreadable' ? 'unreadable' : origin.unbalanced ? 'structure' : null;
+      if (originBlocked) throw new EditError('not-editable', REASONS[originBlocked], { reason: originBlocked });
+      // Drawn from that page's own object, so that object has to allow it still.
+      const source = sourceObject(selectableObjects(origin), item);
+      if (!source) throw new EditError('missing', 'What was copied isn’t in the page it came from any more, so nothing was pasted.');
       this.#refuse(source, 'copy', count);
       if (item.encoding?.mode === 'standard' && constraints.embeddedFontsOnly) {
         throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; this text uses a substitute font, so it wasn’t pasted.');
       }
-      return planCopy({ ...item, transform, entry: entry.id });
-    });
-    for (const item of clip.items) {
-      if (item.kind === insertedKind && !view.sources.has(item.picture.source)) view.sources.set(item.picture.source, clip.sources.get(item.picture.source));
+      const sameContent = entry.src === src && entry.index === item.from.index;
+      placed.push({ item, quad: source.geometry.quad, from: sameContent ? null : { src, index: item.from.index } });
     }
-    view.annotations.applyEdits(records.map((r) => [null, r]));
-    return records.map((r) => (r.kind === insertedKind ? insertedKey(r) : copyKey(r)));
+
+    // Brought onto the page, together, when all of them would land off it.
+    let shift = IDENTITY;
+    const page = analysis?.box ?? (entry.width && entry.height ? [0, 0, entry.width, entry.height] : null);
+    const moved = foreign || clip.from?.entry !== entry.id;
+    const bounds = unionBox(placed.map(({ item, quad }) => transformQuad(quad, multiply(item.transform, offset))));
+    if (fit && moved && page && bounds && !overlaps(bounds, page)) {
+      shift = translate((page[0] + page[2] - bounds[0] - bounds[2]) / 2, (page[1] + page[3] - bounds[1] - bounds[3]) / 2);
+    }
+
+    const records = placed.map(({ item, from }) => {
+      const transform = quantize(multiply(multiply(item.transform, offset), shift));
+      if (!transform) throw new EditError('content', 'That copy couldn’t be worked out, so nothing was pasted.');
+      if (item.kind === insertedKind) return planInsertion({ picture: item.picture, transform, entry: entry.id });
+      return planCopy({ ...item, from, transform, entry: entry.id });
+    });
+    return { records, adopt: [...adopt] };
   }
 
   /**
@@ -503,12 +609,33 @@ export class TextEditing {
     return analysis;
   }
 
+  /**
+   * The ORIGINAL content of a page of one of this document's PDFs, whether or not the plan still shows
+   * it — what a copy with `from` draws from. The verified analysis when that page has been read on
+   * screen; otherwise read here, once. `bytes` is the PDF when it isn't in the sources yet (a paste
+   * from another document, about to be kept there).
+   */
+  #origin(src, index, bytes = null) {
+    const key = `${src}:${index}`;
+    const verified = this.#pages.get(key);
+    if (verified) return Promise.resolve(verified);
+    if (!this.#origins.has(key)) {
+      const pending = this.#source(src, bytes).then((source) => {
+        if (!Number.isInteger(index) || index < 0 || index >= source.pageCount) throw new EditError('missing', 'The page these objects come from isn’t in its PDF.');
+        return analyzePage(source.page(index));
+      });
+      pending.catch(() => this.#origins.delete(key));
+      this.#origins.set(key, pending);
+    }
+    return this.#origins.get(key);
+  }
+
   /** The PDF a page comes from (the opened file, or one pages were inserted from), read once. */
-  #source(src) {
+  #source(src, given = null) {
     if (!this.#sources.has(src)) {
       const pending = (async () => {
         const lib = await loadPdfLib();
-        const bytes = src === 'base' ? await this.#view.baseBytes() : this.#view.sources.get(src);
+        const bytes = src === 'base' ? await this.#view.baseBytes() : this.#view.sources.get(src) ?? given;
         if (!bytes) throw new EditError('missing', 'The PDF these pages came from is no longer available.');
         return openSource(lib, bytes);
       })();
@@ -518,6 +645,20 @@ export class TextEditing {
     return this.#sources.get(src);
   }
 }
+
+/** The object of a page (`objects`) that a copy's record or clip item draws again, or null. */
+const sourceObject = (objects, item) => {
+  const key = item.kind === textCopyKind ? `run:${item.target.key}` : item.target.key;
+  return objects?.find((o) => o.ref.key === key) ?? null;
+};
+
+/** The object-model key of a record pasted or moved onto a page. */
+const keyOfRecord = (r) => (r.kind === insertedKind ? insertedKey(r) : copyKey(r));
+
+const UNIT_QUAD = Object.freeze([0, 0, 1, 0, 1, 1, 0, 1]);
+
+/** Do two boxes [x1, y1, x2, y2] share any area? */
+const overlaps = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
 
 /** Are these the same stored placement? Both may be absent, which is also the same. */
 const sameAs = (a, b) => (!a && isIdentity(b)) || Boolean(a && b && a.every((v, i) => v === b[i]));

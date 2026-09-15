@@ -692,6 +692,33 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ].join('\n'), { Font: { F1 } });
   });
 
+  // 25. Cross-page copies: page 1 draws a picture, and text in an embedded TrueType font through an
+  // ExtGState and a named colour space; page 2 uses the SAME resource names for different things (a
+  // standard font, another image, another opacity), so a copy that drew by the old names would draw the
+  // wrong ones; page 3 is too small for page 1's objects to land on where they were.
+  await build('crosspage', async (b) => {
+    const { ctx } = b;
+    b.page(PageSizes.Letter, [
+      'q 200 0 0 150 72 500 cm /Im1 Do Q',
+      `q /Half gs /CS0 cs 0.2 0.4 0.6 sc ${text('F1', 14, 72, 470, 'Tinted half text')} Q`,
+      text('F1', 12, 72, 440, 'Plain caption'),
+    ].join('\n'), {
+      Font: { F1: b.trueTypeSimple('LiberationSans-Regular.ttf') },
+      XObject: { Im1: b.image(32, 32) },
+      ExtGState: { Half: { Type: 'ExtGState', ca: 0.5, CA: 0.5 } },
+      ColorSpace: { CS0: ctx.obj(['CalRGB', { WhitePoint: [0.9505, 1, 1.089] }]) },
+    });
+    b.page(PageSizes.A5, [
+      'q 50 0 0 50 300 300 cm /Im1 Do Q',
+      `q /Half gs ${text('F1', 12, 60, 500, 'Second page text')} Q`,
+    ].join('\n'), {
+      Font: { F1: b.std(StandardFonts.Helvetica) },
+      XObject: { Im1: b.image(8, 8) },
+      ExtGState: { Half: { Type: 'ExtGState', ca: 0.9 } },
+    });
+    b.page([200, 200], text('F1', 10, 20, 100, 'Small page'), { Font: { F1: b.std(StandardFonts.Helvetica) } });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

@@ -310,8 +310,9 @@ export function write({ lib, doc, page, index, analysis, records, prepared, page
   }
   if (added.length || dropped.length) {
     // A pasted copy (objects/copies.js) draws the page's own resource by name, after the page: that
-    // name must stay, even when every draw of it in the page's content has gone.
-    const drawnByCopies = new Set(pageRecords.filter((r) => r.kind === 'image-copy' && !r.replacement).map((r) => r.target?.name));
+    // name must stay, even when every draw of it in the page's content has gone. (A copy from another
+    // page draws under a name of its own, which no draw here releases.)
+    const drawnByCopies = new Set(pageRecords.filter((r) => r.kind === 'image-copy' && !r.replacement && !r.from).map((r) => r.target?.name));
     const released = dropped.filter((i) => !drawnByCopies.has(i.name));
     const names = updateResources(lib, doc, page, analysis, released, added.map((a) => a.ref));
     added.forEach(({ patch, local }, i) => {

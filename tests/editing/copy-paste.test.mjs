@@ -220,13 +220,13 @@ test('pages: a duplicated page takes its copies along; reordered and rotated pag
   });
 });
 
-test('refused, with nothing stored: another page’s content, another document, PDF/A, a changed file', async () => {
+test('refused, with nothing stored: nothing copied, PDF/A, a changed file; a picture from a file goes anywhere', async () => {
   await withSession(read('multipage'), async ({ store, session, plan, bytes, sources }) => {
     const text = (await session.objects(1)).objects.find((o) => o.kind === 'text-run');
     const clip = await session.copyObjects(1, [text.ref.key]);
-    await assert.rejects(session.pasteObjects(2, clip, OFFSET), (err) => err.kind === 'paste');
-    await assert.rejects(session.pasteObjects(1, { ...clip, owner: {} }, OFFSET), (err) => err.kind === 'paste', 'another document');
+    // (Another page and another document: tests/editing/cross-page.test.mjs.)
     await assert.rejects(session.pasteObjects(1, { ...clip, items: [] }, OFFSET), (err) => err.kind === 'missing');
+    await assert.rejects(session.pasteObjects(1, { ...clip, owner: {}, documents: new Map() }, OFFSET), (err) => err.kind === 'missing', 'another document’s PDF not given');
     assert.equal(store.edits.length, 0);
 
     // A picture put there from a file carries its own image, so it goes on any page — and any document.
@@ -240,7 +240,7 @@ test('refused, with nothing stored: another page’s content, another document, 
     // A mixed clip is all or nothing.
     const mixed = await session.copyObjects(1, [key, text.ref.key]);
     const count = store.edits.length;
-    await assert.rejects(session.pasteObjects(2, mixed, OFFSET), (err) => err.kind === 'paste');
+    await assert.rejects(session.pasteObjects(2, { ...mixed, items: [mixed.items[0], { ...mixed.items[1], target: { ...mixed.items[1].target, key: 'nothing' } }] }, OFFSET), (err) => err.kind === 'missing');
     assert.equal(store.edits.length, count);
 
     // The writer checks the fingerprint again: a copy of text that isn't in the file refuses the save.

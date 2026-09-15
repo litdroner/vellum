@@ -61,7 +61,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
 
   // Text edits rewrite only their own pages' content streams.
-  const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources }) : { changed: 0 };
+  const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources, originals: basePages }) : { changed: 0 };
 
   for (const a of annotations) {
     const page = pages[a.page - 1];

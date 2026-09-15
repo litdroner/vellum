@@ -112,6 +112,7 @@ export function createCommands(app, ui, actions) {
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
     'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },
     'edit.copyObjects': { group: 'Edit', icon: 'copy', doc: true, label: 'Copy objects', keys: ['Ctrl+C'], when: objectsSelected, run: () => doc()?.textEditor?.copySelected() },
+    'edit.cutObjects': { group: 'Edit', icon: 'scissors', doc: true, label: 'Cut objects', keys: ['Ctrl+X'], when: objectsSelected, run: () => doc()?.textEditor?.cutSelected() },
     'edit.pasteObjects': { group: 'Edit', icon: 'files', doc: true, label: 'Paste objects', keys: ['Ctrl+V'], when: () => Boolean(doc()?.textEditor?.canPaste), run: () => doc()?.textEditor?.paste() },
     'edit.duplicateObjects': { group: 'Edit', icon: 'copy-plus', doc: true, label: 'Duplicate objects', keys: ['Ctrl+D'], when: objectsSelected, run: () => doc()?.textEditor?.duplicateSelected() },
     'edit.selectAll': { group: 'Edit', icon: 'text-select', doc: true, label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },

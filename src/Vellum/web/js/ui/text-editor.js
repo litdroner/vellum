@@ -50,7 +50,10 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     the host for a PNG or JPEG file, and the picture's image becomes that one, in the same frame.
 //   - copy, paste and duplicate (Ctrl+C, Ctrl+V, Ctrl+D, commands.js): the selected objects are copied
 //     as they are now, and pasted a step right and down as new objects (editing/objects/copies.js),
-//     selected, as one undo step.
+//     selected, as one undo step; pasted on another page or document, or after Ctrl+X (cut), they land
+//     where they were.
+//   - moving to another page: a move drag let go over another page puts the objects there, under the
+//     pointer, as one undo step (session.moveObjectsToPage).
 //
 // Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
 //
@@ -342,8 +345,35 @@ export class TextEditor {
   async copySelected() {
     const clip = await this.#copyOfSelection('copy');
     if (!clip) return false;
-    objectClipboard = { clip, pastes: new Map() };
+    objectClipboard = { clip, pastes: new Map(), cut: false };
     this.#announce(`${counted(clip.items.length, 'object', 'objects')} copied.`);
+    return true;
+  }
+
+  /**
+   * Cuts the selected objects (Ctrl+X in Edit mode): copied as they are now, then deleted, one undo
+   * step. Pasted anywhere — another page, another document — they land where they were, which is how
+   * objects are moved to another page from the keyboard. Resolves true when cut; otherwise says why.
+   */
+  async cutSelected() {
+    const current = this.#selection.current;
+    if (!current) {
+      this.#notify('Select objects in Edit mode to cut them.');
+      return false;
+    }
+    const clip = await this.#copyOfSelection('cut');
+    if (!clip) return false;
+    const objects = current.keys.map((key) => this.#liveObject(current.page, key));
+    if (objects.some((o) => !o) || !this.#allow(objects, 'delete')) return false;
+    try {
+      await this.#view.textEditing.removeObjects(current.page, current.keys);
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be cut: ${err.message}`);
+      return false;
+    }
+    objectClipboard = { clip, pastes: new Map(), cut: true };
+    this.#select(null);
+    this.#announce(`${counted(clip.items.length, 'object', 'objects')} cut.`);
     return true;
   }
 
@@ -364,8 +394,10 @@ export class TextEditor {
     const page = n ?? this.#view.viewer.currentPageNumber ?? null;
     const entry = page ? this.#view.shownPlan?.[page - 1]?.id : null;
     if (!entry) return false;
+    // A step along from what was copied, on its own page; where it was on any other page, or when cut.
+    const inPlace = held.cut || held.clip.owner !== this.#view || held.clip.from?.entry !== entry;
     const times = (held.pastes.get(entry) ?? 0) + 1;
-    const pasted = await this.#pasteOnto(page, held.clip, PASTE_STEP * times);
+    const pasted = await this.#pasteOnto(page, held.clip, PASTE_STEP * (inPlace ? times - 1 : times));
     if (pasted) held.pastes.set(entry, times);
     return pasted;
   }
@@ -380,7 +412,7 @@ export class TextEditor {
     return clip ? this.#pasteOnto(page, clip, PASTE_STEP) : false;
   }
 
-  /** The session's copy of the selection, or null having said why. `purpose`: 'copy' or 'duplicate'. */
+  /** The session's copy of the selection, or null having said why. `purpose`: 'copy', 'cut' or 'duplicate'. */
   async #copyOfSelection(purpose) {
     const current = this.#selection.current;
     if (!this.active || !current) {
@@ -1219,8 +1251,37 @@ export class TextEditor {
       await this.#reflow(drag);
       return;
     }
+    const onto = drag.mode === 'move' ? this.#otherPageAt(drag, e.clientX, e.clientY) : null;
+    if (onto) {
+      await this.#moveToPage(drag, onto, e.clientX, e.clientY);
+      return;
+    }
     const said = covers ? `${{ move: 'Moved', scale: 'Resized', stretch: 'Resized' }[drag.verb] ?? 'Changed'}; it now overlaps other content.` : null;
     await this.#write(drag.n, drag.keys.map((key) => ({ key, delta: drag.transform })), drag.verb, { said });
+  }
+
+  /** The page under a point, when it is not the page a drag started on: { n, pageView }, or null. */
+  #otherPageAt(drag, clientX, clientY) {
+    const at = pageViewAt(this.#view, document.elementFromPoint(clientX, clientY));
+    return at && at.n !== drag.n ? at : null;
+  }
+
+  /**
+   * Moves what a drag holds onto another page, the point it was grabbed by landing under the pointer
+   * (in the pages' shared user-space coordinates), and selects it there: one undo step, or the reason.
+   */
+  async #moveToPage(drag, onto, clientX, clientY) {
+    this.#clearPreview();
+    const to = toPdfPoint(onto.pageView, clientX, clientY);
+    const delta = translate(to[0] - drag.from[0], to[1] - drag.from[1]);
+    await this.#settled();
+    try {
+      const keys = await this.#view.textEditing.moveObjectsToPage(drag.n, drag.keys, onto.n, delta);
+      this.#announce(`${counted(keys.length, 'object', 'objects')} moved to page ${onto.n}.`);
+      await this.#selectWhenShown(onto.n, keys);
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be moved: ${err.message}`);
+    }
   }
 
   /**
