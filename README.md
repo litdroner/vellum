@@ -39,9 +39,18 @@ the SHA-256 GitHub publishes for it, installs it and reopens the documents you h
   symbol fonts, protected PDFs…) says why instead.
 - **Move, scale, turn and delete objects** (in Edit mode): click a line of text or a picture to select
   it, drag it to move it, or drag a corner handle to scale it proportionally. Pictures can also be
-  turned a quarter turn and mirrored; arrow keys nudge; Delete removes. Changes are written into the
-  page itself and undo as one step per gesture. Anything Vellum can't change safely (a clipped picture,
-  one inside a form or on a layer…) is refused with the reason; text isn't rotated or stretched.
+  stretched from an edge handle, turned a quarter turn and mirrored; arrow keys nudge; Delete removes.
+  Changes are written into the page itself and undo as one step per gesture. Anything Vellum can't
+  change safely (a clipped picture, one inside a form or on a layer…) is refused with the reason; text
+  isn't rotated or stretched.
+- **Several objects at once**: Shift- or Ctrl-click to add or remove one, drag a rectangle over bare
+  paper, or Ctrl+A for the page's objects; move, scale, turn, mirror, nudge and delete them together.
+  Line them up or space them evenly from the bar over the selection. Dragging snaps to other objects and
+  the page's edges and centre (hold Alt to turn it off), and what a move would newly cover is outlined.
+- **Pictures from a file**: replace a selected picture with a PNG or JPEG in exactly its frame, or insert
+  one as a new picture on a page (command palette, or the page's context menu).
+- **Paragraphs**: dragging a line of a plain paragraph moves the whole paragraph; a simple one-style
+  paragraph can be rewrapped to a new width from its right-edge handle, in its own lines and font.
 - **Page colours**: normal, dark or sepia pages (Ctrl+Shift+D), independent of the app theme.
 - **Appearance**: seven colour themes (Mist, Ocean, Sage, Blush, Sand, Lavender, Graphite), each in
   Light and an Obsidian dark mode or following Windows, plus your own accent colour. Reduce motion and
@@ -73,6 +82,7 @@ file's contents). They come back whenever you open that PDF in Vellum; other app
 | Tools: select, highlight, underline, note, draw | V, H, U, N, D (H/U mark selected text directly) |
 | Edit text: keep / cancel / next / previous | E, then Enter / Esc / Tab / Shift+Tab |
 | Selected object (Edit mode): nudge / nudge ×10 / delete | Arrow keys / Shift+arrow keys / Del |
+| Edit mode: add to selection / select the page's objects / drag without snapping | Shift or Ctrl+click / Ctrl+A / hold Alt |
 | Selected picture: turn left / right, mirror horizontally / vertically | [ / ], Shift+H / Shift+V |
 | Delete annotation / undo / redo | Del / Ctrl+Z / Ctrl+Y |
 | Print | Ctrl+P |
@@ -125,12 +135,13 @@ WebView2 profile) and is kept on uninstall.
 - Annotations on encrypted PDFs are kept by Vellum, not inside the file (see above), and their pages
   can't be rearranged.
 - Page colours are a display setting only: printing and saved files are unchanged.
-- Text editing changes one line at a time: no paragraph reflow, new text boxes or formatting (font,
-  size, bold, colour) yet. Text and pictures can be moved and scaled proportionally, but text can't be
-  rotated, pictures can't be stretched, cropped, replaced or inserted, and only one object is selected
-  at a time. New characters must exist in the document's font or in the standard Latin fonts; other
-  scripts are refused with a message. Protected (encrypted) PDFs can't be edited, and saving any change
-  to a digitally signed PDF invalidates its signature (Vellum warns about this).
+- Text editing changes one line at a time: no new text boxes or formatting (font, size, bold, colour)
+  yet, and paragraph reflow only handles simple one-style paragraphs within their existing lines. Text
+  can't be rotated or stretched, pictures can't be cropped, objects can't be moved to another page or
+  copied, and several objects can be selected only on one page. New characters must exist in the
+  document's font or in the standard Latin fonts; other scripts are refused with a message. Protected
+  (encrypted) PDFs can't be edited, and saving any change to a digitally signed PDF invalidates its
+  signature (Vellum warns about this).
 
 ## Where it's going
 
@@ -138,9 +149,8 @@ Everything below is **planned, not built** — none of it is in the app yet. The
 [docs/VELLUM_VISION.md](docs/VELLUM_VISION.md) and the status of each item in
 [docs/FEATURE_REGISTRY.md](docs/FEATURE_REGISTRY.md).
 
-- **Next (0.5.0)**: finishing object editing, starting with selecting several objects at once.
-- **Edit**: new text and formatting with a choice of fonts, image crop, replace and insert,
-  shapes, stamps.
+- **Edit**: new text and formatting with a choice of fonts, rotating text, image crop, copy/paste and
+  moves between pages, shapes, stamps.
 - **Organise and convert**: page numbers, watermarks, metadata, compression; PDF to images and Office
   formats and back.
 - **Protect and sign**: passwords and permissions, true redaction (content removed, not covered), form
