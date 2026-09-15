@@ -76,6 +76,7 @@ Vision.
 | One object, one record, holding where it ends up: a second gesture replaces the first, and one gesture is one undo | done | editing/edits.js, editing/objects/image.js |
 | Refused rather than risked: a clipped or degenerate picture, one inside a form, on a layer or under a soft mask; text is never rotated, mirrored, sheared or scaled non-uniformly | done | editing/objects/capabilities.js, editing/objects/image.js, editing/edits.js |
 | Moved, scaled, turned and deleted objects — one or several — follow their pages through reorder, duplicate, rotate and delete, and through save and reopen; everything else in the file is kept (page boxes, annotations, links, form fields, outline, metadata, and images other pages still draw) | done | editing/edits.js (followEdits), annotations/persist.js; proved in tests/editing/object-pages.test.mjs and the page-changes suite |
+| Line up and space evenly several selected objects (should-haves "alignment" and "distribution"): align left/right/top/bottom edges or centres, space evenly across or down, from an arrange bar over the selection or the command palette; edges as shown on screen whatever the rotation; one undo step, only when every object can be moved | done, unreleased | editing/objects/arrange.js, ui/text-editor.js, commands.js |
 | Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
 | Rotating text, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
 
@@ -109,7 +110,7 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 should-haves, each only if its strict tests pass (otherwise they move to a later release): paragraph grouping, alignment, distribution, snapping, image replacement, image insertion, overlap warnings, single-style paragraph reflow (last, gated) | next | §3.2 |
+| 0.5.0 should-haves left, each only if its strict tests pass (otherwise they move to a later release): snapping, image replacement, image insertion, paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated) | next | §3.2 |
 | Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |

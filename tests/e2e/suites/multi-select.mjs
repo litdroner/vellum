@@ -356,7 +356,91 @@ export async function run(t) {
     JSON.stringify(reopened.filter((o) => o.kind === 'text-run').map((o) => [o.text, o.quad.map((v) => Math.round(v))])));
   await shot('reopened');
 
-  // ---- 8. one object that can't be changed holds the whole group back ------------------------------------------
+  // ---- 8. lining up and spacing evenly: the arrange bar and the palette ----------------------------------------
+
+  area('arrange');
+  await editMode(IMAGES);
+  await q(`${V(IMAGES)}.goToPage(1)`);
+  await sleep(400);
+  await q(`${V(IMAGES)}.focus()`);
+  await c.key('Ctrl+A');
+  await sleep(700);
+  const bar = () => q(`(() => {
+    const el = ${V(IMAGES)}.el.querySelector('.vl-arrange-bar');
+    if (!el) return null;
+    const buttons = [...el.querySelectorAll('button')].filter((b) => !b.hidden).map((b) => b.getAttribute('aria-label'));
+    return { buttons };
+  })()`);
+  const press = async (label) => {
+    const at = await q(`(() => {
+      const b = [...${V(IMAGES)}.el.querySelectorAll('.vl-arrange-bar button')].find((x) => x.getAttribute('aria-label') === ${JSON.stringify(label)});
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (at) await c.mouse(at.x, at.y);
+    return Boolean(at);
+  };
+  const live = async () => (await objectsOn(IMAGES, 1)).filter((o) => !o.gone);
+  let shown = await bar();
+  check('a selection of several objects gets the arrange bar, all eight actions', shown?.buttons.length === 8, JSON.stringify(shown));
+  const arrangeDepth = await undoDepth(IMAGES);
+  check('Align left edges, from the bar', await press('Align left edges'));
+  await rest(IMAGES);
+  let placed = await live();
+  const lefts = placed.map((o) => o.x1p);
+  check('every object’s left edge is now in one place', Math.max(...lefts) - Math.min(...lefts) < 0.2, lefts.map((v) => v.toFixed(2)).join(', '));
+  check('one undo step for all of them', (await undoDepth(IMAGES)) === arrangeDepth + 1);
+  check('and the selection and the bar are still there', (await selectedKeys(IMAGES)).length === placed.length && Boolean(await bar()));
+  await q(`${V(IMAGES)}.annotations.undo()`);
+  await rest(IMAGES);
+
+  // From the command palette, which calls the same thing.
+  await q(`${V(IMAGES)}.focus()`);
+  await c.key('Ctrl+K');
+  await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+  await c.type('Space evenly down');
+  await sleep(300);
+  await c.key('Enter');
+  await sleep(500);
+  await rest(IMAGES);
+  placed = (await live()).sort((p, r) => r.y2p - p.y2p); // top of the page first
+  const vgaps = placed.slice(1).map((o, i) => placed[i].y1p - o.y2p);
+  check('Space evenly down, from the palette: every gap down the page is the same',
+    Math.max(...vgaps) - Math.min(...vgaps) < 0.2, vgaps.map((v) => v.toFixed(2)).join(', '));
+
+  // Two objects: lining up yes, spacing evenly no.
+  await revealAll(IMAGES, 1, placed.slice(0, 2).map((o) => o.key));
+  const two = (await live()).filter((o) => placed.slice(0, 2).some((p) => p.key === o.key));
+  await c.mouse(two[0].cx, two[0].cy);
+  await sleep(450);
+  if (await editorOpen(IMAGES)) { // a click on a line opens it for typing; that is not what this is about
+    await c.key('Escape');
+    await sleep(400);
+  }
+  await c.mouse(two[1].cx, two[1].cy, { modifiers: SHIFT });
+  await sleep(450);
+  shown = await bar();
+  check('with two objects the bar offers lining up only', shown?.buttons.length === 6, JSON.stringify(shown));
+
+  // With the view turned, "top" is the top a person sees.
+  await c.key('Ctrl+A');
+  await sleep(500);
+  await q(`${V(IMAGES)}.rotate(90)`);
+  await sleep(900);
+  await rest(IMAGES);
+  check('Align top edges on a turned view', await press('Align top edges'));
+  await rest(IMAGES);
+  const tops = (await live()).map((o) => o.top);
+  check('every object’s top is level on screen', Math.max(...tops) - Math.min(...tops) < 1.5, tops.map((v) => v.toFixed(1)).join(', '));
+  await q(`${V(IMAGES)}.rotate(-90)`);
+  await sleep(700);
+  await c.key('Escape');
+  await sleep(400);
+  check('Escape clears the selection, and the bar goes with it', (await selection(IMAGES)) === null && !(await bar()));
+  await shot('arranged');
+
+  // ---- 9. one object that can't be changed holds the whole group back ------------------------------------------
 
   area('refusals');
   const OBJECTS = F('objects');
@@ -390,7 +474,7 @@ export async function run(t) {
   await sleep(500);
   check('and deletes nothing', JSON.stringify(await records(OBJECTS)) === objHeld);
 
-  // ---- 9. a page change clears a selection of several ----------------------------------------------------------
+  // ---- 10. a page change clears a selection of several ----------------------------------------------------------
 
   area('page changes');
   await c.key('Ctrl+A');

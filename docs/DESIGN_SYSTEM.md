@@ -61,7 +61,12 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
 - **Segmented control**: recessed track, raised knob that slides (260 ms spring).
 - **Contextual tools**: selected text → highlight colours / underline / copy; selected annotation →
   colours / delete; selected pages → page bar (rotate, duplicate, extract, delete); text being
-  edited → font, status (substitute font, what can't be written), Cancel / Done.
+  edited → font, status (substitute font, what can't be written), Cancel / Done; several objects
+  selected in Edit mode → arrange bar (align left edges, centres, right edges | top edges, middles,
+  bottom edges | space evenly across, down — the last two only from three objects up). The arrange
+  bar is floating glass (`.vl-pop`) set just above the selection's frame; it steps aside during a
+  drag or while text is typed, and its buttons never take focus, so the object keys keep working.
+  Its edges are the ones on screen, whatever the page's or the view's rotation.
 - **Edit text**: editable text gets a quiet dashed accent outline (hover fills it, keyboard focus
   thickens it, edited text uses `accent2`); text that can't be edited shows a dotted grey outline and
   explains itself when clicked. The editor sits exactly on the text, in the page's own font and paper

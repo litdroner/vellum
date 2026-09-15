@@ -19,6 +19,9 @@ const names = [
   'sparkles', 'refresh-cw', 'wifi-off',
   'monitor', 'settings', 'command', 'palette', 'arrow-right', 'keyboard', 'pipette', 'sliders-horizontal', 'zap',
   'type',
+  'align-start-vertical', 'align-center-vertical', 'align-end-vertical',
+  'align-start-horizontal', 'align-center-horizontal', 'align-end-horizontal',
+  'align-horizontal-space-between', 'align-vertical-space-between',
 ];
 
 const icons = {};

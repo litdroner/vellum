@@ -14,7 +14,10 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
   changes and file integrity record".
 - Non-proportional picture resize (stretch): done on `main`, not yet released (2026-09-15). See
   "Picture stretch record". Every must-have is now done.
-- **0.5.0 is not complete**: the should-haves remain. See the end of "Picture stretch record".
+- Should-haves alignment and distribution: done on `main`, not yet released. See "Alignment and
+  distribution record".
+- **0.5.0 is not complete**: the other should-haves remain. See the end of "Alignment and distribution
+  record" for what is left and the recommended next step.
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -620,3 +623,54 @@ render" was caught between a thumbnail going and its redraw arriving — it now 
 Every must-have is done. The should-haves remain, each only if its strict tests pass (otherwise it
 moves to a later release): paragraph grouping, alignment, distribution, snapping, image replacement,
 image insertion, overlap warnings, single-style paragraph reflow (last, gated).
+
+## 14. Alignment and distribution record (should-haves)
+
+With several objects selected in Edit mode, an **arrange bar** floats above the selection's frame:
+align left edges, centres, right edges; top edges, middles, bottom edges; space evenly across and down
+(the last two from three objects up). The same eight actions are commands in a new palette group,
+*Arrange* (`arrange.*` in `commands.js`); both surfaces call `TextEditor.arrange(kind)`.
+
+### Decisions worth keeping
+
+- **Pure arithmetic, in display axes.** `editing/objects/arrange.js` (`alignMoves`, `distributeMoves`)
+  takes boxes and returns moves, nothing else. Boxes are measured as the page is *shown*
+  (`displayBasis(pageView)` in `page-space.js`: the viewport's turn and flip without zoom or offset),
+  so "left" is the left on screen whatever the page's /Rotate or the view's rotation; moves go back
+  to user space through the inverse, exact because pages turn only in quarter turns.
+- **Only moves.** An arrangement never scales or turns anything, so it is offered exactly when every
+  selected object can be moved (`sharedCapability(objects, 'move')`), and it is written by
+  `transformObjects` like a drag: one record per object, one undo step, all or nothing.
+- **Align to the box around the selection; space between the outermost.** Spacing evenly keeps the
+  first and last objects (by centre) exactly still — the last one's move is set to exactly zero, not
+  left to rounding — and makes every gap equal (or every overlap, when they overlap).
+- **The bar never takes focus** (its buttons swallow mousedown), hides during a drag, while text is
+  typed and below two objects, and hides its spacing buttons below three rather than disabling them.
+- **Icons**: eight Lucide icons added through `tools/build-icons.mjs`. lucide-static 1.44.0 is in the
+  local npm cache (`npm install lucide-static --offline` into a scratch folder); regenerating with it
+  reproduced the existing `icons.js` byte for byte before the new names were added.
+
+### Test results
+
+**Node**: 307 tests, 305 pass, 2 skipped, 0 fail. New `arrange.test.mjs` (7): every alignment exact
+and one-directional, zero moves for what is already aligned, even spacing with the outermost still,
+equal overlaps and stable ties, what is refused, "left" on a turned page, and a right-edge alignment
+through the session into the saved file. **End-to-end**: `multi-select` gains an *arrange* area (10
+checks, 66/66): the bar and its eight buttons, align left edges (one undo step), space evenly down from
+the palette, six buttons for two objects, align top edges with the view turned 90° (level on screen),
+Escape removes the bar. The whole default set in one batch: **358 of 358 checks in 8 suites**
+(text-editor 43, regression 48, editing-store 14, phase0 30, selection 51, manipulation 89,
+multi-select 66, page-changes 17).
+
+### Remaining for 0.5.0 (after §14) — and the next step
+
+Should-haves left, each only if its strict tests pass: **snapping**, image replacement, image
+insertion, paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated).
+
+**Recommended next step: snapping while dragging** in Edit mode — while one object or a group is
+dragged, its edges and centre snap to other objects' edges and centres and to the page's edges and
+centre, within a few screen pixels, with thin guide lines drawn in the page overlay; Alt held while
+dragging turns it off. It only changes the delta a move drag writes (still a move, same capability),
+so it builds on `#onDragMove` and `displayBasis` without touching the writer. Image replacement
+(a host file dialog, pdf-lib image embedding, a new resource per replaced draw) is the larger step
+after it.

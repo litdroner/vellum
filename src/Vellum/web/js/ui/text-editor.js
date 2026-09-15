@@ -4,12 +4,13 @@ import { PAGE_KINDS, explainRun } from '../editing/runs.js';
 import { EditError } from '../editing/edits.js';
 import { isRemoved } from '../editing/session.js';
 import { sharedCapability, refusalMessage } from '../editing/objects/capabilities.js';
+import { ALIGNMENTS, DISTRIBUTIONS, MINIMUM, alignMoves, distributeMoves } from '../editing/objects/arrange.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
-import { IDENTITY, apply, invert, multiply, translate } from '../editing/matrix.js';
+import { IDENTITY, apply, applyLinear, invert, multiply, translate } from '../editing/matrix.js';
 import { scaleAbout, quarterTurn, flip, stretch, isIdentity } from '../editing/objects/transform.js';
-import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints } from '../page-space.js';
+import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, displayBasis } from '../page-space.js';
 
 // Edit mode ("Edit text", E): shows what on a page can be selected and changed, and edits text in
 // place. The engine (editing/) finds, checks and writes the text; this module is only the
@@ -59,6 +60,19 @@ const SCALE_LIMITS = [0.05, 20];
  * right, top, left — as [the picture's own axis, the edge that stays put along it].
  */
 const EDGES = Object.freeze([['y', 1], ['x', 0], ['y', 0], ['x', 1]]);
+/** The arrange bar's buttons, in order: what each does, what it is called, its icon. */
+const ARRANGE_BUTTONS = Object.freeze([
+  ['left', 'Align left edges', 'align-start-vertical'],
+  ['center', 'Align centres', 'align-center-vertical'],
+  ['right', 'Align right edges', 'align-end-vertical'],
+  null,
+  ['top', 'Align top edges', 'align-start-horizontal'],
+  ['middle', 'Align middles', 'align-center-horizontal'],
+  ['bottom', 'Align bottom edges', 'align-end-horizontal'],
+  null,
+  ['horizontal', 'Space evenly across', 'align-horizontal-space-between'],
+  ['vertical', 'Space evenly down', 'align-vertical-space-between'],
+]);
 let nudgeSeq = 0;
 const STANDARD_CSS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
 
@@ -122,6 +136,7 @@ export class TextEditor {
   #gesture = 0; // serial number: an async hit test whose gesture has moved on is dropped
   #clickAfterDrag = false;
   #editor = null; // { n, key, item, el, paper, input, bar, status, done, pending }
+  #arrangeBar = null; // { el, spacing } - shown over a selection of several objects
   #committing = null;
   #tip = null;
   #hoverQueued = false;
@@ -164,6 +179,44 @@ export class TextEditor {
     return this.#commit();
   }
 
+  /**
+   * Lines the selected objects up — `left`, `center`, `right`, `top`, `middle` or `bottom` — or spaces
+   * them evenly, `horizontal` or `vertical`, as ONE undo step, and only when every one of them can be
+   * moved. Edges are the ones a person sees, whatever the page's rotation or the view's. The arrange
+   * bar and the commands (commands.js) both call this, so the two can't do different things.
+   * Resolves true when anything moved.
+   */
+  async arrange(kind) {
+    const distribute = DISTRIBUTIONS.includes(kind);
+    if (!distribute && !ALIGNMENTS.includes(kind)) return false;
+    const current = this.#selection.current;
+    if (!this.active || !current || current.keys.length < (distribute ? MINIMUM.distribute : MINIMUM.align)) {
+      this.#notify(distribute ? 'Select three or more objects in Edit mode to space them evenly.' : 'Select two or more objects in Edit mode to line them up.');
+      return false;
+    }
+    if (!(await this.commitPending())) return false;
+    this.#closeEditor();
+    await this.#settled();
+    const page = await this.#ensurePage(current.page);
+    const pageView = this.#view.viewer.getPageView(current.page - 1);
+    const objects = current.keys.map((key) => this.#liveObject(current.page, key));
+    if (!page?.data || !pageView || objects.some((o) => !o) || !this.#allow(objects, 'move')) return false;
+    this.#flushNudge();
+    // Measured as the page is shown, moved in the page's own user space.
+    const shown = displayBasis(pageView);
+    const back = invert(shown);
+    const quads = new Map(objects.map((o) => [o.ref.key, this.#shownQuad(page, o.ref.key, o.geometry.quad)]));
+    if (!back || [...quads.values()].some((q) => !q)) return false;
+    const boxes = objects.map((o) => ({ key: o.ref.key, box: quadBox(transformQuad(quads.get(o.ref.key), shown)) }));
+    const moves = (distribute ? distributeMoves(boxes, kind) : alignMoves(boxes, kind)) ?? [];
+    const deltas = moves.map(({ key, dx, dy }) => ({ key, delta: translate(...applyLinear(back, dx, dy)) }));
+    if (!deltas.length) return false;
+    this.#showPreview(current.page, new Map(deltas.map(({ key, delta }) => [key, transformQuad(quads.get(key), delta)])));
+    const changed = await this.#write(current.page, deltas, 'move', { said: distribute ? 'Spaced evenly.' : 'Lined up.' });
+    if (!changed) this.#announce(distribute ? 'They were already evenly spaced.' : 'They were already lined up.');
+    return changed;
+  }
+
   // ---- entering and leaving edit mode ---------------------------------------------------
 
   async #toolChanged() {
@@ -176,6 +229,7 @@ export class TextEditor {
       this.#hideTip();
       this.#hover = null;
       this.#selection.clear();
+      this.#syncArrangeBar();
       view.annotLayer.clearDecorations();
       view.container.classList.remove('vl-edit-hover', 'vl-edit-locked');
       return;
@@ -398,6 +452,7 @@ export class TextEditor {
       shapes.push(svg('polygon', { class: 'vl-object-marquee', points: quadPoints(boxQuad(drag.box)) }));
     }
     layer.decorate(page.n, shapes);
+    if (page.n === this.#selection.page || this.#arrangeBar) this.#syncArrangeBar();
   }
 
   /** Selects exactly one object — or nothing, given nothing. Only identity ever goes in. */
@@ -422,7 +477,56 @@ export class TextEditor {
       if (page) this.#draw(page);
     }
     if (after && after.keys.length > 1) this.#announce(`${counted(after.keys.length, 'object', 'objects')} selected.`);
+    this.#syncArrangeBar();
     return true;
+  }
+
+  // ---- the arrange bar ---------------------------------------------------------------------------------
+  // Over a selection of several objects, a small floating bar lines them up or spaces them evenly
+  // (arrange()). It sits by the frame around the selection, steps aside while a drag is under way or
+  // text is being typed, and never takes the keyboard focus from the page, so the object keys keep
+  // working with it on screen. Every one of its actions is also a command, for the palette.
+
+  #syncArrangeBar() {
+    const selection = this.#selection;
+    const page = this.active && !this.#editor && !this.#drag?.moved && selection.size >= MINIMUM.align
+      ? this.#pages.get(selection.page) : null;
+    const pageView = page?.data ? this.#view.viewer.getPageView(page.n - 1) : null;
+    const quads = pageView ? selection.keys.map((key) => {
+      const object = this.#liveObject(page.n, key);
+      return object ? this.#shownQuad(page, key, object.geometry.quad) : null;
+    }) : [];
+    const box = quads.length && quads.every(Boolean) ? unionBox(quads) : null;
+    const corners = box ? toClientQuad(pageView, boxQuad(box)) : null;
+    if (!corners) {
+      this.#arrangeBar?.el.remove();
+      this.#arrangeBar = null;
+      return;
+    }
+    const bar = this.#arrangeBar ??= this.#buildArrangeBar();
+    for (const el of bar.spacing) el.hidden = selection.size < MINIMUM.distribute;
+    const xs = corners.map((p) => p[0]);
+    const ys = corners.map((p) => p[1]);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    this.#placeNear(bar.el, new DOMRect(left, top, Math.max(...xs) - left, Math.max(...ys) - top), 'above');
+  }
+
+  #buildArrangeBar() {
+    const keep = (e) => e.preventDefault(); // pressing a button leaves the focus where it was
+    const children = ARRANGE_BUTTONS.map((entry) => {
+      if (!entry) return h('div', { class: 'vl-sep' });
+      const [kind, label, iconName] = entry;
+      return h('button', {
+        class: 'tb-btn small', title: label, 'aria-label': label, html: icon(iconName, 16), onMousedown: keep, onClick: () => this.arrange(kind),
+      });
+    });
+    // Spacing evenly needs three objects: those buttons, and the separator before them, come and go.
+    const first = ARRANGE_BUTTONS.findIndex((entry) => entry && DISTRIBUTIONS.includes(entry[0]));
+    const spacing = children.slice(ARRANGE_BUTTONS[first - 1] === null ? first - 1 : first);
+    const el = h('div', { class: 'vl-pop vl-arrange-bar ui', role: 'toolbar', 'aria-label': 'Arrange the selected objects' }, ...children);
+    this.#view.container.append(el);
+    return { el, spacing };
   }
 
   /**
@@ -505,7 +609,7 @@ export class TextEditor {
       this.#clickAfterDrag = false; // the pointerup that ended a drag: it selected and moved already
       return;
     }
-    if (!this.active || e.button !== 0 || e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip')) return;
+    if (!this.active || e.button !== 0 || e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip, .vl-arrange-bar')) return;
     const hit = await this.#hitAt(e.target, e.clientX, e.clientY);
     if (!hit) return;
     // Shift or Ctrl: the object clicked joins the selection, or leaves it if it was already in.
@@ -551,7 +655,7 @@ export class TextEditor {
 
   async #onPointerDown(e) {
     if (!this.active || e.button !== 0) return;
-    if (e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip')) return;
+    if (e.target.closest?.('.vl-text-editor, .vl-edit-bar, .vl-edit-tip, .vl-arrange-bar')) return;
     this.#clickAfterDrag = false;
     const seq = ++this.#gesture;
     // Something is being typed and the press is elsewhere on the page: keep it first, exactly as
@@ -660,6 +764,7 @@ export class TextEditor {
     if (!drag.moved && Math.hypot(e.clientX - drag.client[0], e.clientY - drag.client[1]) < DRAG_THRESHOLD) return;
     if (!drag.moved) {
       drag.moved = true;
+      this.#syncArrangeBar(); // out of the way while the hand is moving
       if (drag.mode === 'refused') {
         this.#notify(drag.message);
         return;
@@ -692,6 +797,7 @@ export class TextEditor {
     const drag = this.#drag;
     if (!drag) return;
     this.#drag = null;
+    if (drag.moved) this.#syncArrangeBar();
     if (drag.moved && drag.mode !== 'refused') {
       try {
         this.#view.container.releasePointerCapture(drag.pointerId ?? e.pointerId);
@@ -728,6 +834,7 @@ export class TextEditor {
     this.#clearPreview();
     const page = drag.mode === 'marquee' ? this.#pages.get(drag.n) : null;
     if (page) this.#draw(page);
+    this.#syncArrangeBar();
     this.#announce('Cancelled.');
     return true;
   }
@@ -760,12 +867,12 @@ export class TextEditor {
    * gestures in quick succession are perfectly ordinary, and "Vellum is still updating the pages"
    * is an answer for a person who asked twice, not for a person who turned a picture twice.
    */
-  async #write(n, moves, verb, { coalesce = null } = {}) {
+  async #write(n, moves, verb, { coalesce = null, said = null } = {}) {
     if (!moves.length || moves.some((m) => !m.delta)) return false;
     await this.#settled();
     try {
       const changed = await this.#view.textEditing.transformObjects(n, moves, { verb, coalesce });
-      if (changed) this.#announce({ move: 'Moved.', scale: 'Resized.', stretch: 'Resized.', rotate: 'Turned.' }[verb] ?? 'Changed.');
+      if (changed) this.#announce(said ?? { move: 'Moved.', scale: 'Resized.', stretch: 'Resized.', rotate: 'Turned.' }[verb] ?? 'Changed.');
       else this.#clearPreview();
       return changed;
     } catch (err) {
@@ -1341,6 +1448,7 @@ export class TextEditor {
   #reposition() {
     this.#hideTip();
     if (this.#editor) this.#layout(this.#editor);
+    this.#syncArrangeBar();
   }
 
   /** Positions an element inside the scroll container near a screen rectangle (so it scrolls with the page). */

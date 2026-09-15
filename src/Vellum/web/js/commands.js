@@ -27,6 +27,9 @@ export function createCommands(app, ui, actions) {
     fn(view, ids);
   };
   const pages = actions.pages;
+  // Lining up and spacing the objects selected in Edit mode: the same method the arrange bar calls,
+  // which says what to do when there is nothing (or not enough) selected.
+  const arrange = (kind) => doc()?.textEditor?.arrange(kind);
 
   // An object is selected in Edit mode: the arrow keys nudge it, so they don't also turn the page.
   // Nothing else changes — with nothing selected, and in every other tool, they page as they always did.
@@ -91,6 +94,15 @@ export function createCommands(app, ui, actions) {
     },
 
     'edit.text': { group: 'Edit', icon: 'type', doc: true, label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
+
+    'arrange.alignLeft': { group: 'Arrange', icon: 'align-start-vertical', doc: true, label: 'Align left edges', run: () => arrange('left') },
+    'arrange.alignCenter': { group: 'Arrange', icon: 'align-center-vertical', doc: true, label: 'Align centres', run: () => arrange('center') },
+    'arrange.alignRight': { group: 'Arrange', icon: 'align-end-vertical', doc: true, label: 'Align right edges', run: () => arrange('right') },
+    'arrange.alignTop': { group: 'Arrange', icon: 'align-start-horizontal', doc: true, label: 'Align top edges', run: () => arrange('top') },
+    'arrange.alignMiddle': { group: 'Arrange', icon: 'align-center-horizontal', doc: true, label: 'Align middles', run: () => arrange('middle') },
+    'arrange.alignBottom': { group: 'Arrange', icon: 'align-end-horizontal', doc: true, label: 'Align bottom edges', run: () => arrange('bottom') },
+    'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
+    'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
     'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },

@@ -1285,6 +1285,8 @@ kbd {
 :root[data-page-tone="dark"] .vl-text-paper { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
 :root[data-page-tone="sepia"] .vl-text-paper { filter: url(#page-tone-sepia); }
 .vl-edit-bar { z-index: 22; max-width: min(560px, calc(100% - 24px)); }
+/* Over a selection of several objects: line them up, space them evenly. */
+.vl-arrange-bar { z-index: 21; gap: 2px; }
 .vl-edit-font { flex: none; padding: 0 4px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }
 .vl-edit-status { flex: 1; min-width: 0; padding: 0 4px; color: var(--ink-3); font-size: 12px; line-height: 1.3; }
 .vl-edit-status:empty { display: none; }

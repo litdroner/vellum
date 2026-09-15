@@ -6,7 +6,7 @@ import { icon } from '../icons.js';
 // app can do is here, and nothing it can't.
 
 const MAX_RESULTS = 60;
-const GROUP_ORDER = ['Recent files', 'File', 'Annotate', 'Pages', 'Page', 'View', 'Search', 'Edit', 'Tabs', 'App'];
+const GROUP_ORDER = ['Recent files', 'File', 'Annotate', 'Pages', 'Page', 'View', 'Search', 'Edit', 'Arrange', 'Tabs', 'App'];
 const fileName = (path) => path.slice(path.lastIndexOf('\\') + 1);
 const folderOf = (path) => path.slice(0, Math.max(0, path.lastIndexOf('\\')));
 

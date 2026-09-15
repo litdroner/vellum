@@ -49,3 +49,15 @@ export function toClientQuad(pageView, quad) {
 
 /** `px` screen pixels as PDF points at this page's current zoom. */
 export const tolerancePoints = (pageView, px) => px / pageView.viewport.scale;
+
+/**
+ * PDF user space as the page is shown: the linear map from user space to display axes (x to the
+ * right, y downwards), in points — the viewport's own transform without its zoom or its offset. A
+ * page is only ever turned in quarter turns, so this is a turn and a flip, and it inverts exactly.
+ * Measures where things are as a person sees them, whatever the page's /Rotate or the viewer's.
+ */
+export function displayBasis(pageView) {
+  const vp = pageView.viewport;
+  const [a, b, c, d] = vp.transform;
+  return [a / vp.scale, b / vp.scale, c / vp.scale, d / vp.scale, 0, 0];
+}
