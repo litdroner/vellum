@@ -518,6 +518,10 @@ document.addEventListener('contextmenu', (e) => {
   } else if (!selected && onPage) {
     items.push({ label: 'Add note here', icon: 'sticky-note', action: () => layer.addNoteAt(e.clientX, e.clientY) }, '-');
   }
+  const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;
+  if (pageNumber && view.textEditor?.active) {
+    items.push({ label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) }, '-');
+  }
   if (link && /^(https?|mailto):/i.test(link.href)) {
     items.push({ label: 'Open link', icon: 'external-link', action: () => window.open(link.href, '_blank') });
     items.push({ label: 'Copy link address', icon: 'copy', action: () => copyText(link.href) }, '-');

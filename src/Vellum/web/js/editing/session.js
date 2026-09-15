@@ -9,11 +9,13 @@
 // is the caller's to work out (objects/geometry.js transformQuad) and never something kept here.
 
 import { openSource } from './source.js';
-import { analyzePage, verifyPage } from './runs.js';
+import { analyzePage, verifyPage, REASONS } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
 import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
+import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
+import { insertedObject } from './objects/page-objects.js';
 import { IDENTITY, multiply } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
@@ -50,7 +52,7 @@ export class TextEditing {
     if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
     if (entry.src === 'blank') return { entry, kind: 'no-text', runs: [] };
     const analysis = await this.#analysis(entry, pageNumber);
-    const edits = new Map(this.#view.annotations.edits.filter((e) => e.entry === entry.id).map((e) => [e.target.key, e]));
+    const edits = new Map(this.#view.annotations.edits.filter((e) => e.entry === entry.id && e.kind === 'text').map((e) => [e.target.key, e]));
     return {
       entry,
       kind: analysis.summary.kind,
@@ -75,21 +77,24 @@ export class TextEditing {
     if (reason) throw new EditError('document', reason);
     const entry = this.#view.shownPlan?.[pageNumber - 1];
     if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
-    if (entry.src === 'blank') return { entry, kind: 'no-text', objects: [], analysis: null };
-    const analysis = await this.#analysis(entry, pageNumber);
+    const analysis = entry.src === 'blank' ? null : await this.#analysis(entry, pageNumber);
+    const records = this.#recordsOf(entry);
+    // Pictures put on the page from a file are objects too, after everything the page draws itself.
+    const inserted = [...records.values()].filter((r) => r.kind === insertedKind).map((r, i) => insertedObject(analysis, r, i));
     return {
       entry,
-      kind: analysis.summary.kind,
-      objects: selectableObjects(analysis),
+      kind: analysis?.summary.kind ?? 'no-text',
+      objects: [...(analysis ? selectableObjects(analysis) : []), ...inserted],
       analysis,
-      records: this.#recordsOf(entry),
+      records,
     };
   }
 
   /**
    * This page's content edits, by the object-model key of what each one changes: `run:<key>` for
-   * text and `image:<stream>#<opIndex>` for a picture. One object has at most one record — that is
-   * what makes a second drag replace the first rather than pile up — so this is a plain map.
+   * text, `image:<stream>#<opIndex>` for a picture and `inserted:<id>` for a picture put there from a
+   * file. One object has at most one record — that is what makes a second drag replace the first
+   * rather than pile up — so this is a plain map.
    */
   #recordsOf(entry) {
     const records = new Map();
@@ -97,6 +102,7 @@ export class TextEditing {
       if (e.entry !== entry.id) continue;
       if (e.kind === 'text') records.set(`run:${e.target.key}`, e);
       else if (e.kind === 'image') records.set(e.target.key, e);
+      else if (e.kind === insertedKind) records.set(insertedKey(e), e);
     }
     return records;
   }
@@ -239,7 +245,9 @@ export class TextEditing {
         run: object.record, text: '', entry: current.id, glyphs,
         id: record?.id, transform: record?.transform ?? null, ...constraints,
       })
-      : planImageEdit({ object, removed: true, entry: current.id, id: record?.id })]);
+      // A picture put there from a file is its record, so deleting it is taking the record away.
+      : object.ref.inserted ? null
+        : planImageEdit({ object, removed: true, entry: current.id, id: record?.id })]);
     view.annotations.applyEdits(pairs);
     return true;
   }
@@ -265,12 +273,44 @@ export class TextEditing {
     const { entry, found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
     this.#refuse(object, 'replace'); // never true for text, which is not a picture
     const source = newId();
-    const next = planImageEdit({
-      object, transform: record?.transform ?? null, replacement: { source, ...picture }, entry: entry.id, id: record?.id,
-    });
+    const next = object.ref.inserted
+      ? planInsertion({ picture: { source, ...picture }, transform: record.transform, entry: entry.id, id: record.id })
+      : planImageEdit({
+        object, transform: record?.transform ?? null, replacement: { source, ...picture }, entry: entry.id, id: record?.id,
+      });
     view.sources.set(source, bytes);
     view.annotations.applyEdits([[record, next]]);
     return true;
+  }
+
+  /**
+   * Puts a PNG or JPEG image (`bytes`) on a page as a new picture: one undo step, one record, and
+   * the new picture's object key back, so it can be selected. `basis` (page-space.js displayBasis)
+   * and `box` (the page's crop box) say how the page is shown, so the picture starts centred and
+   * upright on screen (inserted-image.js defaultPlacement).
+   *
+   * The bytes are kept in the document's sources, as a replacement's are. Throws EditError when it
+   * can't be done: an unusable file, a page whose content can't be rewritten, a PDF/A document.
+   */
+  async insertImage(pageNumber, bytes, { basis, box }) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const lib = await loadPdfLib();
+    const picture = await readPicture(lib, bytes);
+    if ((await this.#constraints()).embeddedFontsOnly) {
+      throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, and Vellum can’t check that a new picture meets it, so the picture wasn’t added.');
+    }
+    const { entry, analysis } = await this.objects(pageNumber);
+    // The page writer rewrites a page only when it can read all of it; say so now rather than at save.
+    const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
+    if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
+    const transform = defaultPlacement({ ...picture, box, basis });
+    if (!transform) throw new EditError('content', 'Vellum couldn’t work out where to put the picture on this page, so nothing was added.');
+    const source = newId();
+    const record = planInsertion({ picture: { source, ...picture }, transform, entry: entry.id });
+    view.sources.set(source, bytes);
+    view.annotations.applyEdits([[null, record]]);
+    return insertedKey(record);
   }
 
   /**
@@ -280,6 +320,8 @@ export class TextEditing {
    * its replacement wherever it is put, and so keeps its record even back where it started.
    */
   #plan(entry, object, record, absolute) {
+    // A picture put there from a file has no "where it started": its record is where it is.
+    if (object.ref.inserted) return planInsertion({ picture: record.picture, transform: absolute, entry: entry.id, id: record.id });
     if (object.kind !== 'text-run') {
       const replacement = record?.removed ? null : record?.replacement ?? null;
       if (isIdentity(absolute) && !replacement) return null;

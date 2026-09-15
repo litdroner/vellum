@@ -14,6 +14,7 @@
 // make no such claim, rather than an invented one.
 
 import { capabilitiesFor } from './capabilities.js';
+import { keyOf as insertedKey } from './inserted-image.js';
 
 /**
  * Identity. Two draws of one image share a resource key ("4 0 R"), and an inline image has none, so
@@ -101,6 +102,33 @@ export function pageObjects(analysis) {
   ];
   objects.sort(compareOrder);
   return Object.freeze(objects);
+}
+
+/** An image's own space: the unit square every image is drawn into. */
+const UNIT_QUAD = Object.freeze([0, 0, 1, 0, 1, 1, 0, 1]);
+const UNIT_BOX = Object.freeze([0, 0, 1, 1]);
+
+/**
+ * A picture put on the page from a file (objects/inserted-image.js), as an object: a picture whose own
+ * outline is the unit square, so its record's transform is where it is, and whose identity is its
+ * record's. Drawn after everything the page has, in the order the pictures were put there. `analysis`
+ * is the page's (null for a blank page), for the page-wide refusals only.
+ */
+export function insertedObject(analysis, record, index = 0) {
+  const ref = Object.freeze({ kind: 'image', key: insertedKey(record), stream: 'page', opIndex: null, inserted: true });
+  const image = Object.freeze({
+    stream: 'page', opIndex: null, inserted: true, name: null, inline: false, oc: null, softMask: null, clip: null,
+    ctm: Object.freeze([1, 0, 0, 1, 0, 0]), quad: UNIT_QUAD, box: UNIT_BOX,
+    info: Object.freeze({ width: record.picture.width, height: record.picture.height }),
+  });
+  return Object.freeze({
+    kind: 'image',
+    ref,
+    order: Object.freeze([Number.MAX_SAFE_INTEGER, index]),
+    geometry: Object.freeze({ quad: UNIT_QUAD, box: UNIT_BOX, frame: null }),
+    capabilities: capabilitiesFor(analysis ?? { tainted: false, unbalanced: false }, 'image', image, ref),
+    record: image,
+  });
 }
 
 const cache = new WeakMap();

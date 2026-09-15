@@ -215,14 +215,14 @@ public partial class MainWindow : Window
             return Done(new { files });
         });
 
-        // Replace picture: the chosen image's bytes come back in the answer itself, so the file is only
-        // read, never registered with the resource server (which would make it writable by the page).
-        bridge.Register("pictureDialog", _ =>
+        // Replace or insert a picture: the chosen image's bytes come back in the answer itself, so the file
+        // is only read, never registered with the resource server (which would make it writable by the page).
+        bridge.Register("pictureDialog", request =>
         {
             const long MaxPictureBytes = 25 * 1024 * 1024;
             var dialog = new OpenFileDialog
             {
-                Title = "Replace picture with",
+                Title = OptionalString(request, "purpose") == "insert" ? "Insert picture" : "Replace picture with",
                 Filter = "Pictures (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
                 InitialDirectory = LastFolder(),
             };

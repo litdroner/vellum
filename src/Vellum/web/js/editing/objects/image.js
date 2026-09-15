@@ -124,7 +124,7 @@ const formatOf = (bytes) => Object.keys(SIGNATURES).find((f) => SIGNATURES[f].ev
  */
 export async function readPicture(lib, bytes) {
   const format = bytes instanceof Uint8Array ? formatOf(bytes) : null;
-  if (!format) throw new EditError('picture', 'Vellum can replace a picture with a PNG or JPEG image. This file isn’t one.');
+  if (!format) throw new EditError('picture', 'Vellum can put a PNG or JPEG image into a page. This file isn’t one.');
   // A PNG is decoded pixel by pixel to be embedded, and a small file can claim an enormous image;
   // its header says how many pixels before any of them is decoded. (A JPEG is embedded undecoded.)
   if (format === 'png' && bytes.length >= 24) {
@@ -166,8 +166,8 @@ function embedded(lib, format, bytes) {
   return pending;
 }
 
-/** A replacement as a record keeps it, or EditError when it isn't one. */
-function replacementOf(value) {
+/** A picture from a file as a record keeps it ({ source, format, width, height }), or EditError when it isn't one. */
+export function replacementOf(value) {
   const { source, format, width, height } = value ?? {};
   const pixels = (n) => Number.isInteger(n) && n > 0;
   if (typeof source !== 'string' || !source || !SIGNATURES[format] || !pixels(width) || !pixels(height)) {
@@ -231,18 +231,26 @@ export function precheck({ lib, doc, records }) {
  * that work again. Runs before any page is written, so a missing or unreadable image refuses the
  * whole document.
  */
-export async function prepare({ lib, doc, records, sources }) {
+export function prepare({ lib, doc, records, sources }) {
+  return embedPictures(lib, doc, records.filter((r) => !r.removed).map((r) => r.replacement), sources);
+}
+
+/**
+ * Adds the images of these pictures from files ({ source, format, width, height }, falsy entries
+ * skipped) to the document, once per source: { embedded: Map source → ref }. Shared with inserted
+ * pictures (objects/inserted-image.js), which are embedded the same way.
+ */
+export async function embedPictures(lib, doc, pictures, sources) {
   const refs = new Map();
-  for (const record of records) {
-    const r = record.replacement;
-    if (!r || record.removed || refs.has(r.source)) continue;
+  for (const r of pictures) {
+    if (!r || refs.has(r.source)) continue;
     const bytes = sources?.get(r.source);
     if (!(bytes instanceof Uint8Array) || formatOf(bytes) !== r.format) {
-      throw new EditError('missing', 'A picture chosen to replace one in this document isn’t available any more, so nothing was changed.');
+      throw new EditError('missing', 'A picture chosen for this document isn’t available any more, so nothing was changed.');
     }
     const image = await embedded(lib, r.format, bytes).catch(() => null);
     if (!image || image.width !== r.width || image.height !== r.height) {
-      throw new EditError('changed', 'A picture chosen to replace one in this document isn’t the one that was chosen, so nothing was changed.');
+      throw new EditError('changed', 'A picture chosen for this document isn’t the one that was chosen, so nothing was changed.');
     }
     const copy = lib.PDFObjectCopier.for(image.scratch.context, doc.context).copy(image.scratch.context.lookup(image.ref));
     refs.set(r.source, doc.context.register(copy));
@@ -354,7 +362,7 @@ function verify(analysis, record, index) {
  * The resources are cloned before being changed, exactly as adding a font to a page clones them: a
  * page may inherit its /Resources from the page tree, and other pages must not be touched.
  */
-function updateResources(lib, doc, page, analysis, dropped, refs) {
+export function updateResources(lib, doc, page, analysis, dropped, refs) {
   const { PDFName, PDFDict } = lib;
   const ctx = doc.context;
   const gone = new Set(dropped.map((i) => `${i.stream ?? 'page'}#${i.opIndex}`));

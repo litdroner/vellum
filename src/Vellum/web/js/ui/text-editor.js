@@ -96,6 +96,14 @@ const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const sameKeys = (a, b) => a.length === b.length && a.every((key) => b.includes(key));
 const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
+/** A file's bytes as the host sends them (base64). */
+function decodeBase64(data) {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 /** A text run's object key in the model: the one place the two namings meet. */
 const runKeyOf = (key) => `run:${key}`;
 
@@ -239,10 +247,73 @@ export class TextEditor {
       return false;
     }
     if (!file) return false;
-    const binary = atob(file.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return this.replacePictureWith({ name: file.name, bytes });
+    return this.replacePictureWith({ name: file.name, bytes: decodeBase64(file.data) });
+  }
+
+  /**
+   * Puts a PNG or JPEG the host's file dialog picks on a page as a new picture, centred and upright,
+   * and selects it. `n` is the page (1-based); by default the selection's page, else the page in
+   * view. The command (commands.js) and the page's context menu in Edit mode call this. Resolves true
+   * when the picture was added.
+   */
+  async insertPicture(n = null) {
+    const page = this.#insertionPage(n);
+    if (!page) return false;
+    let file;
+    try {
+      ({ file } = await bridge.request('pictureDialog', { purpose: 'insert' }));
+    } catch (err) {
+      this.#notify(`That picture couldn’t be opened: ${err.message}`);
+      return false;
+    }
+    if (!file) return false;
+    return this.insertPictureWith({ name: file.name, bytes: decodeBase64(file.data) }, page);
+  }
+
+  /**
+   * Puts `bytes` (a PNG or JPEG file's contents, named `name`) on page `n` as a new picture: one undo
+   * step, and the new picture selected. What insertPicture() does once the file has been chosen.
+   */
+  async insertPictureWith({ name, bytes }, n = null) {
+    const page = this.#insertionPage(n);
+    if (!page) return false;
+    if (!(await this.commitPending())) return false;
+    this.#closeEditor();
+    this.#flushNudge();
+    await this.#settled();
+    const pageView = this.#view.viewer.getPageView(page - 1);
+    if (!pageView?.pdfPage) {
+      this.#notify('That page isn’t ready yet. Try again in a moment.');
+      return false;
+    }
+    try {
+      const key = await this.#view.textEditing.insertImage(page, bytes, { basis: displayBasis(pageView), box: pageView.pdfPage.view });
+      this.#announce(`Picture “${name}” added.`);
+      this.#warnTagged('inserted');
+      // Selected once the rebuilt page has it: until then the page data is the old one, and
+      // reconciling against it would drop a key it has never heard of.
+      const until = performance.now() + 20000;
+      while (performance.now() < until) {
+        await this.#settled();
+        const now = this.#view.rebuilding ? null : await this.#ensurePage(page);
+        if (now?.data && this.#liveOf(now).byKey.has(key)) break;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      if (this.active) this.#changeSelection((s) => s.set(page, [key]));
+      return true;
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That picture couldn’t be added: ${err.message}`);
+      return false;
+    }
+  }
+
+  /** The page a new picture goes on, when Edit mode is on: `n`, the selection's page, or the page in view. */
+  #insertionPage(n) {
+    if (!this.active) {
+      this.#notify('Switch to Edit mode (E) to insert a picture.');
+      return null;
+    }
+    return n ?? this.#selection.page ?? this.#view.viewer.currentPageNumber ?? null;
   }
 
   /**
@@ -347,11 +418,14 @@ export class TextEditor {
    */
   #reconcile(page) {
     const selection = this.#selection;
-    selection.reconcile(page.objects?.analysis ?? null);
-    if (page.data && selection.page === page.n) {
-      const { quads } = this.#liveOf(page);
-      selection.retain((key) => Boolean(quads.get(key)));
+    // The live objects are the page's selectable ones — its own and any picture put on it from a
+    // file, which the analysis of the original page can't know — less what an edit has removed.
+    if (!page.data) {
+      selection.clear();
+      return;
     }
+    const { quads } = this.#liveOf(page);
+    selection.retain((key) => Boolean(quads.get(key)));
   }
 
   #ensurePage(n) {
@@ -1379,16 +1453,17 @@ export class TextEditor {
 
   /**
    * Tagged PDFs (an accessibility structure): said once, the first time tagged text is opened, and
-   * once the first time a picture is replaced.
+   * once each the first time a picture is replaced and the first time one is added.
    */
   async #warnTagged(what) {
     if (this.#warnedTagged.has(what)) return;
     const profile = await this.#view.profile().catch(() => null);
     if (!profile?.tagged || this.#warnedTagged.has(what)) return;
     this.#warnedTagged.add(what);
-    this.#notify(what === 'picture'
-      ? 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it replaces a picture, so a description of the old picture may still be read out.'
-      : 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
+    this.#notify({
+      picture: 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it replaces a picture, so a description of the old picture may still be read out.',
+      inserted: 'This PDF is tagged for accessibility. Vellum doesn’t add a new picture to those tags, so screen readers won’t describe it.',
+    }[what] ?? 'This PDF is tagged for accessibility. Vellum doesn’t update those tags when it changes text, so screen readers may not read the changed text correctly.');
   }
 
   async #commit() {

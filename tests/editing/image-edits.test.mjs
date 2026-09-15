@@ -100,7 +100,7 @@ const countOf = (haystack, needle) => haystack.split(needle).length - 1;
 // ---- 1. the kind is registered, and the record says what was approved -------------------------
 
 test('the image kind is registered, so the page writer no longer refuses it', async () => {
-  assert.deepEqual(writableKinds().sort(), ['image', 'text'], 'two kinds are writable now');
+  assert.deepEqual(writableKinds().sort(), ['image', 'inserted-image', 'text'], 'three kinds are writable now (inserted pictures since 0.5.0)');
   const handler = handlerFor('image');
   assert.ok(handler, 'a handler claims it');
   assert.equal(handler.kind, 'image');

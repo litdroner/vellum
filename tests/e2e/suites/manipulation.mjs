@@ -775,6 +775,90 @@ export async function run(t) {
   const reopenedPicture = (await objectsOn(OBJ, 1)).find((o) => o.kind === 'image' && near(o.quad, replacedNow.quad, 0.05));
   check('pdf.js paints the new image from the saved file', Boolean(reopenedPicture) && magenta(await paintedAt(await reveal(OBJ, 1, reopenedPicture.key))));
 
+  // ---- inserting a picture from a file ------------------------------------------------------------
+  // As with replacing, the file comes in where the dialog hands it over: insertPictureWith().
+
+  area('insert picture');
+  await activate(OBJ);
+  check('Edit mode', (await editMode(OBJ)) === 'edit');
+  await q(`${V(OBJ)}.objectSelection.clear()`);
+  const insertWith = (bytesExpr, name) => q(`(async () => {
+    const bytes = await (${bytesExpr});
+    return ${V(OBJ)}.textEditor.insertPictureWith({ name: ${JSON.stringify(name)}, bytes }, 1);
+  })()`);
+  const insertDepth = await undoDepth(OBJ);
+  const countBefore = (await objectsOn(OBJ, 1)).length;
+  check('inserting a PNG succeeds', (await insertWith(MAGENTA_PNG, 'magenta.png')) === true);
+  await rest(OBJ);
+  const newKey = (await selection(OBJ))?.key ?? '';
+  check('the new picture is selected', newKey.startsWith('inserted:'), JSON.stringify(await selection(OBJ)));
+  let fresh = await objectAt(OBJ, 1, newKey);
+  check('one more object on the page, a picture that can be moved, turned, replaced and deleted',
+    (await objectsOn(OBJ, 1)).length === countBefore + 1 && fresh?.kind === 'image'
+    && ['move', 'scale', 'rotate', 'replace', 'delete'].every((v) => fresh.caps[v] === true), JSON.stringify(fresh?.caps));
+  const view1 = await q(`${V(OBJ)}.viewer.getPageView(0).pdfPage.view`);
+  check('centred on the page, upright, at its natural size (40 × 20 pixels is 30 × 15 pt)',
+    near([fresh.wp, fresh.hp, fresh.cxp, fresh.cyp], [30, 15, (view1[0] + view1[2]) / 2, (view1[1] + view1[3]) / 2], 0.01)
+    && fresh.transform[0] > 0 && fresh.transform[3] > 0, JSON.stringify(fresh.transform));
+  check('the page shows it there', magenta(await paintedAt(await reveal(OBJ, 1, newKey))));
+  check('one undo step', (await undoDepth(OBJ)) === insertDepth + 1);
+  await shot('picture-inserted');
+
+  scale = await zoom(OBJ);
+  await selectObject(OBJ, 1, newKey);
+  check('clicking it selects it, over what the page draws beneath', (await selection(OBJ))?.key === newKey, JSON.stringify(await selection(OBJ)));
+  move = await dragBy(OBJ, 1, newKey, 50, 40);
+  fit = movedBy(move.before, move.after, 50 / scale, -40 / scale);
+  check('dragging it moves it', fit.ok, fit.detail);
+  const insertedRecords = () => q(`${V(OBJ)}.annotations.edits.filter((e) => e.kind === 'inserted-image').length`);
+  check('still one record, and one more undo step', (await insertedRecords()) === 1 && (await undoDepth(OBJ)) === insertDepth + 2);
+  const draggedTo = await objectAt(OBJ, 1, newKey);
+
+  await q(`${V(OBJ)}.annotations.undo()`);
+  await rest(OBJ);
+  check('undo puts it back in the middle', near([(await objectAt(OBJ, 1, newKey))?.cxp ?? 0], [fresh.cxp], 0.01));
+  await q(`${V(OBJ)}.annotations.undo()`);
+  await rest(OBJ);
+  check('undo again takes the picture away', !(await objectAt(OBJ, 1, newKey)) && (await insertedRecords()) === 0 && !(await selection(OBJ)));
+  await q(`${V(OBJ)}.annotations.redo()`);
+  await q(`${V(OBJ)}.annotations.redo()`);
+  await rest(OBJ);
+  check('redo brings it back where it was dragged', near([(await objectAt(OBJ, 1, newKey))?.cxp ?? 0], [draggedTo.cxp], 0.01));
+
+  await selectObject(OBJ, 1, newKey);
+  await c.key('Delete');
+  await rest(OBJ);
+  check('Delete removes it', !(await objectAt(OBJ, 1, newKey)) && (await insertedRecords()) === 0);
+  await q(`${V(OBJ)}.annotations.undo()`);
+  await rest(OBJ);
+  check('and undo restores it', Boolean(await objectAt(OBJ, 1, newKey)));
+
+  const depthNow = await undoDepth(OBJ);
+  check('a GIF is refused and nothing is added', (await insertWith(GIF, 'x.gif')) === false && (await undoDepth(OBJ)) === depthNow);
+  await q(`${V(OBJ)}.focus()`);
+  await c.key('Ctrl+K');
+  await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+  await c.type('Insert picture');
+  await sleep(300);
+  check('the command palette offers “Insert picture…”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Insert picture'))`));
+  await c.key('Escape');
+  await sleep(300);
+
+  const placed = await objectAt(OBJ, 1, newKey);
+  await q('__vellum.actions.save()');
+  await waitFor(`!${V(OBJ)}.annotations.dirty`, 25000);
+  await q(`__vellum.app.close(${V(OBJ)})`);
+  await waitFor(`!${V(OBJ)}`);
+  await q(`__vellum.actions.openRecent(${JSON.stringify(OBJ)})`);
+  await rest(OBJ);
+  const insertedSaved = (await q(`(async () => {
+    const { objects } = await ${V(OBJ)}.textEditing.objects(1);
+    return objects.filter((o) => o.kind === 'image').map((o) => ({ key: o.ref.key, quad: o.geometry.quad, w: o.record.info?.width ?? null, h: o.record.info?.height ?? null, move: o.capabilities.move }));
+  })()`)).find((o) => near(o.quad, placed.quad, 0.05));
+  check('the saved file draws the 40 × 20 picture where it was left, as a picture of the page',
+    insertedSaved?.w === 40 && insertedSaved?.h === 20 && insertedSaved.key.startsWith('image:') && insertedSaved.move === true, JSON.stringify(insertedSaved));
+  check('pdf.js paints it from the saved file', Boolean(insertedSaved) && magenta(await paintedAt(await reveal(OBJ, 1, insertedSaved.key))));
+
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }

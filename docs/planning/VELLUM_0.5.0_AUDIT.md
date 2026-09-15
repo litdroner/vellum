@@ -16,8 +16,10 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
   "Picture stretch record". Every must-have is now done.
 - Should-haves alignment and distribution: done on `main`, not yet released. See "Alignment and
   distribution record".
-- **0.5.0 is not complete**: the other should-haves remain. See the end of "Alignment and distribution
-  record" for what is left and the recommended next step.
+- Should-haves snapping, image replacement and image insertion: done on `main`, not yet released. See
+  §15, §16 and §17.
+- **0.5.0 is not complete**: paragraph grouping, overlap warnings and paragraph reflow remain. See the
+  end of §17 for what is left and the recommended next step.
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -833,3 +835,77 @@ a new picture. It can reuse `readPicture`, the scratch-document embedding, `prep
 `updateResources`' naming from replacement; what is new is a record that draws something not in the
 original content (appended after the page, like moved text), its identity and selection, and a default
 size and place.
+
+## 17. Image insertion record (should-have)
+
+In Edit mode, **Insert picture…** — a command in the palette (`edit.insertPicture`) or an item in the
+page's context menu — opens a Windows file dialog titled "Insert picture" (`pictureDialog` with
+`purpose: 'insert'`). The PNG or JPEG goes on that page (the right-clicked page, else the selection's,
+else the page in view) as a new picture, and is selected.
+
+### Decisions worth keeping
+
+- **A new record kind, `inserted-image`, with its own handler** (`editing/objects/inserted-image.js`,
+  registered in `registry.js`): `{ id, kind, entry, picture: { source, format, width, height },
+  transform }`. There is nothing in the original content to fingerprint, so the record is the object:
+  `transform` maps the image's unit square into the original page's user space and is the whole
+  placement. Its identity is `inserted:<record id>`.
+- **To the object model it is a picture like any other.** `page-objects.js insertedObject` builds an
+  `image` object with an identity CTM and the unit square as its quad, so `#liveOf`'s "quad × record
+  transform" puts it where it is, and selection, hit-testing, drag, corner and edge handles, turn,
+  mirror, snapping, arrange, multi-select and Delete needed no change. Capabilities come from
+  `capabilitiesFor` (page-wide refusals only). Its order is `[MAX_SAFE_INTEGER, i]`: drawn, and hit,
+  over everything the page draws. `session.objects()` appends these, blank pages included.
+- **Moving never drops it.** `#plan` returns a new transform on the same record (there is no "back where
+  it started"); deleting applies `[record, null]`; replacing it swaps `picture` and keeps the transform.
+- **Written after the page's content**, in the unified writer's `append`: `q <transform> cm /VlImgN Do Q`,
+  under a name from `updateResources` (now exported, called with nothing dropped). `embedPictures`
+  (factored out of `image.js prepare`) embeds once per source and is shared by both handlers, so a
+  duplicated page draws the same image object. PDF/A is refused in the session and again in `precheck`.
+- **The compose path still doesn't reach the object model**: `insertedObject` lives in page-objects.js,
+  not in the handler (capabilities.test.mjs walks the import graph).
+- **Default place**: centred on the crop box, upright as the page is shown (`displayBasis`, so a
+  `/Rotate` page or a turned view still shows it upright), 0.75 pt per pixel, at most half the shown page
+  width and height, never enlarged (`defaultPlacement`).
+- **Found on the way**: `session.page()` mapped every record on the page by `target.key`; an inserted
+  record has no target, so reading the page threw and Edit mode dropped the selection. It now maps text
+  records only (the only ones it uses). `#reconcile` now keeps what the live objects hold instead of
+  re-resolving against the original analysis, which can't know an inserted picture. The UI selects the
+  new picture only once the rebuilt page lists it.
+- A tagged PDF is told once that the new picture isn't added to its tags.
+
+### Test results
+
+**Node**: `node --test "tests/editing/*.test.mjs"`: **326 tests, 324 pass, 2 skipped, 0 fail**. New
+`picture-insert.test.mjs` (5): the default placement (fitted, natural size, upright on a `/Rotate 90`
+page as pdf.js shows it, centred; no basis or no pixels → none); the file draws it last in exactly its
+frame, appended in its own `q … Q`, the page's own pictures untouched, the JPEG byte for byte, a second
+picture named `VlImg2`; blank and duplicated pages draw it from one embedded object; the session: one
+record, selectable last with move/scale/stretch/rotate/replace/delete, the page's text still readable,
+moved and moved back keeps it, replaced in place, saved exactly there, deleted, undo/redo; refusals
+(not an image, a cut-off PNG, not bytes, a missing page, PDF/A in the session and the writer, a missing
+source at save, a placement with no area). `image-edits.test.mjs` now expects three writable kinds.
+
+**End-to-end**: `manipulation` gains an *insert picture* area (19 checks): a 40 × 20 PNG made in the page,
+through `TextEditor.insertPictureWith` (what the dialog starts), is selected, one more object with every
+picture verb, centred at 30 × 15 pt, painted by pdf.js, one undo step; clicked it is selected over what
+is beneath; dragged it moves by the hand, still one record; undo puts it back, undo again removes it and
+the selection, redo twice brings it back where it was dragged; Delete removes it and undo restores it; a
+GIF adds nothing; the palette offers the command; saved, closed and reopened, the file draws the 40 × 20
+image where it was left, as an ordinary movable picture, painted by pdf.js. The default batch in one run:
+**409 of 409 checks in 8 suites** (text-editor 43, regression 48, editing-store 14, phase0 30, selection
+51, manipulation 140, multi-select 66, page-changes 17); manipulation again after the last change
+(the tagged-PDF notice): 140/140.
+
+The native dialog itself (its title and filter) was not driven from this environment, for the reasons in
+§16; the context-menu item was not clicked by the suite.
+
+### Remaining for 0.5.0 (after §17) — and the next step
+
+Should-haves left, each only if its strict tests pass: **paragraph grouping**, overlap warnings,
+single-style paragraph reflow (last, gated).
+
+**Recommended next step: paragraph grouping** (`text-block`): group compatible runs into one movable
+object where the structure is unambiguous (same font, size, colour and orientation; consistent line
+spacing and left edge; no columns, tables or lists), refusing everything else. Overlap warnings are small
+and can follow in the same session; reflow depends on grouping.
