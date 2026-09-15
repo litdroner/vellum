@@ -662,6 +662,28 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     }
   });
 
+  // 24. Paragraph grouping: one plain paragraph under a heading, and next to it every layout that must
+  // NOT be grouped — a list, columns, a table, a change of size or colour, a spacing that drifts, a
+  // rule between two lines, and an indented first line. Helvetica 11 on 14-point lines throughout.
+  await build('paragraphs', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const at = (x, y, s, size = 11) => text('F1', size, x, y, s);
+    b.page(PageSizes.Letter, [
+      at(72, 745, 'A heading over the paragraph', 16),
+      at(72, 720, 'The first line of a plain paragraph that'), at(72, 706, 'runs on to a second line, then a third'),
+      at(72, 692, 'line, and ends on this fourth one, which'), at(72, 678, 'is shorter.'),
+      at(72, 640, '• First bullet'), at(72, 626, '• Second bullet'), at(72, 612, '• Third bullet'),
+      at(72, 580, '1. First step'), at(72, 566, '2. Second step'),
+      at(72, 520, 'Left column one'), at(320, 520, 'Right column one'), at(72, 506, 'Left column two'), at(320, 506, 'Right column two'),
+      at(72, 460, 'Cell A1'), at(200, 460, 'Cell B1'), at(72, 446, 'Cell A2'), at(200, 446, 'Cell B2'),
+      at(72, 400, 'Eleven-point line'), at(72, 386, 'Twelve-point line', 12),
+      at(72, 340, 'A black line'), `1 0 0 rg ${at(72, 326, 'A red line')} 0 g`,
+      at(72, 280, 'Evenly spaced one'), at(72, 266, 'Evenly spaced two'), at(72, 249, 'Spaced further'),
+      at(72, 200, 'Above a rule'), 'q 0 G 0.5 w 72 193 m 300 193 l S Q', at(72, 186, 'Below a rule'),
+      at(90, 140, 'An indented first line'), at(72, 126, 'then the rest of that'), at(72, 112, 'paragraph at the margin.'),
+    ].join('\n'), { Font: { F1 } });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

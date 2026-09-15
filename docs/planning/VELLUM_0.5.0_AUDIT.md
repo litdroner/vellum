@@ -18,8 +18,8 @@ what Phase 0 actually changed and measured. Kept up to date as each phase lands.
   distribution record".
 - Should-haves snapping, image replacement and image insertion: done on `main`, not yet released. See
   §15, §16 and §17.
-- **0.5.0 is not complete**: paragraph grouping, overlap warnings and paragraph reflow remain. See the
-  end of §17 for what is left and the recommended next step.
+- Should-haves paragraph grouping and overlap warnings: done on `main`, not yet released. See §18.
+- **0.5.0 is not complete**: single-style paragraph reflow remains. See the end of §18.
 
 Status corrected 2026-09-15: until then this header said "Phase 3 onwards: not started", written before
 Phase 3 landed. Sections 2–8 are left as written at the time.
@@ -909,3 +909,71 @@ single-style paragraph reflow (last, gated).
 object where the structure is unambiguous (same font, size, colour and orientation; consistent line
 spacing and left edge; no columns, tables or lists), refusing everything else. Overlap warnings are small
 and can follow in the same session; reflow depends on grouping.
+
+## 18. Paragraph grouping and overlap warnings record (should-haves)
+
+Also in this session, two small UI fixes: the Edit toolbar's tools size to their labels with equal
+padding (they were equal-width slots, so the gaps varied), with the sliding knob measured from the
+pressed tool; and the tab strip's + shows the home screen (it opened the file dialog), leaving every tab
+open. The `regression` suite gains a *chrome* area (4 checks).
+
+### What a person gets
+
+In Edit mode, dragging a line of a plain paragraph moves the whole paragraph; the paragraph is then the
+selection, so handles, arrow keys, arrange and Delete act on it as one. A click still opens the editor on
+that line alone, and a line selected on its own (clicked, then Escape) drags by itself. While anything is
+being dragged or nudged, what it would newly cover is outlined in amber, until the hand lets go.
+
+### Decisions worth keeping
+
+- **A block is identity, not a new object kind.** `text-block.js textBlocks(objects)` returns
+  `[{ key: 'block:<first key>', keys }]`, the lines' own run keys from the top down. Everything else is
+  multi-select: one record per line, one undo step, the text writer unchanged. No `text-block` kind was
+  added to `page-objects.js`, the capabilities or the registry of writers, so nothing reaches a file that
+  couldn't before.
+- **Worked out from the live objects** (where lines are now, a moved line compared where it went), in
+  each line's own reading frame from its quad, with the page's painted paths passed in so a rule keeps
+  two lines apart. Kept with `#liveOf`'s cache, so any edit recomputes it.
+- **Refuse, don't guess.** Grouped only when every line is movable and editable, not skewed or mirrored,
+  same font, size (1%), fill, stroke, render mode, spacing operators, graphics states, form and
+  direction; same left edge (0.1 × size); step 0.9–1.6 × size and within 0.05 × size of the block's
+  first step; no other text overlapping its row by more than half; no list marker (bullet, dash, `1.`,
+  `a)`, roman numerals); nothing drawn between the middles of two consecutive lines except something
+  behind the whole of that band. A line at paragraph spacing starting at another edge (an indent) leaves
+  both sides ungrouped rather than leaving one line behind. Mixed-style paragraphs are not grouped.
+- **Selected on the move, not the press**, so a click that edits a line never flashes the paragraph's
+  arrange bar. The pressed line is the selection's primary key.
+- **Overlap warnings** (`overlap.js`): a separating-axis depth for two oriented quads, and
+  `newOverlaps(moving, others, tolerance)` reporting only what the moving objects cover at their target
+  and did not at their start. Shown only while `#drag.moved` or a nudge burst is pending; blank and
+  invisible text is ignored; the tolerance is the larger of 2 screen pixels and a quarter of the smallest
+  moving object's height, so lines whose boxes just touch don't warn. A drop that leaves an overlap says
+  so through the live region. Nothing is refused.
+
+### Test results
+
+**Node**: `node --test "tests/editing/*.test.mjs"`: 329 tests, 327 pass, 2 skipped, 0 fail (before the
+two overlap tests were added; `overlap.test.mjs` 2/2 on its own). New fixture `paragraphs` (one page: a
+paragraph under a heading, bullets, a numbered list, columns, a table, size and colour changes, drifting
+spacing, a rule between two lines, an indented first line). `text-block.test.mjs` (3): exactly the
+paragraph and the evenly spaced pair are grouped, and the rule is what separates its two lines; a line
+pulled sideways leaves the paragraph, a paragraph moved whole stays one, moved onto the list's rows it
+doesn't; through the session a paragraph move is four records, one undo step, and the saved file has
+every line 200 across and 30 down, still grouped. `overlap.test.mjs` (2): exact depths, turned quads,
+touching is 0, only new overlaps, never the moving objects, the tolerance.
+
+**End-to-end** (focused, not the full batch): `multi-select` 79/79 with new *paragraphs* (10) and
+*overlap warnings* (4) areas: dragging the second line selects and moves all four by exactly the same
+amount, one undo step, the list untouched; a click selects that line alone with the editor open; after
+Escape it drags alone; a bullet line drags alone; a table cell dragged onto the one below outlines exactly
+that cell while the button is down, and nothing once released, with the move made. `manipulation`
+140/140 and `selection` 51/51 with grouping in place; `regression` 52/52 with the UI fixes.
+
+### Remaining for 0.5.0 (after §18) — and the next step
+
+Should-have left, only if its strict tests pass: **single-style paragraph reflow** (last, gated). Then the
+one broad regression pass and the release QA.
+
+**Recommended next step: single-style paragraph reflow**, built on a `text-block` — rewrapping a grouped
+paragraph's text to a new width in its own single font and size — only in the narrow case the audit
+allows, refused otherwise.

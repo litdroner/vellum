@@ -1268,6 +1268,16 @@ kbd {
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+/* What a drag would newly cover: a warning only, and only while the hand is moving. Amber on the page's
+   paper, whatever the app theme. */
+.vl-overlap {
+  fill: rgb(232 150 30 / .12);
+  stroke: #d9831f;
+  stroke-width: 1.5px;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
 /* Dragging a picture moves it; text keeps the caret, because clicking text types rather than moves. */
 .viewer-container.vl-edit-move { cursor: move; }
 

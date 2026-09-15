@@ -7,6 +7,9 @@ import { isRemoved } from '../editing/session.js';
 import { sharedCapability, refusalMessage } from '../editing/objects/capabilities.js';
 import { ALIGNMENTS, DISTRIBUTIONS, MINIMUM, alignMoves, distributeMoves } from '../editing/objects/arrange.js';
 import { snapMove } from '../editing/objects/snap.js';
+import { textBlocks, blockOf } from '../editing/objects/text-block.js';
+import { newOverlaps } from '../editing/objects/overlap.js';
+import { objectsOfKind } from '../editing/objects/page-objects.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
@@ -37,6 +40,9 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     Ctrl, adds it), and Ctrl+A selects everything on the page. A drag, the handles around the whole
 //     group and every key then act on all of them together — as one undo step, and only when every
 //     one of them allows it.
+//   - paragraphs: pressing a line that plainly belongs to a paragraph (editing/objects/text-block.js)
+//     selects the whole paragraph, so dragging it moves the paragraph; a click still opens the editor
+//     on that one line, and a line selected on its own drags by itself.
 //   - replacing a picture: with one picture selected, the bar over it (or the command palette) asks
 //     the host for a PNG or JPEG file, and the picture's image becomes that one, in the same frame.
 //
@@ -581,6 +587,11 @@ export class TextEditor {
         for (const [x, y] of points.slice(4)) shapes.push(svg('circle', { class: 'vl-object-handle edge', cx: x, cy: y, r }));
       }
     }
+    // What the objects being moved would newly cover, while they are moving (#overlapsOf).
+    for (const key of this.#overlapsOf(page)) {
+      const quad = this.#liveOf(page).quads.get(key);
+      if (quad) shapes.push(svg('polygon', { class: 'vl-overlap', points: quadPoints(quad) }));
+    }
     // The selection rectangle being dragged out over the paper.
     const drag = this.#drag;
     if (drag?.mode === 'marquee' && drag.n === page.n && drag.box) {
@@ -597,6 +608,29 @@ export class TextEditor {
     }
     layer.decorate(page.n, shapes);
     if (page.n === this.#selection.page || this.#arrangeBar) this.#syncArrangeBar();
+  }
+
+  /**
+   * The keys of the objects a gesture still under way would put the moving objects on top of, where
+   * they were not before (editing/objects/overlap.js): only while a drag has moved or a key burst is
+   * pending, so the warning goes when the hand does. Blank and invisible text is never in the way.
+   * An overlap shallower than a quarter of the smallest moving object — lines whose boxes just
+   * touch — isn't one.
+   */
+  #overlapsOf(page) {
+    const shown = this.#shownAt;
+    const gesture = this.#drag?.moved || this.#nudge;
+    if (!shown || shown.n !== page.n || !gesture) return [];
+    const { quads, objects } = this.#liveOf(page);
+    const moving = [...shown.quads].map(([key, to]) => ({ key, from: quads.get(key), to })).filter((m) => m.from && m.to);
+    if (!moving.length) return [];
+    const heights = moving.map(({ to }) => Math.min(Math.hypot(to[6] - to[0], to[7] - to[1]), Math.hypot(to[2] - to[0], to[3] - to[1])));
+    const pageView = this.#view.viewer.getPageView(page.n - 1);
+    const tolerance = Math.max(pageView ? tolerancePoints(pageView, 2) : 1, 0.25 * Math.min(...heights));
+    const others = objects
+      .filter((o) => !o.reasons?.some((r) => r === 'blank' || r === 'invisible'))
+      .map((o) => ({ key: o.ref.key, quad: o.geometry.quad }));
+    return newOverlaps(moving, others, tolerance);
   }
 
   /** Selects exactly one object — or nothing, given nothing. Only identity ever goes in. */
@@ -870,6 +904,17 @@ export class TextEditor {
     return null;
   }
 
+  /**
+   * The keys of the paragraph a line belongs to, where the lines are now, or null when it is in none
+   * (editing/objects/text-block.js). Painted paths are passed along too: a rule between two lines
+   * keeps them apart. Kept with the page's live objects, so any edit works it out afresh.
+   */
+  #paragraphOf(page, key) {
+    const live = this.#liveOf(page);
+    live.blocks ??= textBlocks([...live.objects, ...(page.objects?.analysis ? objectsOfKind(page.objects.analysis, 'path') : [])]);
+    return blockOf(live.blocks, key)?.keys ?? null;
+  }
+
   /** Where each of these objects is drawn right now, by key. */
   #quadsOf(page, objects) {
     return new Map(objects.map((o) => [o.ref.key, this.#shownQuad(page, o.ref.key, o.geometry.quad)]));
@@ -897,14 +942,20 @@ export class TextEditor {
     if (additive(e)) return null;
     const key = object.ref.key;
     const inGroup = this.#selection.size > 1 && this.#selection.has(hit.n, key);
-    if (!inGroup) this.#select({ n: hit.n, key });
-    const keys = inGroup ? [...this.#selection.keys] : [key];
+    // A line of a paragraph takes its paragraph with it — unless that line alone is already selected
+    // (clicked into, say), which is how one line of a paragraph is moved by itself.
+    const alone = this.#selection.size === 1 && this.#selection.has(hit.n, key);
+    // The paragraph is selected when the hand moves (#onDragMove), not on the press: a press that is
+    // a click opens the editor on the line, and should not flash the paragraph's bar first.
+    const paragraph = inGroup || alone ? null : this.#paragraphOf(hit.page, key);
+    if (!inGroup && !paragraph) this.#select({ n: hit.n, key });
+    const keys = inGroup ? [...this.#selection.keys] : paragraph ? [...paragraph.filter((k) => k !== key), key] : [key];
     const objects = keys.map((k) => this.#liveObject(hit.n, k));
     if (objects.some((o) => !o)) return null;
     const answer = sharedCapability(objects, 'move');
     if (answer !== true) return { mode: 'refused', n: hit.n, message: refusalMessage('move', answer.reason, objects.length) };
     return {
-      mode: 'move', verb: 'move', n: hit.n, keys, pageView: hit.pageView,
+      mode: 'move', verb: 'move', n: hit.n, keys, pageView: hit.pageView, selectOnMove: Boolean(paragraph),
       quads: this.#quadsOf(hit.page, objects), from: toPdfPoint(hit.pageView, e.clientX, e.clientY),
     };
   }
@@ -918,6 +969,7 @@ export class TextEditor {
     if (!drag.moved && Math.hypot(e.clientX - drag.client[0], e.clientY - drag.client[1]) < DRAG_THRESHOLD) return;
     if (!drag.moved) {
       drag.moved = true;
+      if (drag.selectOnMove) this.#changeSelection((s) => s.set(drag.n, drag.keys)); // a paragraph, see #pressAt
       this.#syncArrangeBar(); // out of the way while the hand is moving
       if (drag.mode === 'refused') {
         this.#notify(drag.message);
@@ -992,9 +1044,11 @@ export class TextEditor {
   async #onPointerUp(e) {
     const drag = this.#drag;
     if (!drag) return;
+    const dragPage = this.#pages.get(drag.n);
+    const covers = drag.moved && drag.mode !== 'marquee' && dragPage ? this.#overlapsOf(dragPage).length : 0;
     this.#drag = null;
-    const guided = drag.guides?.length && this.#pages.get(drag.n);
-    if (guided) this.#draw(guided); // the guides go when the hand lets go
+    // The guides and the overlap warnings go when the hand lets go.
+    if (dragPage && (drag.guides?.length || covers)) this.#draw(dragPage);
     if (drag.moved) this.#syncArrangeBar();
     if (drag.moved && drag.mode !== 'refused') {
       try {
@@ -1011,7 +1065,8 @@ export class TextEditor {
       this.#finishMarquee(drag);
       return;
     }
-    await this.#write(drag.n, drag.keys.map((key) => ({ key, delta: drag.transform })), drag.verb);
+    const said = covers ? `${{ move: 'Moved', scale: 'Resized', stretch: 'Resized' }[drag.verb] ?? 'Changed'}; it now overlaps other content.` : null;
+    await this.#write(drag.n, drag.keys.map((key) => ({ key, delta: drag.transform })), drag.verb, { said });
   }
 
   /** Selects what a selection rectangle enclosed: instead of the selection, or added to it. */

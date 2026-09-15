@@ -8,7 +8,7 @@
 // As in the manipulation suite, distances are compared in the page's own user space; screen
 // coordinates only tell the mouse where to press, and are read immediately before the press.
 
-export const files = { images: 'images', objects: 'objects' };
+export const files = { images: 'images', objects: 'objects', paragraphs: 'paragraphs' };
 
 const SHIFT = 8;
 const CTRL = 2;
@@ -483,6 +483,76 @@ export async function run(t) {
   await q(`(() => { const v = ${V(OBJECTS)}; v.rotatePages([v.shownPlan[0].id], 90); })()`);
   await rest(OBJECTS);
   check('turning the page clears the selection rather than guessing where it went', (await selection(OBJECTS)) === null);
+
+  // ---- 11. a paragraph moves as one block; one of its lines, clicked into, moves alone ---------------------------
+
+  area('paragraphs');
+  const PARA = F('paragraphs');
+  await activate(PARA);
+  await editMode(PARA);
+  const TEXTS = ['The first line of a plain paragraph that', 'runs on to a second line, then a third', 'line, and ends on this fourth one, which', 'is shorter.'];
+  let paraObjs = await objectsOn(PARA, 1);
+  const paraKeys = TEXTS.map((s) => paraObjs.find((o) => o.text === s)?.key);
+  const bulletKey = paraObjs.find((o) => o.text === '• Second bullet')?.key;
+  check('the page has the paragraph and the list', paraKeys.every(Boolean) && Boolean(bulletKey));
+  await revealAll(PARA, 1, [...paraKeys, bulletKey]);
+  const beforePara = await Promise.all(paraKeys.map((k) => objectAt(PARA, 1, k)));
+  const bulletBefore = await objectAt(PARA, 1, bulletKey);
+  const second = beforePara[1];
+  await c.drag([second.cx, second.cy], [second.cx + 60, second.cy + 20], 10);
+  await sleep(700);
+  await rest(PARA);
+  check('dragging one line of the paragraph selects all four lines', sameSet(await selectedKeys(PARA), paraKeys), JSON.stringify(await selectedKeys(PARA)));
+  const afterPara = await Promise.all(paraKeys.map((k) => objectAt(PARA, 1, k)));
+  const dxp = afterPara[1].cxp - second.cxp;
+  const dyp = afterPara[1].cyp - second.cyp;
+  const each = beforePara.map((b, i) => moved(b, afterPara[i], dxp, dyp, 0.01));
+  check('…and moves every line of it by the same amount', Math.abs(dxp) > 10 && each.every((m) => m.ok), each.map((m) => m.detail).join(' | '));
+  check('…as one undo step', (await undoDepth(PARA)) === 1);
+  check('the list under it did not move', moved(bulletBefore, await objectAt(PARA, 1, bulletKey), 0, 0, 0.01).ok);
+  check('the paragraph’s bar appears for it once the hand lets go', Boolean(await q(`document.querySelector('.vl-arrange-bar:not([hidden])')`)));
+
+  // A click (no drag) on a paragraph line opens the editor on that line alone; a drag from there moves only it.
+  let third = await objectAt(PARA, 1, paraKeys[2]);
+  await c.mouse(third.cx, third.cy);
+  await sleep(600);
+  check('a click on a paragraph line selects that line alone and opens the editor', sameSet(await selectedKeys(PARA), [paraKeys[2]]) && await editorOpen(PARA));
+  await c.key('Escape'); // a drag inside the open editor selects its text; closed, the line stays selected
+  await sleep(400);
+  check('Escape closes the editor and keeps that line selected', sameSet(await selectedKeys(PARA), [paraKeys[2]]) && !(await editorOpen(PARA)));
+  third = await objectAt(PARA, 1, paraKeys[2]);
+  const firstBefore = await objectAt(PARA, 1, paraKeys[0]);
+  await c.drag([third.cx + 5, third.cy], [third.cx + 5, third.cy + 40], 10);
+  await sleep(700);
+  await rest(PARA);
+  const thirdAfter = await objectAt(PARA, 1, paraKeys[2]);
+  check('dragging that line then moves it alone', Math.abs(thirdAfter.cyp - third.cyp) > 10 && moved(firstBefore, await objectAt(PARA, 1, paraKeys[0]), 0, 0, 0.01).ok,
+    JSON.stringify({ third: [third.cyp, thirdAfter.cyp] }));
+  const bullet = await objectAt(PARA, 1, bulletKey);
+  await c.drag([bullet.cx, bullet.cy], [bullet.cx + 30, bullet.cy], 10);
+  await sleep(700);
+  await rest(PARA);
+  check('a list line is never grouped: it moves alone', sameSet(await selectedKeys(PARA), [bulletKey]));
+
+  // Overlap warnings: dragging a table cell onto the one under it outlines that cell while the hand moves.
+  area('overlap warnings');
+  paraObjs = await objectsOn(PARA, 1);
+  const cellA1 = paraObjs.find((o) => o.text === 'Cell A1');
+  const cellA2 = paraObjs.find((o) => o.text === 'Cell A2');
+  await revealAll(PARA, 1, [cellA1.key, cellA2.key]);
+  const [cell, onto] = [await objectAt(PARA, 1, cellA1.key), await objectAt(PARA, 1, cellA2.key)];
+  const overlapOutlines = () => q(`${V(PARA)}.el.querySelectorAll('.vl-overlap').length`);
+  check('no warning before anything moves', (await overlapOutlines()) === 0);
+  const mouseEvent = (type, x, y) => c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cell.cx, y: cell.cy });
+  await mouseEvent('mousePressed', cell.cx, cell.cy);
+  for (let i = 1; i <= 10; i++) await mouseEvent('mouseMoved', cell.cx + ((onto.cx - cell.cx) * i) / 10, cell.cy + ((onto.cy - cell.cy) * i) / 10);
+  await sleep(300);
+  check('dragging a cell over the one below outlines that one as overlapped', (await overlapOutlines()) === 1);
+  await mouseEvent('mouseReleased', onto.cx, onto.cy);
+  await sleep(300);
+  check('the warning goes when the hand lets go, and the move is still made', (await overlapOutlines()) === 0
+    && Math.abs((await objectAt(PARA, 1, cellA1.key)).cyp - cell.cyp) > 5);
 
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }
