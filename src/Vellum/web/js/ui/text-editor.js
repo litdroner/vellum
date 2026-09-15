@@ -5,6 +5,7 @@ import { EditError } from '../editing/edits.js';
 import { isRemoved } from '../editing/session.js';
 import { sharedCapability, refusalMessage } from '../editing/objects/capabilities.js';
 import { ALIGNMENTS, DISTRIBUTIONS, MINIMUM, alignMoves, distributeMoves } from '../editing/objects/arrange.js';
+import { snapMove } from '../editing/objects/snap.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
@@ -28,6 +29,8 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //     edge handle stretches a picture along its own width or height, and the keyboard nudges,
 //     turns, flips and deletes it. Every gesture ends as ONE edit record per object with an
 //     ABSOLUTE transform, so one gesture is one undo and a second gesture replaces the first.
+//     A move drag snaps to other objects' and the page's edges and centres (editing/objects/snap.js),
+//     with guide lines while it does; Alt held drags freely.
 //   - several objects on one page: Shift- or Ctrl-click adds an object to the selection or takes it
 //     out, dragging over bare paper draws a rectangle that selects what it encloses (with Shift or
 //     Ctrl, adds it), and Ctrl+A selects everything on the page. A drag, the handles around the whole
@@ -51,6 +54,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const DRAG_THRESHOLD = 3;
 /** Screen pixels around a corner handle that count as grabbing it. */
 const HANDLE_GRAB = 8;
+/** Screen pixels within which a dragged object's edge or centre snaps to another's, or the page's. */
+const SNAP_DISTANCE = 5;
 /** What one arrow key moves an object, in points; with Shift, ten times as far. */
 const NUDGE_STEP = 1;
 /** Bounds on a corner or edge drag, so a slip of the hand can't collapse an object or throw it off the page. */
@@ -451,6 +456,15 @@ export class TextEditor {
     if (drag?.mode === 'marquee' && drag.n === page.n && drag.box) {
       shapes.push(svg('polygon', { class: 'vl-object-marquee', points: quadPoints(boxQuad(drag.box)) }));
     }
+    // Guide lines where a move drag has snapped into line, measured in display axes and drawn back in
+    // user space: a line that is vertical on screen stays vertical whatever the rotation.
+    if (drag?.mode === 'move' && drag.n === page.n && drag.guides?.length && drag.snap) {
+      for (const { axis, at, from, to } of drag.guides) {
+        const [x1, y1] = applyLinear(drag.snap.back, ...(axis === 'x' ? [at, from] : [from, at]));
+        const [x2, y2] = applyLinear(drag.snap.back, ...(axis === 'x' ? [at, to] : [to, at]));
+        shapes.push(svg('line', { class: 'vl-snap-guide', x1, y1, x2, y2 }));
+      }
+    }
     layer.decorate(page.n, shapes);
     if (page.n === this.#selection.page || this.#arrangeBar) this.#syncArrangeBar();
   }
@@ -787,16 +801,60 @@ export class TextEditor {
     const transform = drag.mode === 'scale'
       ? scaleAbout(drag.anchor, clamp(distance(to, drag.anchor) / (distance(drag.from, drag.anchor) || 1), ...SCALE_LIMITS))
       : drag.mode === 'stretch' ? stretchTo(drag, to)
-        : translate(to[0] - drag.from[0], to[1] - drag.from[1]);
+        : this.#snappedMove(drag, to[0] - drag.from[0], to[1] - drag.from[1], e.altKey);
     if (!transform) return;
     drag.transform = transform;
     this.#showPreview(drag.n, new Map([...drag.quads].map(([key, quad]) => [key, transformQuad(quad, transform)])));
+  }
+
+  /**
+   * The move a drag makes, pointer delta (ux, uy) in user space, snapped so that the dragged objects'
+   * edges or centre line up with another object's or the page's when one is within a few screen
+   * pixels — measured as the page is shown, so it follows the page's rotation and the view's. With
+   * `free` (Alt held) it is the pointer's move exactly. Only the move changes; drag.guides is what to
+   * draw for it.
+   */
+  #snappedMove(drag, ux, uy, free) {
+    drag.guides = null;
+    const snap = free ? null : this.#snapContext(drag);
+    if (!snap) return translate(ux, uy);
+    const [dx, dy] = applyLinear(snap.shown, ux, uy);
+    const [x1, y1, x2, y2] = snap.box;
+    const result = snapMove([x1 + dx, y1 + dy, x2 + dx, y2 + dy], snap.targets, tolerancePoints(drag.pageView, SNAP_DISTANCE));
+    drag.guides = result.guides;
+    return result.dx || result.dy ? translate(...applyLinear(snap.back, dx + result.dx, dy + result.dy)) : translate(ux, uy);
+  }
+
+  /**
+   * What a move drag may snap to, worked out once when it is first needed and kept for the drag: the
+   * dragged objects' box and every other visible object's, and the page's own, all in display axes.
+   * null when there is nothing to measure against.
+   */
+  #snapContext(drag) {
+    if (drag.snap !== undefined) return drag.snap;
+    const page = this.#pages.get(drag.n);
+    const shown = displayBasis(drag.pageView);
+    const back = invert(shown);
+    drag.snap = null;
+    if (!page?.data || !back) return null;
+    const inShown = (quad) => quadBox(transformQuad(quad, shown));
+    const dragged = new Set(drag.keys);
+    const targets = this.#liveOf(page).objects
+      .filter((o) => !dragged.has(o.ref.key) && !o.reasons?.some((r) => r === 'blank' || r === 'invisible'))
+      .map((o) => inShown(this.#shownQuad(page, o.ref.key, o.geometry.quad)))
+      .filter(Boolean);
+    targets.push(inShown(boxQuad(drag.pageView.viewport.viewBox)));
+    const box = unionBox([...drag.quads.values()].map((quad) => transformQuad(quad, shown)));
+    if (box) drag.snap = { shown, back, box, targets };
+    return drag.snap;
   }
 
   async #onPointerUp(e) {
     const drag = this.#drag;
     if (!drag) return;
     this.#drag = null;
+    const guided = drag.guides?.length && this.#pages.get(drag.n);
+    if (guided) this.#draw(guided); // the guides go when the hand lets go
     if (drag.moved) this.#syncArrangeBar();
     if (drag.moved && drag.mode !== 'refused') {
       try {
@@ -832,7 +890,7 @@ export class TextEditor {
     if (!drag) return false;
     this.#drag = null;
     this.#clearPreview();
-    const page = drag.mode === 'marquee' ? this.#pages.get(drag.n) : null;
+    const page = drag.mode === 'marquee' || drag.guides?.length ? this.#pages.get(drag.n) : null;
     if (page) this.#draw(page);
     this.#syncArrangeBar();
     this.#announce('Cancelled.');

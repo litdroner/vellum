@@ -86,6 +86,10 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
   selection rectangle (`.vl-object-marquee`: a faint accent wash inside an accent line) that takes what
   it wholly encloses, and outlines what it will take while it is being dragged. A gesture that one of
   the objects refuses changes nothing and says why in a toast, in the object model's own words.
+- **Snapping**: while an object or a group is dragged, an edge or centre that comes within 5 screen
+  pixels of another object's, or the page's, lands exactly on it, and a thin solid `accent-2` line
+  (`.vl-snap-guide`, 1px, non-scaling) runs along it across both, only while the hand is down. Holding
+  Alt drags freely. Nothing is re-rendered for it: the guides are drawn with the outline.
 - **Home**: date, greeting, Open card (dashed inner edge), paper illustration, recent covers.
 - **Settings**: left navigation (Appearance, Reading, Updates, Shortcuts, About), rows on surface.
 - **Command palette** (Ctrl+K): every command from the registry plus recent files.

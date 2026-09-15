@@ -24,8 +24,8 @@ Vision.
 - **Current phase: 0.5.0 object editing, not complete.** Plan and phase records:
   `docs/planning/VELLUM_0.5.0_AUDIT.md`. Every 0.5.0 must-have is done: phases 0–3, with same-page
   multi-select and picture stretching on `main` and not yet in a release (marked *done, unreleased*
-  below). What remains for 0.5.0 is the should-haves (the first Roadmap row), each only if its strict
-  tests pass. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
+  below). Of the should-haves, alignment, distribution and snapping are done on `main`; the rest (the
+  first Roadmap row) remain, each only if its strict tests pass. On 2026-09-15 the owner asked for the remaining 0.5.0 work to go ahead in order, within
   the audit's scope and its "Never" list, without a separate approval for each step.
 
 ## Reading
@@ -77,6 +77,7 @@ Vision.
 | Refused rather than risked: a clipped or degenerate picture, one inside a form, on a layer or under a soft mask; text is never rotated, mirrored, sheared or scaled non-uniformly | done | editing/objects/capabilities.js, editing/objects/image.js, editing/edits.js |
 | Moved, scaled, turned and deleted objects — one or several — follow their pages through reorder, duplicate, rotate and delete, and through save and reopen; everything else in the file is kept (page boxes, annotations, links, form fields, outline, metadata, and images other pages still draw) | done | editing/edits.js (followEdits), annotations/persist.js; proved in tests/editing/object-pages.test.mjs and the page-changes suite |
 | Line up and space evenly several selected objects (should-haves "alignment" and "distribution"): align left/right/top/bottom edges or centres, space evenly across or down, from an arrange bar over the selection or the command palette; edges as shown on screen whatever the rotation; one undo step, only when every object can be moved | done, unreleased | editing/objects/arrange.js, ui/text-editor.js, commands.js |
+| Snapping while dragging (should-have): a dragged object or group snaps its edges or centre to another object's edges and centres, or the page's edges and centre, within 5 screen pixels, as the page is shown whatever the rotation; a thin guide line marks each line it is on while the hand is down; Alt held turns it off. Only the move changes (still a move, one record per object, one undo step) | done, unreleased | editing/objects/snap.js, ui/text-editor.js (#snappedMove) |
 | Several objects on one page: Shift- or Ctrl-click adds or removes one, a rectangle over bare paper selects what it wholly encloses (Shift or Ctrl adds), Ctrl+A selects the page's objects; a drag, the group's corner handles, the arrow keys, turn, mirror and Delete act on all of them as one undo step, and only when every one allows it (otherwise nothing changes, with the reason) | done, unreleased | editing/objects/selection.js, editing/objects/capabilities.js, editing/session.js, ui/text-editor.js |
 | Rotating text, paragraph reflow, new characters outside Latin (WinAnsi) | planned | — |
 
@@ -110,7 +111,7 @@ intended behaviour and its rules.
 
 | Feature | Status | Vision |
 |---|---|---|
-| 0.5.0 should-haves left, each only if its strict tests pass (otherwise they move to a later release): snapping, image replacement, image insertion, paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated) | next | §3.2 |
+| 0.5.0 should-haves left, each only if its strict tests pass (otherwise they move to a later release): image replacement, image insertion, paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated) | next | §3.2 |
 | Rotating text, free rotation, cross-page moves, copy/paste | planned | §3.2 |
 | New text boxes; rich-text formatting: font selection, size, bold, italic, underline, alignment, colour, opacity | planned | §3.2 |
 | Font selection: multiple selectable document fonts (the document's own, standard, bundled), compatibility checks (glyphs, embedding permission, PDF/A), embedding when used, no silent substitution; needs a vendored font parser (e.g. fontkit), not present | planned | §4.3 |

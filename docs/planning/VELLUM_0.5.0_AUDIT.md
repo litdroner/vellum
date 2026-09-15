@@ -674,3 +674,71 @@ dragging turns it off. It only changes the delta a move drag writes (still a mov
 so it builds on `#onDragMove` and `displayBasis` without touching the writer. Image replacement
 (a host file dialog, pdf-lib image embedding, a new resource per replaced draw) is the larger step
 after it.
+
+## 15. Snapping record (should-have)
+
+While one object or a group is dragged in Edit mode, its left edge, centre or right edge — and its
+top edge, middle or bottom edge — snaps to the same lines of any other object on the page, or of the
+page itself, when one is within 5 screen pixels. A thin guide line marks each line it is then on, for
+as long as the hand is down. Alt held while dragging moves it exactly with the pointer.
+
+### Decisions worth keeping
+
+- **Pure arithmetic, in display axes, like arrange.js.** `editing/objects/snap.js` (`snapMove`) takes
+  the dragged box as it would be without snapping, the target boxes and a tolerance, and returns the
+  extra move (`dx`, `dy`, each zero or within the tolerance) and the guides. The nearest line wins,
+  per axis, independently; guides are every line the snapped box is then exactly on, spanning it and
+  every target on that line.
+- **Only the move changes.** `#snappedMove` in `ui/text-editor.js` is the one change to `#onDragMove`:
+  the pointer's user-space delta is taken into display axes with `displayBasis(pageView)`, snapped,
+  and taken back through its inverse (exact, quarter turns only) into the same `translate` a drag
+  always wrote. Nothing new is written: still one record per object, one undo step, the `move`
+  capability, `transformObjects`. Corner scaling, stretching, nudging and arranging do not snap.
+- **Worked out once per drag.** The targets (every live object not being dragged, except blank and
+  invisible text, plus the page's view box) and the dragged box are measured on the first move and
+  kept on the drag (`drag.snap`); each pointer move is then only `snapMove` over those boxes. The
+  guides are SVG lines in the decoration overlay drawn by the same `#draw` as the outline, so a snap
+  re-renders nothing.
+- **Screen-space tolerance.** 5 px through `tolerancePoints()`, so it feels the same at every zoom.
+- **Alt is read from the pointer event** (`e.altKey`). Pressing or releasing Alt without moving takes
+  effect on the next pointer move.
+
+### Found on the way
+
+- The existing `manipulation` checks drag objects by exact screen distances; the second text drag
+  ended within 5 px of another line and — correctly — snapped (−1.7 pt), failing two of them. They are
+  about a drag
+  following the hand, so the suite's `dragBy` now holds Alt, which is exactly what a person does for
+  an unsnapped move; snapping itself has its own area.
+
+### Test results
+
+**Node**: `node --test "tests/editing/*.test.mjs"`: **312 tests, 310 pass, 2 skipped, 0 fail**. New
+`snap.test.mjs` (5): an edge within the tolerance lands exactly on the other edge, with one guide
+spanning both, and nothing beyond it; centres and opposite edges, the nearest line wins, each axis on
+its own, never more than the tolerance; the page's edges and centre with a full-length guide; what
+gives no snap at all; and on a turned page, the snap is to the line as shown, the result is still
+nothing but a translate, and the guide comes back vertical on screen.
+
+**End-to-end**: `manipulation` gains a *snapping* area (11 checks, 100/100 in the suite), measured on
+screen: with Alt, no guide and the move is exactly the hand's; without, a drag ending 2 px beside
+another object's line lands exactly on it (to 0.05 px), a guide is drawn while the hand is down and
+goes when it lets go, and the record is a plain move and one undo step; a group of two lines dragged
+3 px short of a line lands on it; and with the view turned 90° a drag lands exactly on the line as
+shown, with a guide. The whole default set in one batch: **369 of 369 checks in 8 suites**
+(text-editor 43, regression 48, editing-store 14, phase0 30, selection 51, manipulation 100,
+multi-select 66, page-changes 17).
+
+**A real Alt key** (not the DevTools modifier bit the suites send): on the Debug build with a throwaway
+data folder, Alt tapped on the keyboard (Win32 `keybd_event`) with Vellum in front, then an arrow key,
+still nudged the selected line, twice in a row, and the page kept the focus — so the WPF host does
+not take the keyboard when Alt is pressed and released.
+
+### Remaining for 0.5.0 (after §15) — and the next step
+
+Should-haves left, each only if its strict tests pass: **image replacement**, image insertion,
+paragraph grouping, overlap warnings, single-style paragraph reflow (last, gated).
+
+**Recommended next step: image replacement** — replace a selected picture's image with one from a
+local file, keeping its placement (host file dialog, pdf-lib image embedding, a new XObject resource
+for the replaced draw, the old one released only when provably unused, as delete already does).

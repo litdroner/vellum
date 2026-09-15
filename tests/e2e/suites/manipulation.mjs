@@ -16,6 +16,10 @@ export const files = {
   images: 'images', simple: 'simple', overlap: 'overlap', objects: 'objects',
 };
 
+/** Modifier bits for the DevTools client (tools/cdp-client.mjs). */
+const ALT = 1;
+const SHIFT = 8;
+
 export async function run(t) {
   const { c, q, check, sleep, shot, V, settled, waitFor, area } = t;
   const F = (name) => t.file(name);
@@ -145,11 +149,16 @@ export async function run(t) {
     return o;
   };
 
-  /** Drags an object by a screen offset, from wherever it is right now. Returns before and after. */
+  /**
+   * Drags an object by a screen offset, from wherever it is right now. Returns before and after. Alt
+   * is held, which turns snapping off: these checks are about a move following the hand exactly, and
+   * a line that happens to end within a few pixels of another would otherwise, rightly, snap to it.
+   * Snapping itself is checked in its own area.
+   */
   const dragBy = async (path, n, key, dx, dy) => {
     const before = await reveal(path, n, key);
     if (!before?.visible) return { before, after: null };
-    await c.drag([before.cx, before.cy], [before.cx + dx, before.cy + dy], 10);
+    await c.drag([before.cx, before.cy], [before.cx + dx, before.cy + dy], 10, { modifiers: ALT });
     await rest(path);
     return { before, after: await objectAt(path, n, key) };
   };
@@ -530,6 +539,137 @@ export async function run(t) {
     (await selection(F('overlap')))?.key === over.key, (await selection(F('overlap')))?.key);
   await closeEditor(F('overlap'));
   await shot('z-order');
+
+  // ---- 12. snapping while dragging -------------------------------------------------------------------
+  // Measured on screen, where snapping is decided: a line vertical on screen is the one snapped to,
+  // whatever the rotation. Every number compared comes from one reading of the page, taken after the
+  // drag has settled, so a scroll that settles differently can't enter into it.
+
+  area('snapping');
+  const SIMPLE = F('simple');
+  await activate(SIMPLE);
+  await editMode(SIMPLE);
+  await q(`${V(SIMPLE)}.objectSelection.clear()`);
+  const guides = () => q(`${V(SIMPLE)}.el.querySelectorAll('.vl-snap-guide').length`);
+  const pageBox = (n = 1) => q(`(() => { const r = ${V(SIMPLE)}.viewer.getPageView(${n} - 1).div.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; })()`);
+  const across = (b) => [b.left, (b.left + b.right) / 2, b.right];
+  /**
+   * Where to take a box so its left edge ends `gap` pixels right of some other object's vertical line
+   * (or the page's), with no other line near its own three: then that one line is the only thing it
+   * can snap to, across. The nearest such place, as { owner, index, line } — whose line it is, so it
+   * can be read again after the drag — or null when the page has none.
+   */
+  const spotBeside = (box, others, page, gap) => {
+    const lines = [...others.map((o) => ({ owner: o.key, b: o })), { owner: 'page', b: page }]
+      .flatMap(({ owner, b }) => across(b).map((line, index) => ({ owner, index, line })));
+    const w = box.right - box.left;
+    const fits = lines.filter(({ line }) => {
+      const mine = [line + gap, line + gap + w / 2, line + gap + w];
+      return lines.every((l) => Math.abs(l.line - line) < 0.01 || mine.every((v) => Math.abs(v - l.line) > 6))
+        && mine[0] > page.left && mine[2] < page.right
+        && Math.abs(line + gap - box.left) >= 20; // a real drag, well past the click threshold
+    });
+    fits.sort((a, b) => Math.abs(a.line + gap - box.left) - Math.abs(b.line + gap - box.left));
+    return fits[0] ?? null;
+  };
+  /** A drag held part-way, so what is drawn while the hand is still down can be read. */
+  const holdDrag = async (from, to, { modifiers = 0, name = null } = {}) => {
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: from[0], y: from[1], modifiers });
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: from[0], y: from[1], button: 'left', clickCount: 1, modifiers });
+    for (let i = 1; i <= 10; i++) {
+      const x = from[0] + ((to[0] - from[0]) * i) / 10;
+      const y = from[1] + ((to[1] - from[1]) * i) / 10;
+      await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1, modifiers });
+      await sleep(16);
+    }
+    await sleep(150);
+    const during = await guides();
+    if (name) await shot(name);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: to[0], y: to[1], button: 'left', clickCount: 1, modifiers });
+    await sleep(150);
+    return { during, after: await guides() };
+  };
+  /** Drags the objects `keys` (the first is pressed) so their left edge goes `gap` px right of a lone line. */
+  const snapDrag = async (keys, gap, options) => {
+    const first = await reveal(SIMPLE, 1, keys[0]);
+    const all = await objectsOn(SIMPLE, 1);
+    const moving = all.filter((o) => keys.includes(o.key));
+    const box = { left: Math.min(...moving.map((o) => o.left)), right: Math.max(...moving.map((o) => o.right)) };
+    const others = all.filter((o) => !keys.includes(o.key) && !o.gone && (o.kind === 'image' || o.text?.trim()));
+    const page = await pageBox();
+    const spot = spotBeside(box, others, page, gap);
+    if (!spot) return { spot };
+    const dx = spot.line + gap - box.left;
+    const seen = await holdDrag([first.cx, first.cy], [first.cx + dx, first.cy], options);
+    await rest(SIMPLE);
+    return { spot, dx, seen, before: moving };
+  };
+  /** Where a set of objects' left edge is now, and the line it went beside, from one reading. */
+  const leftNow = async (keys, { spot }) => {
+    const all = await objectsOn(SIMPLE, 1);
+    const left = Math.min(...all.filter((o) => keys.includes(o.key)).map((o) => o.left));
+    if (!spot) return { left, line: null };
+    const owner = spot.owner === 'page' ? await pageBox() : all.find((o) => o.key === spot.owner);
+    return { left, line: across(owner)[spot.index] };
+  };
+  const onLine = (at) => at.line !== null && Math.abs(at.left - at.line) < 0.05;
+  const said = (at) => `left ${at.left.toFixed(3)} vs line ${at.line?.toFixed(3)}`;
+
+  const texts = (await objectsOn(SIMPLE, 1)).filter((o) => o.kind === 'text-run' && o.caps.move === true && o.text?.trim());
+  check('the page has lines to drag and snap to', texts.length >= 3, texts.length);
+  const mover = texts.at(-1);
+  const depthSnap = await undoDepth(SIMPLE);
+
+  // With Alt: the move is exactly the hand's, even 2 px from a line.
+  let snapped = await snapDrag([mover.key], 2, { modifiers: ALT });
+  check('there is a place 2 px beside a line with nothing else near', Boolean(snapped.spot));
+  check('with Alt held no guide is drawn', snapped.seen?.during === 0, JSON.stringify(snapped.seen));
+  let rec = await recordFor(SIMPLE, mover.key);
+  const exact = snapped.dx / (await zoom(SIMPLE));
+  check('with Alt held the move is exactly the hand’s',
+    rec && Math.abs(rec.transform[4] - (snapped.before[0].transform?.[4] ?? 0) - exact) < 0.3, `${rec?.transform} for ${exact.toFixed(2)} pt`);
+  await q(`${V(SIMPLE)}.annotations.undo()`);
+  await rest(SIMPLE);
+
+  // Without Alt: the same drag lands exactly on the line, with a guide while the hand is down.
+  snapped = await snapDrag([mover.key], 2, { name: 'snap-guide' });
+  let at =await leftNow([mover.key], snapped);
+  check('a drag that ends 2 px beside another object’s line lands exactly on it', onLine(at), `${said(at)} (${snapped.spot?.owner})`);
+  check('a guide line is drawn while it is snapped', snapped.seen?.during > 0, JSON.stringify(snapped.seen));
+  check('and goes when the hand lets go', snapped.seen?.after === 0, JSON.stringify(snapped.seen));
+  rec = await recordFor(SIMPLE, mover.key);
+  check('a snapped drag is still a plain move, one record and one undo step',
+    rec && rec.transform[0] === 1 && rec.transform[1] === 0 && rec.transform[2] === 0 && rec.transform[3] === 1
+    && (await undoDepth(SIMPLE)) === depthSnap + 1, JSON.stringify(rec));
+
+  // Several objects: the group's box is what snaps.
+  const partner = texts.at(-2);
+  const p = await reveal(SIMPLE, 1, partner.key);
+  await c.mouse(p.cx, p.cy);
+  await sleep(450);
+  await closeEditor(SIMPLE);
+  const m = await objectAt(SIMPLE, 1, mover.key);
+  await c.mouse(m.cx, m.cy, { modifiers: SHIFT });
+  await sleep(450);
+  check('two lines are selected to drag together', (await selection(SIMPLE))?.keys.length === 2);
+  const group = [mover.key, partner.key];
+  snapped = await snapDrag(group, -3);
+  at = await leftNow(group, snapped);
+  check('a group dragged 3 px short of a line lands with its left edge exactly on it', onLine(at), `${said(at)} (${snapped.spot?.owner})`);
+
+  // With the view turned, the line snapped to is still the one vertical on screen.
+  await q(`${V(SIMPLE)}.rotate(90)`);
+  await sleep(900);
+  await rest(SIMPLE);
+  await q(`${V(SIMPLE)}.objectSelection.clear()`);
+  snapped = await snapDrag([mover.key], 2);
+  at = await leftNow([mover.key], snapped);
+  check('on a turned view it lands exactly on the line as it is shown',
+    onLine(at) && snapped.seen?.during > 0, `${said(at)} (${snapped.spot?.owner}), guides ${JSON.stringify(snapped.seen)}`);
+  await q(`${V(SIMPLE)}.rotate(-90)`);
+  await sleep(700);
+  await rest(SIMPLE);
+  await shot('snapped');
 
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));

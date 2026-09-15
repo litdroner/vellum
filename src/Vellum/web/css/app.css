@@ -1257,6 +1257,14 @@ kbd {
   stroke-width: 1px;
   vector-effect: non-scaling-stroke;
 }
+/* While a drag has snapped into line with another object or the page: a thin line along it, only as
+   long as the hand is moving. */
+.vl-snap-guide {
+  stroke: var(--accent-2);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
 /* Dragging a picture moves it; text keeps the caret, because clicking text types rather than moves. */
 .viewer-container.vl-edit-move { cursor: move; }
 
