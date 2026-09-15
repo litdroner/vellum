@@ -1049,3 +1049,21 @@ left for the broad regression pass to watch.
 Every 0.5.0 feature is built. **Next: the one broad regression pass** — the full default end-to-end batch
 and the Node tests, fixing what it finds — **then the release QA session**. No push, release or version
 bump has been made.
+
+## 20. Final QA record (the broad regression pass)
+
+- **Node**: 335 tests, 333 pass, 2 skipped, 0 fail.
+- **Full default end-to-end batch**, once: 385/391. `editing-store` 14/14, `phase0` 30/30, `selection`
+  51/51, `multi-select` 90/90, `page-changes` 17/17.
+  - `manipulation` 139/140: *inserting a PNG succeeds* failed again, now with its reason: "That picture
+    couldn't be added: Cannot read properties of undefined (reading 'viewport')". **A real bug**: the
+    picture was added, then selecting it redrew the page while its view was still being rebuilt, and the
+    handle size read that missing view, so the call reported a failure for a picture it had added.
+    Fixed in `text-editor.js` `#draw`: no handles until the page has a view (it is drawn again when it
+    has). `manipulation` alone after the fix: 140/140.
+  - `text-editor` 41/43 (Shift+Tab inside the editor) and `regression` 3/6 (a note drag landed wide, and
+    the suite stopped after it). Neither path changed since 0.4.1. Run again together after the fix:
+    43/43 and 52/52, including the chrome checks (even toolbar gaps; + goes home and keeps the tabs).
+- **Release build** (`tools/publish.ps1`): published and the installer built, still stamped 0.4.1.
+
+The regression pass is done. 0.5.0 is ready for release QA: version bump, README, notes.

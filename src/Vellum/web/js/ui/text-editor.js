@@ -579,10 +579,12 @@ export class TextEditor {
     }
     // Corner handles, and only where a corner drag can really be honoured (#handleFrame). Several
     // objects share one frame around all of them, drawn so the handles plainly belong to the group.
-    const frame = this.#drag?.mode === 'marquee' ? null : this.#handleFrame(page, selected);
+    // No page view yet (the pages are being rebuilt): no handles, until the page is drawn again.
+    const handlesView = this.#view.viewer.getPageView(page.n - 1);
+    const frame = this.#drag?.mode === 'marquee' || !handlesView ? null : this.#handleFrame(page, selected);
     if (frame) {
       if (selected.length > 1) shapes.push(svg('polygon', { class: 'vl-object-group', points: quadPoints(frame) }));
-      const r = tolerancePoints(this.#view.viewer.getPageView(page.n - 1), 4);
+      const r = tolerancePoints(handlesView, 4);
       const points = handlePoints(frame) ?? [];
       for (const [x, y] of points.slice(0, 4)) shapes.push(svg('circle', { class: 'vl-object-handle', cx: x, cy: y, r }));
       // Edge handles stretch, so they are only for one object that can be stretched: a picture.
