@@ -413,7 +413,10 @@ body.maximized #window-edges { display: none; }
 .seg-btn[aria-pressed="true"], .seg-btn[aria-selected="true"], .seg-btn[aria-checked="true"] { color: var(--accent-ink); }
 .seg-btn[aria-pressed="true"]:hover { color: var(--accent-ink) !important; }
 
-.tool-seg .seg-btn { gap: 7px; padding: 0 12px; font-weight: 500; }
+/* Tools size to their labels with equal padding (so the gaps match); the knob follows the pressed
+   button's measured box (toolbar.js) instead of equal slots. */
+.tool-seg .seg-btn { flex: none; gap: 7px; padding: 0 12px; font-weight: 500; }
+.tool-seg::before { left: 0; width: var(--seg-w, 0); transform: translateX(var(--seg-x, 0)); }
 .tool-seg .seg-btn .icon { width: 17px; height: 17px; }
 
 .btn {

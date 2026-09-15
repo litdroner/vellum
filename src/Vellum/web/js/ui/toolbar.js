@@ -78,6 +78,8 @@ export class Toolbar {
       h('div', { class: 'tb-group' }, this.menuBtn),
     );
 
+    // Labels hide on narrow windows and fonts load late: keep the knob on its button.
+    new ResizeObserver(() => this.#placeKnob()).observe(this.toolSeg);
     app.addEventListener('activechange', () => this.update());
     app.addEventListener('viewchange', () => this.update());
     this.update();
@@ -95,7 +97,8 @@ export class Toolbar {
     editBtn.title = blocked ?? commandTitle(this.commands['edit.text']);
 
     const toolIndex = Math.max(0, TOOL_BUTTONS.findIndex(([tool]) => tool === s?.tool));
-    this.toolSeg.style.setProperty('--seg-index', String(toolIndex));
+    this.toolIndex = toolIndex;
+    this.#placeKnob();
     this.toolSeg.toggleAttribute('data-empty', !ready);
     this.toolButtons.forEach((b, i) => b.setAttribute('aria-pressed', String(ready && i === toolIndex)));
     this.colorBtn.style.setProperty('--dot', toolPrefs[this.#colorTool()]);
@@ -104,6 +107,14 @@ export class Toolbar {
     this.undoBtn.disabled = !ready || !s.canUndo;
     this.redoBtn.disabled = !ready || !s.canRedo;
     this.toneBtn.setAttribute('aria-pressed', String((document.documentElement.dataset.pageTone ?? 'normal') !== 'normal'));
+  }
+
+  /** The tools differ in width, so the sliding knob takes the pressed button's own box. */
+  #placeKnob() {
+    const b = this.toolButtons[this.toolIndex ?? 0];
+    if (!b.offsetWidth) return; // not laid out yet (toolbar hidden with no document)
+    this.toolSeg.style.setProperty('--seg-x', `${b.offsetLeft}px`);
+    this.toolSeg.style.setProperty('--seg-w', `${b.offsetWidth}px`);
   }
 
   #openToneMenu() {

@@ -2,7 +2,7 @@ import { h } from '../dom.js';
 import { icon } from '../icons.js';
 
 // Document tabs in the title bar. Click to switch, middle-click or × to close, drag to reorder.
-// A peach dot marks unsaved annotations.
+// A peach dot marks unsaved annotations. + shows the home screen; open tabs stay as they are.
 
 export class TabStrip {
   #tabs = new Map(); // view → { el, icon, name, iconKey }
@@ -11,7 +11,7 @@ export class TabStrip {
     this.app = app;
     this.onClose = onClose;
     this.list = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Open documents' });
-    this.newBtn = h('button', { class: 'tab-new', title: 'Open a PDF (Ctrl+O)', 'aria-label': 'Open a PDF', html: icon('plus', 16), onClick: onNew });
+    this.newBtn = h('button', { class: 'tab-new', title: 'Home', 'aria-label': 'Home', html: icon('plus', 16), onClick: onNew });
     host.replaceChildren(this.list, this.newBtn);
 
     // Vertical wheel scrolls a long tab strip sideways.

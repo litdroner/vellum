@@ -374,7 +374,7 @@ const settingsContext = {
 // ---- UI --------------------------------------------------------------------------------------
 
 ui.titlebar = new TitleBar(document.getElementById('titlebar'), app, { bridge, commands });
-ui.tabs = new TabStrip(ui.titlebar.tabHost, app, { onNew: () => actions.openDialog(), onClose: (view) => app.requestClose(view) });
+ui.tabs = new TabStrip(ui.titlebar.tabHost, app, { onNew: () => app.activate(null), onClose: (view) => app.requestClose(view) });
 ui.toolbar = new Toolbar(document.getElementById('toolbar'), app, commands);
 ui.toolbar.pageTones = PAGE_TONES;
 ui.toolbar.onPageTone = setPageTone;

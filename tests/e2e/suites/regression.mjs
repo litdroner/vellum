@@ -394,12 +394,33 @@ export async function run(t) {
   check('after save and reopen: same text, page upright', expected.every(([s, x, y]) => text.some((i) => i.str === s && i.x === x && i.y === y)) && rotation === 0, JSON.stringify({ text, rotation }));
   check('no runtime errors (rotation)', (await errors()) === 0, JSON.stringify(await q('__vellum.errors')).slice(0, 300));
 
+  // ---- chrome: even gaps between the tools; + goes home and keeps the open tabs -------------------
+  t.area('chrome');
+  const gaps = await q(`(() => {
+    const knob = getComputedStyle(document.querySelector('#toolbar .tool-seg'), '::before');
+    const pressed = document.querySelector('#toolbar .tool-seg .seg-btn[aria-pressed="true"]');
+    const contents = [...document.querySelectorAll('#toolbar .tool-seg .seg-btn')].map((b) => {
+      const r = [...b.children].map((c) => c.getBoundingClientRect()).filter((r) => r.width);
+      return { left: Math.min(...r.map((x) => x.left)), right: Math.max(...r.map((x) => x.right)) };
+    });
+    return { spaces: contents.slice(1).map((c, i) => c.left - contents[i].right), knobWidth: parseFloat(knob.width), pressedWidth: pressed?.offsetWidth, count: contents.length };
+  })()`);
+  check('the six tools have equal space between them', gaps.count === 6 && Math.max(...gaps.spaces) - Math.min(...gaps.spaces) < 1.5, JSON.stringify(gaps));
+  check('the tool knob is as wide as the pressed tool', Math.abs(gaps.knobWidth - gaps.pressedWidth) < 1, JSON.stringify(gaps));
+  const tabsBefore = await q('__vellum.app.views.length');
+  await q(`document.querySelector('.tab-new').click()`);
+  await waitFor(`!__vellum.app.active && document.querySelector('#stage').classList.contains('empty')`, 3000);
+  const home = await q(`({ views: __vellum.app.views.length, tabs: document.querySelectorAll('.tabs .tab:not(.closing)').length, start: getComputedStyle(document.querySelector('.start')).display !== 'none' })`);
+  check('+ shows the home screen with every tab still open', home.start && home.views === tabsBefore && home.tabs === tabsBefore && tabsBefore > 0, JSON.stringify({ tabsBefore, home }));
+  await activate(ROTATE);
+  check('a tab brings its document back after home', (await q(`__vellum.app.active === ${V(ROTATE)}`)) === true);
+
   // ---- clean up: tabs closed, test files out of the recent list (Vellum's own remove) ---------------
   await q(`(async () => {
     for (const v of [...__vellum.app.views]) __vellum.app.close(v);
     for (const path of ${JSON.stringify([ANNOT, SEARCH, ROTATE])}) await __vellum.ui.start.bridge.request('recent.remove', { path });
   })()`);
-  for (const area of ['annotations', 'search', 'rotation']) {
+  for (const area of ['annotations', 'search', 'rotation', 'chrome']) {
     const lines = t.results.filter((r) => r.area === area);
     const failed = lines.filter((r) => !r.ok).length;
     console.log(`  ${area.toUpperCase()}: ${failed ? 'FAIL' : 'PASS'} (${lines.length - failed}/${lines.length})`);
