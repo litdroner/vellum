@@ -23,6 +23,7 @@ const names = [
   'align-start-horizontal', 'align-center-horizontal', 'align-end-horizontal',
   'align-horizontal-space-between', 'align-vertical-space-between',
   'image', 'image-plus',
+  'bold', 'italic', 'text-align-start', 'text-align-center', 'text-align-end', 'blend',
 ];
 
 const icons = {};

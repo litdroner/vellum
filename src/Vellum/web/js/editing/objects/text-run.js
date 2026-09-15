@@ -252,18 +252,25 @@ function textArray(items) {
 
 /** A standard font added to this page's resources (a copy of them: other pages are unaffected). */
 export function addStandardFont(lib, doc, page, name) {
+  return addResource(lib, doc, page, 'Font', 'VlF', doc.embedStandardFont(name).ref);
+}
+
+/**
+ * `value` added to this page's resources of `category` (/Font, /ExtGState…) under a new name starting
+ * `prefix`, never one the page already has (a copy of its resources: other pages are unaffected). The name.
+ */
+export function addResource(lib, doc, page, category, prefix, value) {
   const { PDFName, PDFDict } = lib;
   const ctx = doc.context;
-  const font = doc.embedStandardFont(name);
   const inherited = page.node.Resources();
   const resources = inherited ? inherited.clone(ctx) : ctx.obj({});
-  const current = resources.lookup(PDFName.of('Font'));
-  const fonts = current instanceof PDFDict ? current.clone(ctx) : ctx.obj({});
+  const current = resources.lookup(PDFName.of(category));
+  const entries = current instanceof PDFDict ? current.clone(ctx) : ctx.obj({});
   let n = 1;
-  while (fonts.has(PDFName.of(`VlF${n}`))) n++;
-  const key = `VlF${n}`;
-  fonts.set(PDFName.of(key), font.ref);
-  resources.set(PDFName.of('Font'), fonts);
+  while (entries.has(PDFName.of(`${prefix}${n}`))) n++;
+  const key = `${prefix}${n}`;
+  entries.set(PDFName.of(key), value);
+  resources.set(PDFName.of(category), entries);
   page.node.set(PDFName.of('Resources'), resources);
   return key;
 }

@@ -38,7 +38,7 @@ const depth = (store) => {
 test('a new-text record: its text, a standard font, its extent and a placement; refusals in plain words', async () => {
   const lib = await loadPdfLib();
   const record = planNewText({ lib, text: 'Hello\tthere', transform: [1, 0, 0, 1, 72, 700], entry: 'e1' });
-  assert.deepEqual(Object.keys(record).sort(), ['box', 'entry', 'font', 'id', 'kind', 'size', 'text', 'transform']);
+  assert.deepEqual(Object.keys(record).sort(), ['align', 'box', 'color', 'entry', 'font', 'id', 'kind', 'opacity', 'size', 'text', 'transform', 'underline', 'width']);
   assert.deepEqual([record.kind, record.text, record.font, record.size], ['inserted-text', 'Hello there', 'Helvetica', 12]);
   const helvetica = lib.StandardFontEmbedder.for('Helvetica');
   const advance = [...'Hello there'].reduce((sum, ch) => sum + helvetica.font.getWidthOfGlyph(helvetica.encodeTextAsGlyphs(ch)[0].name), 0) * 12 / 1000;
@@ -74,7 +74,7 @@ test('the writer draws new text in its standard font after the page, and PDF/A r
   ];
   const { patches, append } = write({ lib, doc, page, index: 0, records });
   assert.deepEqual(patches, []);
-  assert.match(append[0], /^q\n1 0 0 1 72 700 cm\nBT\n\/VlF1 12 Tf\n0 g\n0 Tc 0 Tw 100 Tz 0 Ts 0 Tr\n<4f6e65> Tj\nET\nQ$/);
+  assert.match(append[0], /^q\n1 0 0 1 72 700 cm\nBT\n\/VlF1 12 Tf\n0 g\n0 Tc 0 Tw 100 Tz 0 Ts 0 Tr\n1 0 0 1 0 0 Tm\n<4f6e65> Tj\nET\nQ$/);
   assert.match(append[1], /\/VlF2 20 Tf/);
   assert.throws(() => write({ lib, doc, page, index: 0, records: [{ ...records[0], transform: [-1, 0, 0, 1, 0, 0] }] }), EditError, 'a mirror never reaches the file');
   assert.throws(() => write({ lib, doc, page, index: 0, records: [{ ...records[0], text: 'नमस्ते' }] }), EditError, 'nor a character the font lacks');

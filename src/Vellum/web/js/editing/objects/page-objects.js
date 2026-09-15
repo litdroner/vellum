@@ -16,6 +16,7 @@
 import { capabilitiesFor } from './capabilities.js';
 import { keyOf as insertedKey } from './inserted-image.js';
 import { keyOf as insertedTextKey } from './inserted-text.js';
+import { formatOf, rgbOf, styleOf } from './text-format.js';
 
 /**
  * Identity. Two draws of one image share a resource key ("4 0 R"), and an inline image has none, so
@@ -133,10 +134,12 @@ export function insertedObject(analysis, record, index = 0) {
 }
 
 /**
- * New text put on the page in Edit mode (objects/inserted-text.js), as an object: a line of text whose own
+ * New text put on the page in Edit mode (objects/inserted-text.js), as an object: lines of text whose own
  * outline is its box in text space, so its record's transform is where it is, and whose identity is its
  * record's. Its `record` has the fields of a run the editor and the gestures read (font, frame, first,
- * quad) and nothing else: no glyphs of the page, no show, no font object — it is drawn from its record.
+ * quad), and its `format` (objects/text-format.js, with its bold and italic) for the editor and the format bar —
+ * no glyphs of the page, no show, no font object: it is drawn from its record. `font.descent` is the
+ * box's bottom, so ascent to descent spans every line.
  * Everything that may be done to it is the answer for editable text, unless the page can't be rewritten.
  */
 export function insertedTextObject(analysis, record, index = 0) {
@@ -145,16 +148,18 @@ export function insertedTextObject(analysis, record, index = 0) {
   const quad = Object.freeze([x1, y1, x2, y1, x2, y2, x1, y2]);
   const box = Object.freeze([x1, y1, x2, y2]);
   const family = record.font.split('-')[0];
+  const format = Object.freeze({ ...(formatOf(record).format ?? {}), ...styleOf(record.font) });
+  const fill = format.color && format.color !== '#000000' ? { op: 'rg', args: rgbOf(format.color) } : { op: 'g', args: [0] };
   const reasons = new Set(analysis?.tainted || analysis?.summary?.kind === 'unreadable' ? ['unreadable'] : analysis?.unbalanced ? ['structure'] : []);
   const run = Object.freeze({
-    key: ref.key, text: record.text, editable: !reasons.size, reasons, newText: true, tagged: false, loadedFont: null,
+    key: ref.key, text: record.text, editable: !reasons.size, reasons, newText: true, format, tagged: false, loadedFont: null,
     font: Object.freeze({
       name: record.font, key: `standard:${record.font}`, standard: record.font,
       ascent: y2 / record.size, descent: y1 / record.size,
       flags: Object.freeze({ fixedPitch: family === 'Courier', serif: family === 'Times' }),
     }),
     frame: Object.freeze({ size: record.size, width: record.size, dir: [1, 0], up: [0, 1], skewed: false }),
-    first: Object.freeze({ fill: { space: null, color: { op: 'g', args: [0] } }, stroke: null, tc: 0, tw: 0, th: 1, ts: 0, tr: 0, gsNames: [], form: null }),
+    first: Object.freeze({ fill: { space: null, color: fill }, stroke: null, tc: 0, tw: 0, th: 1, ts: 0, tr: 0, gsNames: [], form: null }),
     quad, box, origin: [0, 0], glyphs: [],
   });
   return Object.freeze({

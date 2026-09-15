@@ -2,40 +2,51 @@
 // already draws. Registered in registry.js, which is what makes the `inserted-text` kind writable.
 //
 //   { id, kind: 'inserted-text', entry,
-//     text,                        one line, every character one the font's standard encoding writes
-//     font, size,                  a standard PDF font by its PostScript name, and its size in points
-//     box: [x1 y1 x2 y2],          the line's extent in its own text space, in points: advance, descent, ascent
-//     transform: [a b c d e f] }   text space (the baseline's start at the origin, y up) → the ORIGINAL page's user space
+//     text,                        its lines, separated by line breaks; every character one the font's standard encoding writes
+//     font, size, underline,       its format (objects/text-format.js): a standard PDF font by its PostScript name
+//     align, color, opacity,       (bold and italic are the family's own faces), the size in points, underline,
+//     width,                       alignment, '#rrggbb', fill opacity, and the box's width (null: as typed)
+//     box: [x1 y1 x2 y2],          the lines' extent in their own text space, in points (text-format.js layoutText)
+//     transform: [a b c d e f] }   text space (the first baseline's start at the origin, y up) → the ORIGINAL page's user space
+//
+// A record from before formatting holds only font and size: it reads as left-aligned, black, opaque,
+// not underlined and as wide as typed, which is what it was drawn as.
 //
 // Like a picture put there from a file (inserted-image.js), it has nothing in the page's content to
 // fingerprint, so the record itself is the object: its identity is `text:<id>`, `transform` is its whole
-// placement, retyping replaces `text` (and `box`, which follows it), deleting removes the record, and
-// undo and redo are the edit store's. `transform` is a similarity, exactly as for moved text (edits.js
-// textPlacement), so the glyphs are only ever moved, turned and scaled uniformly.
+// placement, retyping replaces `text` (and `box`, which follows it), formatting replaces its format,
+// deleting removes the record, and undo and redo are the edit store's. `transform` is a similarity,
+// exactly as for moved text (edits.js textPlacement), so the glyphs are only ever moved, turned and
+// scaled uniformly.
 //
 // It is drawn AFTER the page's own content, in a graphics state of its own:
 //
-//   q <transform> cm BT /VlFn <size> Tf 0 g 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr <codes> Tj ET Q
+//   q <transform> cm [/VlGSn gs] BT /VlFn <size> Tf <colour> 0 Tc 0 Tw 100 Tz 0 Ts 0 Tr
+//     1 0 0 1 <x> <y> Tm <codes> Tj   … one per line …   ET [<underline> re f …] Q
 //
 // in one of the standard PDF fonts, added under a new /Font name (text-run.js addStandardFont, which never
-// reuses a name the page already has). The standard fonts are the ones every PDF reader has, and are not
-// embedded — so a PDF/A file, which needs every font embedded, is refused new text. The codes are the
-// font's own standard (WinAnsi) encoding; a character it doesn't have is refused, never drawn in another
-// font. Nothing already on the page is touched. Choosing another font, and fonts that are embedded, is
-// font selection (docs/VELLUM_VISION.md §4.3), which this does not pretend to be.
+// reuses a name the page already has), with an ExtGState of its own only when it isn't opaque. Every line
+// is real text; an underline is a filled rule under its line. The standard fonts are the ones every PDF
+// reader has, and are not embedded — so a PDF/A file, which needs every font embedded, is refused new text.
+// The codes are the font's own standard (WinAnsi) encoding; a character it doesn't have is refused, never
+// drawn in another font. Nothing already on the page is touched. Choosing another font, and fonts that are
+// embedded, is font selection (docs/VELLUM_VISION.md §4.3), which this does not pretend to be.
 //
 // To the object model it is text (kind 'text-run', page-objects.js insertedTextObject), so selecting,
 // moving, scaling, turning, snapping, arranging, copying, deleting and retyping it all go through what
-// already exists. It is ordinary page text once saved.
+// already exists. It is ordinary page text once saved: its lines are lines of text, its underline a rule.
 
 import { EditError, textPlacement, textTransformRefusal } from '../edits.js';
 import { REASONS } from '../runs.js';
 import { pdfaClaim } from '../source.js';
 import { hexString, num, pdfName } from '../content/writer.js';
-import { applyLinear, invert, multiply } from '../matrix.js';
+import { applyLinear, invert, multiply, translate } from '../matrix.js';
 import { quantize } from './transform.js';
-import { addStandardFont } from './text-run.js';
+import { addResource, addStandardFont } from './text-run.js';
+import { DEFAULT_FORMAT, FONTS, formatOf, layoutText, rgbOf, standardFace, styledFont } from './text-format.js';
 import { newId } from '../../annotations/model.js';
+
+export { FONTS };
 
 /** The kind of edit record this handler writes. */
 export const kind = 'inserted-text';
@@ -44,74 +55,60 @@ export const kind = 'inserted-text';
 export const keyOf = (record) => `text:${record.id}`;
 
 /** The font new text is written in until font selection exists. */
-export const DEFAULT_FONT = 'Helvetica';
+export const DEFAULT_FONT = DEFAULT_FORMAT.font;
 
 /** The size new text starts at, in points. */
-export const DEFAULT_SIZE = 12;
+export const DEFAULT_SIZE = DEFAULT_FORMAT.size;
 
 /** What new text says until it is typed over. */
 export const PLACEHOLDER = 'New text';
 
-/**
- * The standard PDF fonts new text may be written in: the Latin ones. Symbol and ZapfDingbats draw
- * pictograms under Latin codes, which is not what a person typing text means.
- */
-export const FONTS = Object.freeze([
-  'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique', 'Helvetica-BoldOblique',
-  'Times-Roman', 'Times-Bold', 'Times-Italic', 'Times-BoldItalic',
-  'Courier', 'Courier-Bold', 'Courier-Oblique', 'Courier-BoldOblique',
-]);
-
-/** Sizes a record may hold, in points. */
-const SIZES = [1, 1000];
-
 const listOf = (chars) => chars.map((c) => `“${c}”`).join(', ');
 
-/** One line: line breaks and tabs become spaces, as for retyped text (edits.js planTextEdit). */
-export const cleanText = (text) => String(text ?? '').replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
+/** Its lines: line breaks kept (as \n), tabs and other breaks become spaces, as for retyped text. */
+export const cleanText = (text) => String(text ?? '').replace(/\r\n?/g, '\n').replace(/[\t\f\v\u2028\u2029]+/g, ' ').normalize('NFC');
 
-/** The font's standard encoding and its metrics, from pdf-lib's own tables (no font file, nothing fetched). */
-const embedderFor = (lib, font) => lib.StandardFontEmbedder.for(font);
-
-/** Characters of `text` the font's standard encoding can't write. */
-function missingCharacters(lib, font, text) {
-  const { encoding } = embedderFor(lib, font);
-  return [...new Set([...text].filter((ch) => !encoding.canEncodeUnicodeCodePoint(ch.codePointAt(0))))];
-}
-
-/**
- * The line's extent in its own text space, in points: [0, descent, advance, ascent]. The advance is the
- * glyphs' own widths added up — what `Tj` draws, with no kerning, which a `Tj` never applies.
- */
-function boxOf(lib, font, size, text) {
-  const embedder = embedderFor(lib, font);
-  const advance = embedder.encodeTextAsGlyphs(text).reduce((sum, glyph) => sum + embedder.font.getWidthOfGlyph(glyph.name), 0);
-  const scale = size / 1000;
-  const round = (v) => Math.round(v * 1e4) / 1e4 || 0;
-  return [0, round(embedder.font.Descender * scale), round(advance * scale), round(embedder.font.Ascender * scale)];
-}
+const REFUSED_FORMAT = {
+  size: 'That text size couldn’t be used, so nothing was changed.',
+  width: 'That width couldn’t be used, so nothing was changed.',
+};
 
 /**
  * Plans new text: a record, or EditError. Used for new text and for every later change to it (same
- * `id`): retyped, moved, turned or scaled, a record always holds exactly what is drawn and where.
+ * `id`): retyped, formatted, moved, turned or scaled, a record always holds exactly what is drawn and where.
  * `lib` is pdf-lib, whose standard font tables say which characters the font has and how wide they are.
  */
-export function planNewText({ lib, text, font = DEFAULT_FONT, size = DEFAULT_SIZE, transform, entry, id = newId() }) {
+export function planNewText({ lib, text, transform, entry, id = newId(), ...fields }) {
   const clean = cleanText(text);
   if (!clean.trim()) throw new EditError('content', 'New text needs at least one character.');
-  if (!FONTS.includes(font)) throw new EditError('not-editable', REASONS.unsupported, { reason: 'unsupported', font });
-  if (!(Number.isFinite(size) && size >= SIZES[0] && size <= SIZES[1])) {
-    throw new EditError('content', 'That text size couldn’t be used, so nothing was changed.');
-  }
-  const missing = missingCharacters(lib, font, clean);
+  const { format, bad } = formatOf(fields);
+  if (bad === 'font') throw new EditError('not-editable', REASONS.unsupported, { reason: 'unsupported', font: fields.font });
+  if (bad) throw new EditError('content', REFUSED_FORMAT[bad] ?? 'That formatting couldn’t be used, so nothing was changed.', { field: bad });
+  const face = standardFace(lib, format.font);
+  const missing = face.missing(clean);
   if (missing.length) {
-    throw new EditError('characters', `New text is written in ${font.replace(/-/g, ' ')}, which has no ${listOf(missing)}. Vellum can’t embed another font yet.`, { missing });
+    throw new EditError('characters', `New text is written in ${format.font.replace(/-/g, ' ')}, which has no ${listOf(missing)}. Vellum can’t embed another font yet.`, { missing });
   }
   const kept = textPlacement(transform ?? []);
   if (!kept) throw new EditError('content', 'That change to the text couldn’t be worked out, so nothing was changed.');
   const reason = textTransformRefusal(kept);
   if (reason) throw new EditError('not-editable', REASONS[reason], { reason, transform: kept });
-  return { id, kind, entry, text: clean, font, size, box: boxOf(lib, font, size, clean), transform: kept };
+  const { box } = layoutText(face, { text: clean, ...format });
+  return { id, kind, entry, text: clean, ...format, box, transform: kept };
+}
+
+/**
+ * New text formatted: `record` planned again with `changes` — any of size, bold, italic (the family's own
+ * faces), underline, align, color, opacity and width — its top-left corner staying where it is, so a
+ * bigger size grows down and to the right. The record, or EditError when the format can't be used.
+ */
+export function planFormat({ lib, record, changes }) {
+  const { bold, italic, ...rest } = changes;
+  const font = styledFont(record.font, { bold, italic }) ?? record.font;
+  const planned = planNewText({ lib, ...record, ...rest, font });
+  const shift = record.box[3] - planned.box[3];
+  if (!shift) return planned;
+  return planNewText({ lib, ...planned, transform: quantize(multiply(translate(0, shift), record.transform)) });
 }
 
 /**
@@ -135,30 +132,46 @@ export function precheck({ lib, doc, records }) {
   }
 }
 
-/** One page's new text: nothing patched, one line drawn after the page for each, in its standard font. */
+/** The fill colour operator for '#rrggbb': a grey as `g`, anything else as `rg`. */
+const fillOf = (color) => {
+  const [r, g, b] = rgbOf(color);
+  return r === g && g === b ? `${num(r)} g` : `${num(r)} ${num(g)} ${num(b)} rg`;
+};
+
+/** One page's new text: nothing patched, each drawn after the page, in its standard font. */
 export function write({ lib, doc, page, index, records }) {
-  const names = new Map(); // font → its name in this page's /Font resources
+  const fonts = new Map(); // font → its name in this page's /Font resources
+  const states = new Map(); // opacity → its name in this page's /ExtGState resources
   const append = records.map((record) => {
     const unusable = () => new EditError('content', `New text on page ${index + 1} can’t be written as it is, so nothing was changed.`);
-    const { text, font, size, transform } = record;
-    if (typeof text !== 'string' || !text.trim() || text !== cleanText(text) || !FONTS.includes(font)) throw unusable();
-    if (!(Number.isFinite(size) && size >= SIZES[0] && size <= SIZES[1])) throw unusable();
+    const { text, transform } = record;
+    const { format, bad } = formatOf(record);
+    if (bad || typeof text !== 'string' || !text.trim() || text !== cleanText(text)) throw unusable();
     if (!Array.isArray(transform) || !quantize(transform) || textTransformRefusal(transform)) throw unusable();
-    if (missingCharacters(lib, font, text).length) throw unusable();
-    if (!names.has(font)) names.set(font, addStandardFont(lib, doc, page, font));
-    const { encoding } = embedderFor(lib, font);
-    const codes = [...text].map((ch) => encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code);
-    return [
-      'q',
-      `${transform.map(num).join(' ')} cm`,
-      'BT',
-      `${pdfName(names.get(font))} ${num(size)} Tf`,
-      '0 g',
-      '0 Tc 0 Tw 100 Tz 0 Ts 0 Tr',
-      `${hexString(codes)} Tj`,
-      'ET',
-      'Q',
-    ].join('\n');
+    const face = standardFace(lib, format.font);
+    if (face.missing(text).length) throw unusable();
+    const { size, opacity, underline, color } = format;
+    if (!fonts.has(format.font)) fonts.set(format.font, addStandardFont(lib, doc, page, format.font));
+    if (opacity < 1 && !states.has(opacity)) {
+      const state = doc.context.register(doc.context.obj({ Type: 'ExtGState', ca: opacity, CA: opacity }));
+      states.set(opacity, addResource(lib, doc, page, 'ExtGState', 'VlGS', state));
+    }
+    const { lines } = layoutText(face, { text, ...format });
+    const drawn = lines.filter((line) => line.text.trim());
+    const out = ['q', `${transform.map(num).join(' ')} cm`];
+    if (opacity < 1) out.push(`${pdfName(states.get(opacity))} gs`);
+    out.push('BT', `${pdfName(fonts.get(format.font))} ${num(size)} Tf`, fillOf(color), '0 Tc 0 Tw 100 Tz 0 Ts 0 Tr');
+    for (const line of drawn) out.push(`1 0 0 1 ${num(line.x)} ${num(line.y)} Tm`, `${hexString(face.codes(line.text))} Tj`);
+    out.push('ET');
+    if (underline) {
+      const thickness = face.underline.thickness * size;
+      for (const line of drawn) {
+        const y = line.y + face.underline.position * size - thickness / 2;
+        out.push(`${[line.x, y, line.advance, thickness].map((v) => num(Math.round(v * 1e4) / 1e4)).join(' ')} re f`);
+      }
+    }
+    out.push('Q');
+    return out.join('\n');
   });
   return { patches: [], append };
 }

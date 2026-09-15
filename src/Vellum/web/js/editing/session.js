@@ -15,7 +15,7 @@ import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
-import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
+import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
@@ -230,6 +230,33 @@ export class TextEditing {
   }
 
   /**
+   * Formats new text (objects/inserted-text.js planFormat): `changes` holds any of size, bold, italic,
+   * underline, align, color, opacity and width, and applies to every one of `keys`, which must all be new
+   * text — one undo step, false when nothing changed. Throws EditError, with nothing changed, when any
+   * of them can't take it (a character the bold or italic face doesn't have, a size out of range).
+   */
+  async formatText(pageNumber, keys, changes) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const lib = await loadPdfLib();
+    const { found } = await this.#objectsAt(pageNumber, keys);
+    const pairs = [];
+    for (const { object, record } of found) {
+      if (!object.ref.newText || record?.kind !== newTextKind) {
+        throw new EditError('format', 'Only new text can be formatted here, so nothing was changed.', { key: object.ref.key });
+      }
+      this.#refuse(object, 'editText', found.length);
+      const planned = planFormat({ lib, record, changes });
+      const { id, entry, ...before } = record;
+      const { id: _id, entry: _entry, ...after } = planned;
+      if (JSON.stringify(before) !== JSON.stringify(after)) pairs.push([record, planned]);
+    }
+    if (!pairs.length) return false;
+    view.annotations.applyEdits(pairs);
+    return true;
+  }
+
+  /**
    * Puts a line of new text on a page, in a standard font, centred and upright as the page is shown
    * (`basis`, page-space.js displayBasis; `box`, the page's crop box): one undo step, one record, and the
    * new text's object key back, so it can be selected and typed over. Throws EditError when it can't be
@@ -367,7 +394,7 @@ export class TextEditing {
     const { entry: current, found, analysis: own, origins } = await this.#objectsAt(pageNumber, keys);
     for (const { object } of found) {
       if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
-      if (object.ref.newText) throw new EditError('reflow', 'New text is one line of its own, so it can’t be reflowed yet.', { key: object.ref.key, reason: 'new-text' });
+      if (object.ref.newText) throw new EditError('reflow', 'New text wraps within its own box, so it isn’t reflowed with other lines.', { key: object.ref.key, reason: 'new-text' });
       this.#refuse(object, 'editText', found.length);
     }
     // Pasted lines are reflowed as the paragraph they were copied from, in that page's analysis, and only

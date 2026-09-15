@@ -938,6 +938,59 @@ export async function run(t) {
     JSON.stringify(await newTexts()));
   const drawnText = async () => q(`(async () => (await (await ${V(OBJ)}.pdf.getPage(1)).getTextContent()).items.some((i) => i.str === 'Hello new text'))()`);
   check('the page draws it as real text', await drawnText());
+
+  // Several lines in one box, formatting from the bar and the palette's action, and a width to wrap to.
+  const newRecord = () => q(`(${V(OBJ)}.annotations.edits.find((e) => e.kind === 'inserted-text') ?? null)`);
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+  await q(`${V(OBJ)}.focus()`);
+  await c.key('Enter');
+  check('Enter on selected new text opens a box of lines', await waitFor(`document.querySelector('textarea.vl-text-input')?.value === 'Hello new text'`, 4000));
+  await c.key('End');
+  await c.key('Shift+Enter');
+  await sleep(200);
+  check('Shift+Enter doesn’t keep the text: the editor stays open', Boolean(await q(`document.querySelector('textarea.vl-text-input')`)));
+  await c.type('\nsecond line');
+  await c.key('Enter');
+  await rest(OBJ);
+  check('a second line typed: still one record, holding both lines', (await newTexts()).length === 1 && (await newRecord())?.text === 'Hello new text\nsecond line', JSON.stringify(await newRecord()));
+  check('the page draws both lines as real text',
+    await q(`(async () => { const s = (await (await ${V(OBJ)}.pdf.getPage(1)).getTextContent()).items.map((i) => i.str); return s.includes('Hello new text') && s.includes('second line'); })()`));
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+  const formatBar = `document.querySelector('.vl-arrange-bar [data-format="bold"]')`;
+  check('selected new text shows the format bar', await waitFor(`${formatBar} && !${formatBar}.hidden && ${formatBar}.offsetWidth > 0`, 4000));
+  const formatDepth = await undoDepth(OBJ);
+  const boldAt = await q(`(() => { const r = ${formatBar}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  await c.mouse(boldAt[0], boldAt[1]);
+  await rest(OBJ);
+  check('Bold in the bar: the family’s bold face, pressed, one undo step',
+    (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === formatDepth + 1 && (await waitFor(`${formatBar}?.getAttribute('aria-pressed') === 'true'`, 3000)), JSON.stringify(await newRecord()));
+  for (const what of [`'larger'`, `'underline'`, `'center'`, `{ color: '#2f6fd6' }`, `{ opacity: 0.5 }`]) {
+    await q(`${V(OBJ)}.textEditor.formatSelected(${what})`);
+    await rest(OBJ);
+  }
+  const styledNew = await newRecord();
+  check('size, underline, alignment, colour and opacity: one undo step each',
+    styledNew?.size === 14 && styledNew.underline === true && styledNew.align === 'center' && styledNew.color === '#2f6fd6' && styledNew.opacity === 0.5 && (await undoDepth(OBJ)) === formatDepth + 6,
+    JSON.stringify(styledNew));
+  check('formatting page text is refused with a reason', await (async () => {
+    const pageKey = await q(`${V(OBJ)}.el.querySelector('.page') && (async () => (await ${V(OBJ)}.textEditing.objects(1)).objects.find((o) => o.kind === 'text-run' && !o.ref.newText)?.ref.key)()`);
+    if (!pageKey) return true;
+    await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(pageKey)}])`);
+    const done = await q(`${V(OBJ)}.textEditor.formatSelected('bold')`);
+    await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+    return done === false;
+  })());
+  await sleep(400);
+  const wrapGrip = await q(`(() => { const h = ${V(OBJ)}.el.querySelector('.vl-object-handle.reflow'); if (!h) return null; const r = h.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+  check('new text has one wrap handle on its right edge', Boolean(wrapGrip));
+  if (wrapGrip) {
+    const wideBefore = styledNew.box[2];
+    await c.drag(wrapGrip, [wrapGrip[0] - 25, wrapGrip[1]], 10);
+    await rest(OBJ);
+    const wrappedNew = await newRecord();
+    check('dragging it sets a narrower width the lines wrap to, one undo step',
+      wrappedNew?.width !== null && wrappedNew.width < wideBefore && (await undoDepth(OBJ)) === formatDepth + 7, JSON.stringify(wrappedNew));
+  }
   await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
   await q(`${V(OBJ)}.focus()`);
   await c.key(']');
@@ -962,11 +1015,13 @@ export async function run(t) {
   await rest(OBJ);
   const savedRun = await q(`(async () => {
     const { runs } = await ${V(OBJ)}.textEditing.page(1);
-    const item = runs.find((r) => r.run.text === 'Hello new text');
-    return item ? { font: item.run.font?.name, size: item.run.frame.size, dir: item.run.frame.dir, editable: item.run.editable } : null;
+    const lines = runs.filter((r) => r.run.font?.name === 'Helvetica-Bold');
+    const item = lines.find((r) => r.run.text.includes('second'));
+    return item ? { lines: lines.length, font: item.run.font?.name, size: item.run.frame.size, dir: item.run.frame.dir, editable: item.run.editable, fill: item.run.first?.fill?.color?.args } : null;
   })()`);
-  check('saved and reopened: editable page text in Helvetica 12, still turned',
-    savedRun?.font === 'Helvetica' && Math.abs(savedRun.size - 12) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true, JSON.stringify(savedRun));
+  check('saved and reopened: lines of editable page text in Helvetica Bold 14, blue, still turned',
+    savedRun?.font === 'Helvetica-Bold' && savedRun.lines >= 2 && Math.abs(savedRun.size - 14) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true
+      && JSON.stringify(savedRun.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0x2f, 0x6f, 0xd6]), JSON.stringify(savedRun));
 
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));

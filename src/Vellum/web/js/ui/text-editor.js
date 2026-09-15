@@ -12,6 +12,8 @@ import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
+import { LINE_SPACING, LIMITS as TEXT_LIMITS } from '../editing/objects/text-format.js';
+import { openMenu } from './menu.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
@@ -108,6 +110,21 @@ const ARRANGE_BUTTONS = Object.freeze([
   ['horizontal', 'Space evenly across', 'align-horizontal-space-between'],
   ['vertical', 'Space evenly down', 'align-vertical-space-between'],
 ]);
+/** The format bar's toggles and alignments for new text: what each does, what it is called, its icon. */
+const FORMAT_BUTTONS = Object.freeze([
+  ['bold', 'Bold', 'bold'],
+  ['italic', 'Italic', 'italic'],
+  ['underline', 'Underline', 'underline'],
+  null,
+  ['left', 'Align text left', 'text-align-start'],
+  ['center', 'Centre text', 'text-align-center'],
+  ['right', 'Align text right', 'text-align-end'],
+]);
+/** The sizes Larger text and Smaller text step through, in points. */
+const TEXT_SIZES = Object.freeze([6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72, 96, 144]);
+/** Colours offered for new text: ink, grey, and the pen colours annotations use. */
+const TEXT_COLOURS = Object.freeze([['#000000', 'Black'], ['#5f5f5f', 'Grey'], ['#e5484d', 'Red'], ['#2f6fd6', 'Blue'], ['#1f9e6b', 'Green'], ['#f0892b', 'Orange']]);
+const TEXT_OPACITIES = Object.freeze([1, 0.75, 0.5, 0.25]);
 let nudgeSeq = 0;
 /** Points a pasted or duplicated object lands from where it was copied, right and down on screen. */
 const PASTE_STEP = 10;
@@ -828,6 +845,9 @@ export class TextEditor {
       // Edge handles stretch, so they are only for one object that can be stretched: a picture.
       if (this.#stretchable(selected)) {
         for (const [x, y] of points.slice(4)) shapes.push(svg('circle', { class: 'vl-object-handle edge', cx: x, cy: y, r }));
+      } else if (this.#drag?.mode !== 'wrap' && points[5] && this.#wrappable(selected)) {
+        // New text: one handle on its right edge sets the width its lines wrap to (#wrapHandle).
+        shapes.push(svg('circle', { class: 'vl-object-handle edge reflow', cx: points[5][0], cy: points[5][1], r }));
       } else if (this.#drag?.mode !== 'reflow' && points[5] && this.#reflowable(page, selected)) {
         // A whole paragraph that can be reflowed: one handle, on its right edge (#reflowable).
         shapes.push(svg('circle', { class: 'vl-object-handle edge reflow', cx: points[5][0], cy: points[5][1], r }));
@@ -846,6 +866,13 @@ export class TextEditor {
     // The width a paragraph is being reflowed to, from its left edge to the hand.
     if (drag?.mode === 'reflow' && drag.n === page.n && drag.right !== null) {
       shapes.push(svg('polygon', { class: 'vl-reflow-width', points: quadPoints(boxQuad([drag.box[0], drag.box[1], drag.right, drag.box[3]])) }));
+    }
+    // The width new text is being wrapped to, along its own baseline, from its left edge to the hand.
+    if (drag?.mode === 'wrap' && drag.n === page.n && drag.width !== null) {
+      const [ll, , , ul] = drag.corners;
+      const reach = drag.width * drag.scale;
+      const along = (p) => [p[0] + drag.dir[0] * reach, p[1] + drag.dir[1] * reach];
+      shapes.push(svg('polygon', { class: 'vl-reflow-width', points: quadPoints([...ll, ...along(ll), ...along(ul), ...ul]) }));
     }
     // Guide lines where a move drag has snapped into line, measured in display axes and drawn back in
     // user space: a line that is vertical on screen stays vertical whatever the rotation.
@@ -920,7 +947,8 @@ export class TextEditor {
     const selection = this.#selection;
     const single = selection.size === 1 ? this.#liveObject(selection.page, selection.keys[0]) : null;
     const replacing = single?.kind === 'image' && single.capabilities.replace === true;
-    const page = this.active && !this.#editor && !this.#drag?.moved && (selection.size >= MINIMUM.align || replacing)
+    const formats = this.#newTextFormats();
+    const page = this.active && !this.#editor && !this.#drag?.moved && (selection.size >= MINIMUM.align || replacing || formats)
       ? this.#pages.get(selection.page) : null;
     const pageView = page?.data ? this.#view.viewer.getPageView(page.n - 1) : null;
     const quads = pageView ? selection.keys.map((key) => {
@@ -935,10 +963,12 @@ export class TextEditor {
       return;
     }
     const bar = this.#arrangeBar ??= this.#buildArrangeBar();
-    for (const el of bar.arrange) el.hidden = replacing;
-    for (const el of bar.spacing) el.hidden = replacing || selection.size < MINIMUM.distribute;
+    const arranging = !replacing && selection.size >= MINIMUM.align;
+    for (const el of bar.arrange) el.hidden = !arranging;
+    for (const el of bar.spacing) el.hidden = !arranging || selection.size < MINIMUM.distribute;
     bar.replace.hidden = !replacing;
-    bar.el.setAttribute('aria-label', replacing ? 'The selected picture' : 'Arrange the selected objects');
+    this.#syncFormat(bar.format, formats, arranging);
+    bar.el.setAttribute('aria-label', replacing ? 'The selected picture' : formats && !arranging ? 'Format the selected text' : 'Arrange the selected objects');
     const xs = corners.map((p) => p[0]);
     const ys = corners.map((p) => p[1]);
     const left = Math.min(...xs);
@@ -962,9 +992,115 @@ export class TextEditor {
       class: 'tb-btn small vl-replace-picture', title: 'Replace picture…', 'aria-label': 'Replace picture…',
       html: icon('image', 16), onMousedown: keep, onClick: () => this.replacePicture(),
     });
-    const el = h('div', { class: 'vl-pop vl-arrange-bar ui', role: 'toolbar', 'aria-label': 'Arrange the selected objects' }, ...children, replace);
+    const format = this.#buildFormat(keep);
+    const el = h('div', { class: 'vl-pop vl-arrange-bar ui', role: 'toolbar', 'aria-label': 'Arrange the selected objects' }, ...children, replace, ...format.els);
     this.#view.container.append(el);
-    return { el, arrange: children, spacing, replace };
+    return { el, arrange: children, spacing, replace, format };
+  }
+
+  // ---- formatting new text -----------------------------------------------------------------------
+  // Over new text (objects/inserted-text.js) the same bar formats it: size, the standard family's own
+  // bold and italic, underline, alignment, colour and opacity — for every selected object when all of them
+  // are new text, one undo step (session.formatText). Its box's right-edge handle sets the width its lines
+  // wrap to (#wrapHandle). Text of the page itself isn't formatted here: that would be a font change.
+
+  /** The formats of the selection when every selected object is new text that can be changed; else null. */
+  #newTextFormats() {
+    const { page, keys } = this.#selection;
+    if (!this.active || !keys.length) return null;
+    const objects = keys.map((key) => this.#liveObject(page, key));
+    if (!objects.every((o) => o?.ref.newText && o.capabilities.editText === true && o.record.format)) return null;
+    return objects.map((o) => o.record.format);
+  }
+
+  #buildFormat(keep) {
+    const button = (label, iconName, onClick, extra = {}) => h('button', {
+      class: 'tb-btn small', title: label, 'aria-label': label, html: icon(iconName, 16), onMousedown: keep, onClick, ...extra,
+    });
+    const sep = h('div', { class: 'vl-sep' });
+    const smaller = button('Smaller text', 'minus', () => this.formatSelected('smaller'));
+    const size = h('span', { class: 'vl-edit-font vl-text-size', 'aria-live': 'polite' });
+    const larger = button('Larger text', 'plus', () => this.formatSelected('larger'));
+    const toggles = FORMAT_BUTTONS.map((entry) => (entry
+      ? button(entry[1], entry[2], () => this.formatSelected(entry[0]), { 'aria-pressed': 'false', 'data-format': entry[0] })
+      : h('div', { class: 'vl-sep' })));
+    const colour = h('button', {
+      class: 'swatch vl-text-colour', title: 'Text colour', 'aria-label': 'Text colour', 'aria-haspopup': 'menu', onMousedown: keep,
+      onClick: () => this.#colourMenu(colour),
+    });
+    const opacity = button('Opacity', 'blend', () => this.#opacityMenu(opacity), { 'aria-haspopup': 'menu' });
+    return { els: [sep, smaller, size, larger, h('div', { class: 'vl-sep' }), ...toggles, h('div', { class: 'vl-sep' }), colour, opacity], sep, size, colour };
+  }
+
+  /** Shows the format controls for `formats` (or hides them), pressed as the selection is. */
+  #syncFormat(format, formats, arranging) {
+    for (const el of format.els) el.hidden = !formats;
+    if (!formats) return;
+    format.sep.hidden = !arranging;
+    const [first] = formats;
+    const all = (field) => formats.every((f) => f[field]);
+    format.size.textContent = formats.every((f) => f.size === first.size) ? `${first.size} pt` : '– pt';
+    for (const el of format.els) {
+      const kind = el.dataset?.format;
+      if (!kind) continue;
+      const pressed = ['left', 'center', 'right'].includes(kind) ? formats.every((f) => f.align === kind) : all(kind);
+      el.setAttribute('aria-pressed', String(pressed));
+    }
+    format.colour.style.setProperty('--swatch', first.color);
+  }
+
+  /**
+   * Formats the selected new text: 'bold', 'italic' and 'underline' switch that style (on for all unless
+   * all have it), 'left', 'center' and 'right' align it, 'larger' and 'smaller' step its size, and an
+   * object sets fields directly ({ color }, { opacity }, { width }). One undo step; resolves true when
+   * something changed. The command palette and the format bar call this.
+   */
+  async formatSelected(what) {
+    const formats = this.#newTextFormats();
+    if (!formats) {
+      this.#notify(this.active ? 'Select text added with “Add text” to format it.' : 'Switch to Edit mode (E) to format text.');
+      return false;
+    }
+    const [first] = formats;
+    let changes;
+    if (typeof what === 'object') changes = what;
+    else if (['bold', 'italic', 'underline'].includes(what)) changes = { [what]: !formats.every((f) => f[what]) };
+    else if (['left', 'center', 'right'].includes(what)) changes = { align: what };
+    else if (what === 'larger') changes = { size: TEXT_SIZES.find((s) => s > first.size) ?? Math.min(TEXT_LIMITS.size[1], Math.round(first.size * 1.25)) };
+    else if (what === 'smaller') changes = { size: TEXT_SIZES.findLast((s) => s < first.size) ?? Math.max(TEXT_LIMITS.size[0], Math.round(first.size / 1.25)) };
+    else return false;
+    const { page, keys } = this.#selection;
+    await this.#settled();
+    this.#warnTagged('newText');
+    try {
+      const changed = await this.#view.textEditing.formatText(page, [...keys], changes);
+      if (changed) this.#announce('Text formatted.');
+      return changed;
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That text couldn’t be formatted: ${err.message}`);
+      return false;
+    }
+  }
+
+  #colourMenu(anchor) {
+    const current = this.#newTextFormats()?.[0]?.color;
+    const picker = h('input', { type: 'color', value: current ?? '#000000', 'aria-label': 'Custom text colour', hidden: true });
+    picker.addEventListener('change', () => {
+      picker.remove();
+      this.formatSelected({ color: picker.value });
+    });
+    openMenu([
+      ...TEXT_COLOURS.map(([color, label]) => ({ label, swatch: color, checked: current === color, action: () => this.formatSelected({ color }) })),
+      '-',
+      { label: 'Custom colour…', icon: 'pipette', action: () => { this.#view.container.append(picker); picker.click(); } },
+    ], { anchor, align: 'center', className: 'palette-menu' });
+  }
+
+  #opacityMenu(anchor) {
+    const current = this.#newTextFormats()?.[0]?.opacity;
+    openMenu(TEXT_OPACITIES.map((opacity) => ({
+      label: `${Math.round(opacity * 100)}%`, checked: current === opacity, action: () => this.formatSelected({ opacity }),
+    })), { anchor, align: 'center' });
   }
 
   /**
@@ -1168,7 +1304,44 @@ export class TextEditor {
     if (this.#reflowable(page, objects) && grabbed(5)) {
       return { mode: 'reflow', verb: 'reflow', n: current.page, keys: [...current.keys], pageView, box: quadBox(frame), right: null };
     }
+    if (this.#wrappable(objects) && grabbed(5)) return this.#wrapHandle(page, objects[0], frame, pageView);
     return null;
+  }
+
+  /** Is this one selected object new text, whose right-edge handle sets the width its lines wrap to? */
+  #wrappable(objects) {
+    return objects.length === 1 && Boolean(objects[0]?.ref.newText) && objects[0].capabilities.editText === true && Boolean(objects[0].record.format);
+  }
+
+  /**
+   * The start of a wrap drag on new text: its box's corners where it is shown (ll, lr, ur, ul, in user
+   * space), the direction of its baseline and how many user-space units one of its points is, so the hand
+   * is measured along the text however it is turned or scaled. `width` is in the text's own points.
+   */
+  #wrapHandle(page, object, frame, pageView) {
+    const corners = [[frame[0], frame[1]], [frame[2], frame[3]], [frame[4], frame[5]], [frame[6], frame[7]]];
+    const [ll, lr] = corners;
+    const length = Math.hypot(lr[0] - ll[0], lr[1] - ll[1]);
+    const points = object.geometry.box[2] - object.geometry.box[0];
+    if (!(length > 0 && points > 0)) return null;
+    return {
+      mode: 'wrap', verb: 'editText', n: page.n, keys: [object.ref.key], pageView, corners,
+      dir: [(lr[0] - ll[0]) / length, (lr[1] - ll[1]) / length], scale: length / points, size: object.record.format.size, width: null,
+    };
+  }
+
+  /** Wraps the dragged new text to the width the hand left it at (session.formatText), or says why not. */
+  async #wrapTo(drag) {
+    const page = this.#pages.get(drag.n);
+    if (page) this.#draw(page); // the width preview goes with the hand
+    if (drag.width === null) return;
+    await this.#settled();
+    try {
+      const changed = await this.#view.textEditing.formatText(drag.n, drag.keys, { width: Math.round(drag.width * 100) / 100 });
+      if (changed) this.#announce('Text wrapped to a new width.');
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That change couldn’t be made: ${err.message}`);
+    }
   }
 
   /**
@@ -1288,9 +1461,11 @@ export class TextEditor {
     }
     if (drag.mode === 'refused') return;
     const to = toPdfPoint(drag.pageView, e.clientX, e.clientY);
-    if (drag.mode === 'marquee' || drag.mode === 'reflow') {
+    if (drag.mode === 'marquee' || drag.mode === 'reflow' || drag.mode === 'wrap') {
       if (drag.mode === 'marquee') drag.box = [Math.min(drag.from[0], to[0]), Math.min(drag.from[1], to[1]), Math.max(drag.from[0], to[0]), Math.max(drag.from[1], to[1])];
-      else drag.right = Math.max(to[0], drag.box[0] + 1);
+      else if (drag.mode === 'reflow') drag.right = Math.max(to[0], drag.box[0] + 1);
+      // At least a character's width: a box can't be narrower than what it holds one letter at a time.
+      else drag.width = Math.min(TEXT_LIMITS.width[1], Math.max(drag.size, ((to[0] - drag.corners[0][0]) * drag.dir[0] + (to[1] - drag.corners[0][1]) * drag.dir[1]) / drag.scale));
       const page = this.#pages.get(drag.n);
       if (page) this.#draw(page);
       return;
@@ -1373,6 +1548,10 @@ export class TextEditor {
     }
     if (drag.mode === 'reflow') {
       await this.#reflow(drag);
+      return;
+    }
+    if (drag.mode === 'wrap') {
+      await this.#wrapTo(drag);
       return;
     }
     const onto = drag.mode === 'move' ? this.#otherPageAt(drag, e.clientX, e.clientY) : null;
@@ -1751,7 +1930,9 @@ export class TextEditor {
   }
 
   #onEditorKey(e) {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && e.shiftKey && this.#editor?.item.run.newText) {
+      e.stopPropagation(); // a new line in the box: the textarea's own
+    } else if (e.key === 'Enter') {
       e.preventDefault();
       e.stopPropagation();
       this.#commit();
@@ -1849,9 +2030,10 @@ export class TextEditor {
     const item = isRecordKey(key) ? copyItemOf(this.#liveObject(n, key)) : page?.data?.runs.find((r) => r.run.key === key);
     if (!item?.run.editable || !this.active || this.#editor) return;
     this.#hideTip();
-    const input = h('input', {
-      class: 'vl-text-input', type: 'text', spellcheck: 'true', autocomplete: 'off', 'aria-label': `Edit text: ${item.text}`,
-    });
+    // New text is a box of lines (Shift+Enter starts one); text of the page is a line.
+    const input = item.run.newText
+      ? h('textarea', { class: 'vl-text-input lines', spellcheck: 'true', autocomplete: 'off', rows: '1', 'aria-label': `Edit text: ${item.text}` })
+      : h('input', { class: 'vl-text-input', type: 'text', spellcheck: 'true', autocomplete: 'off', 'aria-label': `Edit text: ${item.text}` });
     input.value = item.text;
     const el = h('div', { class: 'vl-text-editor ui' }, h('div', { class: 'vl-text-paper' }, input));
     const status = h('span', { class: 'vl-edit-status', role: 'status', 'aria-live': 'polite' });
@@ -1984,7 +2166,7 @@ export class TextEditor {
       : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font);
     ed.input.style.fontFamily = family;
     if (!result.ok) this.#setStatus(result.message, 'error');
-    else if (result.mode === 'new') this.#setStatus(`New text in ${prettyFont(result.font)}, a standard PDF font.`, '');
+    else if (result.mode === 'new') this.#setStatus(`New text in ${prettyFont(result.font)}, a standard PDF font. Shift+Enter starts a new line.`, '');
     else if (result.mode === 'standard') this.#setStatus(`The original font doesn’t have ${quoteChars(result.missing)}, so this text will use ${prettyFont(result.font)}.`, 'warn');
     else if (result.mode === 'none') this.#setStatus('The text will be removed.', 'warn');
     else this.#setStatus('Same font as the original.', '');
@@ -2043,9 +2225,43 @@ export class TextEditor {
       letterSpacing: `${(first.tc ?? 0) * (first.th ?? 1) * perPoint}px`,
       paddingInline: `${pad}px`,
     });
+    if (run.newText) this.#layoutLines(ed, { width, height, angle, pad });
     const paper = this.#paperColor(ed.n, pts);
     if (paper) ed.paper.style.background = paper;
     this.#placeBar(ed);
+  }
+
+  /**
+   * The editor over new text (objects/text-format.js): its lines at their spacing, in its face, colour,
+   * opacity, underline and alignment, wrapping to its box's width when it has one, and growing as lines
+   * are typed. Browser fonts stand in for the standard fonts, so where a line wraps here is close to,
+   * not always exactly, where it wraps on the page.
+   */
+  #layoutLines(ed, { width, height, angle, pad }) {
+    const { run } = ed.item;
+    const f = run.format;
+    const perPoint = height / (run.box[3] - run.box[1] || 1);
+    const fontPx = f.size * perPoint;
+    // The first line's box on the page runs from the ascent to about a fifth of the size below the
+    // baseline; a line of the editor is the whole line spacing, split above and below.
+    const gap = Math.max(0, (LINE_SPACING * f.size - (run.box[3] + 0.21 * f.size)) / 2) * perPoint;
+    Object.assign(ed.el.style, {
+      transform: `rotate(${angle}rad) translate(${-pad}px, ${-pad - gap}px)`,
+      height: 'auto',
+      width: f.width === null ? '' : `${f.width * perPoint + pad * 2}px`,
+      minWidth: `${width + pad * 2}px`,
+    });
+    Object.assign(ed.input.style, {
+      fontSize: `${fontPx}px`,
+      lineHeight: `${LINE_SPACING * fontPx}px`,
+      fontWeight: f.bold ? '700' : '400',
+      fontStyle: f.italic ? 'italic' : 'normal',
+      textDecoration: f.underline ? 'underline' : 'none',
+      textAlign: f.align,
+      opacity: String(f.opacity),
+      whiteSpace: f.width === null ? 'pre' : 'pre-wrap',
+      paddingBlock: `${pad}px`,
+    });
   }
 
   /** The page colour right around the text (sampled from the rendered page), so the editor hides the original. */
