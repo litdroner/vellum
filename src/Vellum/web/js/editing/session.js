@@ -16,6 +16,7 @@ import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
+import { fontSet } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
@@ -31,6 +32,7 @@ export class TextEditing {
   #sources = new Map(); // src → Promise<PdfSource>
   #pages = new Map(); // `${src}:${index}` → verified analysis
   #origins = new Map(); // `${src}:${index}` → Promise<analysis> of a page copies draw from (#origin)
+  #fontSet = null; // Promise<font set> (#fonts)
 
   constructor(view) {
     this.#view = view;
@@ -215,30 +217,47 @@ export class TextEditing {
 
   /** Retypes new text: one undo step, false when nothing changed. */
   async #retypeNewText(pageNumber, key, text) {
-    const lib = await loadPdfLib();
+    const fonts = await this.#fonts();
     const { found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
-    const planned = this.#retypedNewText(lib, object, record, text);
+    const planned = this.#retypedNewText(fonts, object, record, text);
     if (planned && planned.text === record.text) return false;
     this.#view.annotations.applyEdits([[record, planned]]);
     return true;
   }
 
   /** The record retyping new text to `text` makes, null when it empties it. EditError when it can't. */
-  #retypedNewText(lib, object, record, text) {
+  #retypedNewText(fonts, object, record, text) {
     if (!object.ref.newText || record?.kind !== newTextKind) throw new EditError('missing', 'That text isn’t on this page any more.');
     this.#refuse(object, 'editText');
     const clean = cleanText(text);
     if (!clean.trim()) return null;
     // What stayed keeps how it read; what was typed takes the format around it (objects/text-format.js).
-    return planNewText({ lib, ...record, text: clean, spans: remapSpans(record.text, clean, record.spans ?? null) });
+    return planNewText({ fonts, ...record, text: clean, spans: remapSpans(record.text, clean, record.spans ?? null) });
   }
 
   /**
-   * Formats new text (objects/inserted-text.js planFormat): `changes` holds any of family (one of the
-   * standard families), size, bold, italic, underline, align, color, opacity and width, and applies to
+   * The fonts new text may be written in (objects/font-set.js): the standard families and the bundled
+   * ones whose files could be read, read once. A failure is tried again next time.
+   */
+  #fonts() {
+    if (!this.#fontSet) {
+      this.#fontSet = loadPdfLib().then((lib) => fontSet(lib));
+      this.#fontSet.catch(() => { this.#fontSet = null; });
+    }
+    return this.#fontSet;
+  }
+
+  /** The font families new text may be written in, for a font selector: [{ id, name, faces }]. */
+  async fontFamilies() {
+    return (await this.#fonts()).families;
+  }
+
+  /**
+   * Formats new text (objects/inserted-text.js planFormat): `changes` holds any of family (the id of one of
+   * fontFamilies()), size, bold, italic, underline, align, color, opacity and width, and applies to
    * every one of `keys`, which must all be new text — one undo step, false when nothing changed. Throws
    * EditError, with nothing changed, when any of them can't take it (a character the chosen face doesn't
-   * have, a family that isn't one of the standard ones, a size out of range).
+   * have, a family that isn’t offered, a face the family hasn’t got, a size out of range).
    *
    * `range` ([from, to) over the box's text) formats only that much of it — the face, size, underline,
    * colour and opacity of those characters alone; alignment and width stay the whole box's. `text`
@@ -251,7 +270,7 @@ export class TextEditing {
     if ((range || text !== undefined) && keys.length !== 1) {
       throw new EditError('format', 'Part of a text box is formatted one box at a time, so nothing was changed.');
     }
-    const lib = await loadPdfLib();
+    const fonts = await this.#fonts();
     const { found } = await this.#objectsAt(pageNumber, keys);
     const pairs = [];
     for (const { object, record } of found) {
@@ -259,7 +278,7 @@ export class TextEditing {
         throw new EditError('format', 'Only new text can be formatted here, so nothing was changed.', { key: object.ref.key });
       }
       this.#refuse(object, 'editText', found.length);
-      const planned = planFormat({ lib, record, changes, range, text });
+      const planned = planFormat({ fonts, record, changes, range, text });
       const { id, entry, ...before } = record;
       const { id: _id, entry: _entry, ...after } = planned;
       if (JSON.stringify(before) !== JSON.stringify(after)) pairs.push([record, planned]);
@@ -376,7 +395,7 @@ export class TextEditing {
   async transformObjects(pageNumber, moves, { verb = 'move', coalesce = null } = {}) {
     const view = this.#view;
     if (moves.some((m) => !isValid(m?.delta))) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
-    const lib = await loadPdfLib(); // new text is planned with pdf-lib's font tables
+    const fonts = await this.#fonts(); // new text is planned in its fonts' own widths
     const { entry, found } = await this.#objectsAt(pageNumber, moves.map((m) => m.key));
     for (const { object } of found) this.#refuse(object, verb, found.length);
     const pairs = [];
@@ -384,7 +403,7 @@ export class TextEditing {
       const absolute = quantize(multiply(record?.transform ?? IDENTITY, moves[i].delta));
       if (!absolute) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
       if (record ? sameAs(record.transform, absolute) : isIdentity(absolute)) return;
-      pairs.push([record, this.#plan(entry, object, record, absolute, lib)]);
+      pairs.push([record, this.#plan(entry, object, record, absolute, fonts)]);
     });
     if (!pairs.length) return false;
     view.annotations.applyEdits(pairs, coalesce);
@@ -621,7 +640,7 @@ export class TextEditing {
     if (!clip?.items?.length) throw new EditError('missing', 'Nothing has been copied.');
     if (!isValid(offset)) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
     const constraints = await this.#constraints();
-    const lib = await loadPdfLib();
+    const fonts = await this.#fonts();
     const { entry, analysis } = await this.objects(pageNumber);
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
@@ -701,7 +720,7 @@ export class TextEditing {
       const transform = quantize(multiply(multiply(item.transform, offset), shift));
       if (!transform) throw new EditError('content', 'That copy couldn’t be worked out, so nothing was pasted.');
       if (item.kind === insertedKind) return planInsertion({ picture: item.picture, transform, entry: entry.id });
-      if (item.kind === newTextKind) return planNewText({ lib, ...item, transform, entry: entry.id });
+      if (item.kind === newTextKind) return planNewText({ fonts, ...item, transform, entry: entry.id });
       return planCopy({ ...item, from, transform, entry: entry.id });
     });
     return { records, adopt: [...adopt] };
@@ -713,10 +732,10 @@ export class TextEditing {
    * transform; text that was retyped keeps its own record, untransformed. A replaced picture keeps
    * its replacement wherever it is put, and so keeps its record even back where it started.
    */
-  #plan(entry, object, record, absolute, lib) {
+  #plan(entry, object, record, absolute, fonts) {
     // A picture put there from a file, new text, or a copy, has no "where it started": its record is where it is.
     if (object.ref.copy) return planCopy({ ...record, transform: absolute });
-    if (object.ref.newText) return planNewText({ lib, ...record, transform: absolute });
+    if (object.ref.newText) return planNewText({ fonts, ...record, transform: absolute });
     if (object.ref.inserted) return planInsertion({ picture: record.picture, transform: absolute, entry: entry.id, id: record.id });
     if (object.kind !== 'text-run') {
       const replacement = record?.removed ? null : record?.replacement ?? null;
@@ -774,9 +793,9 @@ export class TextEditing {
   /** preview() for new text: 'new' in its standard font, 'none' when emptied, or why it can't be. */
   async #previewNewText(pageNumber, key, text) {
     try {
-      const lib = await loadPdfLib();
+      const fonts = await this.#fonts();
       const { found: [{ object, record }] } = await this.#objectsAt(pageNumber, [key]);
-      const planned = this.#retypedNewText(lib, object, record, text);
+      const planned = this.#retypedNewText(fonts, object, record, text);
       return planned ? { ok: true, mode: 'new', font: planned.font, missing: [] } : { ok: true, mode: 'none', font: null, missing: [] };
     } catch (err) {
       if (err instanceof EditError) return { ok: false, kind: err.kind, message: err.message };

@@ -1017,7 +1017,7 @@ export async function run(t) {
     (await newRecord())?.font === 'Helvetica-Bold' && (await newRecord())?.align === 'center' && (await undoDepth(OBJ)) === fontDepth + 2, JSON.stringify(await newRecord()));
   check('and the page with it', await waitFor(`${shownFamily}.then((f) => f === 'sans-serif')`, 8000), await q(shownFamily));
   check('a font Vellum doesn’t have is refused, with nothing changed',
-    (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Liu' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
+    (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Garamond' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
 
   // Mixed formatting (0.6): a word of the box formatted from the open editor, with what was typed, in one step.
   const mixedDepth = await undoDepth(OBJ); // counted while the editor is shut: counting rebuilds the pages, which closes it

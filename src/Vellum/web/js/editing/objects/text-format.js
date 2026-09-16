@@ -1,9 +1,10 @@
 // How new text (objects/inserted-text.js) is formatted and laid out, apart from how it is written.
 //
 //   format: { font, size, underline, align, color, opacity, width }
-//     font        a font by its name; today one of the standard PDF fonts, whose family is chosen
-//                 (styledFont with a `family`) and whose bold and italic are the family's own faces
-//                 — never a synthesized slant or a thicker stroke
+//     font        a font by its key (isFontKey): a standard PDF font by its PostScript name, or a font
+//                 bundled with Vellum as 'bundled:<family>/<style>' (objects/font-set.js). Its family is
+//                 chosen (styledFont with a `family`) and its bold and italic are the family's own faces —
+//                 never a synthesized slant or a thicker stroke
 //     size        points
 //     underline   true or false: a filled rule under each line, in the text's colour
 //     align       'left' | 'center' | 'right', within the box
@@ -28,12 +29,17 @@
 // box's own rather than an override, and a box that reads alike all through has no `spans` at all.
 //
 // Layout only asks a `face` what it measures — { name, ascent, descent, underline: { position,
-// thickness } (all per point of size), missing(text), advance(text) (per point of size), codes(text) } —
-// so a font read from a file by a font parser (docs/VELLUM_VISION.md §4.3) can be laid out the same way
-// by supplying another face. layoutText() takes either one face or a face resolver (a font name → its
-// face, standardFaces()), which is what lets one box mix faces; a parsed or embedded font plugs in as
-// another resolver and another `font` name, with nothing else here changing. standardFace() is the face
-// of a standard PDF font, from pdf-lib's own metrics tables: nothing is fetched, no font file is read.
+// thickness } (all per point of size), missing(text), advance(text) (per point of size) } — and the
+// writer asks it for what a `Tj` shows: codes(text), the font's own codes, or show(text), the operand
+// itself. layoutText() takes either one face or a face resolver (a font key → its face), which is what
+// lets one box mix faces. standardFace() is the face of a standard PDF font, from pdf-lib's own metrics
+// tables: nothing is fetched, no font file is read. A bundled font's face is read by fontkit
+// (objects/font-set.js), and plugs into the same resolver under its own key.
+//
+// A family is { id, name, faces: [regular, bold, italic, bold italic] } — each a font key, or null
+// when the family hasn't got that face. STANDARD_FAMILIES are the standard ones; a font set
+// (objects/font-set.js) adds the bundled ones, and every function that chooses a face takes the
+// families it chooses among.
 
 /** The standard font families new text may be written in, and each one's faces: regular, bold, italic, bold italic. */
 export const FAMILIES = Object.freeze({
@@ -55,6 +61,23 @@ export const FONTS = Object.freeze(Object.values(FAMILIES).flat());
  */
 export const FAMILY_NAMES = Object.freeze(Object.keys(FAMILIES));
 
+/** The standard families as families: { id, name, faces }, id and name both the family's own name. */
+export const STANDARD_FAMILIES = Object.freeze(Object.entries(FAMILIES).map(([id, faces]) => Object.freeze({ id, name: id, faces })));
+
+/** A face's style, as a bundled font's key names it: regular, bold, italic, bold italic — the faces' order. */
+export const STYLES = Object.freeze(['regular', 'bold', 'italic', 'bold-italic']);
+
+const BUNDLED_KEY = /^bundled:([a-z0-9]+(?:-[a-z0-9]+)*)\/(regular|bold|italic|bold-italic)$/;
+
+/** A bundled font's key read: { family, style } (family the family's id), or null for any other key. */
+export function bundledKey(font) {
+  const match = typeof font === 'string' ? BUNDLED_KEY.exec(font) : null;
+  return match ? { family: `bundled:${match[1]}`, style: match[2] } : null;
+}
+
+/** Can a record name this font: a standard PDF font, or a bundled font's key? Whether it is there is the font set's to say. */
+export const isFontKey = (font) => FONTS.includes(font) || Boolean(bundledKey(font));
+
 export const ALIGNS = Object.freeze(['left', 'center', 'right']);
 
 /** Lines are this many times the size apart, baseline to baseline. */
@@ -69,25 +92,31 @@ export const DEFAULT_FORMAT = Object.freeze({
 /** The format fields one span of a box may differ in; the rest (align, width) are the box's own. */
 export const SPAN_FIELDS = Object.freeze(['font', 'size', 'underline', 'color', 'opacity']);
 
-/** A font's style: its family and whether it is the bold or italic face. Null for a font that isn't one of FONTS. */
-export function styleOf(font) {
-  for (const [family, faces] of Object.entries(FAMILIES)) {
+/**
+ * A font's style: its family (the family's id) and whether it is the bold or italic face. A bundled
+ * font's key says its own; any other font is looked for in `families`. Null for a font that is neither.
+ */
+export function styleOf(font, families = STANDARD_FAMILIES) {
+  for (const { id, faces } of families) {
     const i = faces.indexOf(font);
-    if (i >= 0) return { family, bold: (i & 1) === 1, italic: (i & 2) === 2 };
+    if (i >= 0) return { family: id, bold: (i & 1) === 1, italic: (i & 2) === 2 };
   }
-  return null;
+  const bundled = bundledKey(font);
+  if (!bundled) return null;
+  const i = STYLES.indexOf(bundled.style);
+  return { family: bundled.family, bold: (i & 1) === 1, italic: (i & 2) === 2 };
 }
 
 /**
  * The face asked for: `font`'s own family, or `family` when another one is named (choosing a font), with
  * `bold` and `italic` changed as asked and kept as they are when not given. Null for a font or a family
- * that isn't one of these — nothing is ever substituted.
+ * that isn't one of `families`, or a face the family hasn't got — nothing is ever substituted.
  */
-export function styledFont(font, { family, bold, italic } = {}) {
-  const style = styleOf(font);
-  const faces = FAMILIES[family ?? style?.family];
+export function styledFont(font, { family, bold, italic } = {}, families = STANDARD_FAMILIES) {
+  const style = styleOf(font, families);
+  const faces = families.find((f) => f.id === (family ?? style?.family))?.faces;
   if (!style || !faces) return null;
-  return faces[(bold ?? style.bold ? 1 : 0) + (italic ?? style.italic ? 2 : 0)];
+  return faces[(bold ?? style.bold ? 1 : 0) + (italic ?? style.italic ? 2 : 0)] ?? null;
 }
 
 const round = (v, digits = 4) => {
@@ -109,7 +138,7 @@ export function formatOf(fields) {
   if (typeof f.size === 'number') f.size = round(f.size, 2);
   if (typeof f.opacity === 'number') f.opacity = round(f.opacity, 2);
   if (typeof f.width === 'number') f.width = round(f.width, 2);
-  const bad = !FONTS.includes(f.font) ? 'font'
+  const bad = !isFontKey(f.font) ? 'font'
     : !inRange(f.size, LIMITS.size) ? 'size'
       : typeof f.underline !== 'boolean' ? 'underline'
         : !ALIGNS.includes(f.align) ? 'align'
@@ -195,14 +224,14 @@ export function runRanges(runs) {
 }
 
 /**
- * One format changed: `changes` may name a `family` (one of FAMILY_NAMES), `bold` and `italic` — the
- * family's own faces — or any format field directly. The changed format, or { bad: field }.
+ * One format changed: `changes` may name a `family` (the id of one of `families`), `bold` and `italic` —
+ * the family's own faces — or any format field directly. The changed format, or { bad: field }.
  */
-export function changedFormat(format, changes) {
+export function changedFormat(format, changes, families = STANDARD_FAMILIES) {
   const { family, bold, italic, ...fields } = changes;
   let font = fields.font ?? format.font;
   if (fields.font === undefined && (family !== undefined || bold !== undefined || italic !== undefined)) {
-    font = styledFont(format.font, { family, bold, italic });
+    font = styledFont(format.font, { family, bold, italic }, families);
     if (!font) return { bad: 'font' };
   }
   return formatOf({ ...format, ...fields, font });
@@ -210,10 +239,11 @@ export function changedFormat(format, changes) {
 
 /**
  * `changes` applied to the characters of `text` in `range` ([from, to), the whole text when null), over
- * the box's `base` format and its `spans`. Alignment and width are the box's, so they always apply to all
- * of it. Gives { format, spans } in the normal form, or { bad: field } when the change can't be used.
+ * the box's `base` format and its `spans`, choosing faces among `families`. Alignment and width are the
+ * box's, so they always apply to all of it. Gives { format, spans } in the normal form, or { bad: field }
+ * when the change can't be used.
  */
-export function applyChanges(text, base, spans, changes, range = null) {
+export function applyChanges(text, base, spans, changes, range = null, families = STANDARD_FAMILIES) {
   const { align, width, ...span } = changes;
   const boxed = { ...base };
   if (align !== undefined) boxed.align = align;
@@ -237,7 +267,7 @@ export function applyChanges(text, base, spans, changes, range = null) {
       next.push(run);
       continue;
     }
-    const { format, bad: badChange } = changedFormat(run.format, span);
+    const { format, bad: badChange } = changedFormat(run.format, span, families);
     if (badChange) return { bad: badChange };
     if (lo > start) next.push({ n: lo - start, format: run.format });
     next.push({ n: hi - lo, format });
@@ -298,7 +328,7 @@ export function standardFace(lib, font) {
     missing: (text) => [...new Set([...text].filter((ch) => ch !== '\n' && !encoding.canEncodeUnicodeCodePoint(ch.codePointAt(0))))],
     /** The glyphs' own widths added up — what `Tj` draws, with no kerning, which a `Tj` never applies. */
     advance: (text) => embedder.encodeTextAsGlyphs(text).reduce((sum, glyph) => sum + metrics.getWidthOfGlyph(glyph.name), 0) / 1000,
-    /** The font's codes for `text` (every character must be one it has). */
+    /** The font's codes for `text` (every character must be one it has): what its `Tj` shows. */
     codes: (text) => [...text].map((ch) => encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code),
   };
 }
@@ -393,9 +423,9 @@ export function layoutText(faces, { text, spans = null, ...fields }) {
   const all = charsOf(text, runs ?? [{ n: text.length, format: base }]);
 
   /**
-   * What a stretch of characters advances, in points. Measured a face and a size at a time, which for a
-   * box that reads alike all through is one measurement of the whole stretch: glyph widths simply add up
-   * (a `Tj` never kerns), so where a piece ends is where the next one starts.
+   * What a stretch of characters advances, in points. Measured a stretch that reads alike at a time —
+   * exactly the pieces a line is drawn in, one `Tj` each, so a font that shapes its glyphs is measured as
+   * it is drawn — which for a box that reads alike all through is one measurement of the whole stretch.
    */
   const advanceOf = (chars) => {
     let total = 0;
@@ -404,7 +434,7 @@ export function layoutText(faces, { text, spans = null, ...fields }) {
       const { font, size: pt } = chars[i].format;
       let j = i;
       let word = '';
-      while (j < chars.length && chars[j].format.font === font && chars[j].format.size === pt) word += chars[j++].ch;
+      while (j < chars.length && sameSpanFormat(chars[j].format, chars[i].format)) word += chars[j++].ch;
       total += faceFor(font).advance(word) * pt;
       i = j;
     }

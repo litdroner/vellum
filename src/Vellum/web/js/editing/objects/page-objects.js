@@ -16,7 +16,7 @@
 import { capabilitiesFor } from './capabilities.js';
 import { keyOf as insertedKey } from './inserted-image.js';
 import { keyOf as insertedTextKey } from './inserted-text.js';
-import { formatOf, formatRuns, rgbOf, runRanges, styleOf } from './text-format.js';
+import { FONTS, formatOf, formatRuns, rgbOf, runRanges, styleOf } from './text-format.js';
 
 /**
  * Identity. Two draws of one image share a resource key ("4 0 R"), and an inline image has none, so
@@ -162,7 +162,7 @@ export function insertedTextObject(analysis, record, index = 0) {
   const run = Object.freeze({
     key: ref.key, text: record.text, editable: !reasons.size, reasons, newText: true, format, spans, tagged: false, loadedFont: null,
     font: Object.freeze({
-      name: record.font, key: `standard:${record.font}`, standard: record.font,
+      name: record.font, key: FONTS.includes(record.font) ? `standard:${record.font}` : record.font, standard: FONTS.includes(record.font) ? record.font : null,
       ascent: y2 / record.size, descent: y1 / record.size,
       flags: Object.freeze({ fixedPitch: family === 'Courier', serif: family === 'Times' }),
     }),

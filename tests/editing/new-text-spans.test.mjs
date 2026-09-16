@@ -134,8 +134,8 @@ test('formatting a range: that stretch alone, with the box’s own alignment and
   // A character the chosen face hasn't got is refused for the stretch it was asked for, not substituted.
   const euro = planNewText({ ...base, text: 'Total €5' });
   assert.throws(() => planFormat({ lib, record: euro, changes: { size: 5000 }, range: [0, 5] }), (e) => e instanceof EditError && e.kind === 'content');
-  assert.throws(() => planFormat({ lib, record, changes: { family: 'Liu' }, range: [0, 5] }),
-    (e) => e instanceof EditError && /standard PDF fonts/.test(e.message));
+  assert.throws(() => planFormat({ lib, record, changes: { family: 'Garamond' }, range: [0, 5] }),
+    (e) => e instanceof EditError && /can write new text in/.test(e.message));
 
   // The box's top-left corner stays put when a bigger size in the middle of it grows the box.
   const bigger = planFormat({ lib, record, changes: { size: 36 }, range: [0, 5] });

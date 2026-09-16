@@ -12,7 +12,8 @@ import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
-import { FAMILY_NAMES, LINE_SPACING, LIMITS as TEXT_LIMITS, remapSpans } from '../editing/objects/text-format.js';
+import { LINE_SPACING, LIMITS as TEXT_LIMITS, STANDARD_FAMILIES, STYLES, bundledKey, remapSpans } from '../editing/objects/text-format.js';
+import { bundledFamilies, readBundledFont } from '../editing/objects/font-set.js';
 import { openMenu } from './menu.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
@@ -223,11 +224,39 @@ function cssColor(fill) {
 
 const generic = (font) => (font?.flags.fixedPitch ? 'monospace' : font?.flags.serif ? 'serif' : 'sans-serif');
 const standardFamily = (name) => STANDARD_CSS[name.split('-')[0]] ?? 'sans-serif';
+
+/** bundled font key → its CSS family, once its file has been given to the browser (FontFace) */
+const bundledCss = new Map();
+
+/**
+ * The CSS font a new-text font key is shown in while typing: a standard font's browser stand-in, or a
+ * bundled font itself — its own file, given to the browser under a family name of its own with the face's
+ * weight and style, so the editor's bold and italic pick the very face that is written.
+ */
+function cssFont(key) {
+  const bundled = bundledKey(key);
+  if (!bundled) return standardFamily(key);
+  const family = `vl-${bundled.family.replace(/[^a-z0-9-]/g, '-')}`;
+  if (!bundledCss.has(key)) {
+    bundledCss.set(key, family);
+    const i = STYLES.indexOf(bundled.style);
+    readBundledFont(key).then(({ bytes }) => {
+      const face = new FontFace(family, bytes, { weight: i & 1 ? '700' : '400', style: i & 2 ? 'italic' : 'normal' });
+      document.fonts.add(face);
+      return face.load();
+    }).catch(() => bundledCss.delete(key));
+  }
+  return `"${family}", sans-serif`;
+}
+
+/** A font family's name as the format bar shows it: a standard family's own, a bundled family's listed name. */
+const familyName = (id) => bundledFamilies().find((f) => f.id === id)?.name ?? id;
 const prettyFont = (name) => name.replace(/-/g, ' ').replace(/\b(MT|PSMT|PS)\b/g, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
 const quoteChars = (chars) => chars.map((c) => `“${c}”`).join(', ');
 
 export class TextEditor {
   #view;
+  #families = null; // the font families new text may be written in (session.fontFamilies), once read
   #notify;
   #pages = new Map(); // page number → { n, data, objects, error, loading }
   #hover = null; // { n, key }
@@ -1110,7 +1139,7 @@ export class TextEditor {
     format.sep.hidden = !arranging;
     const [first] = formats;
     const all = (field) => formats.every((f) => f[field]);
-    format.font.textContent = formats.every((f) => f.family === first.family) ? first.family : 'Mixed';
+    format.font.textContent = formats.every((f) => f.family === first.family) ? familyName(first.family) : 'Mixed';
     format.size.textContent = formats.every((f) => f.size === first.size) ? `${first.size} pt` : '– pt';
     for (const el of format.els) {
       const kind = el.dataset?.format;
@@ -1169,16 +1198,18 @@ export class TextEditor {
   }
 
   /**
-   * The fonts new text can be written in: the standard families, each shown in the browser font that
-   * stands in for it. Choosing one keeps the text's bold and italic (the family's own faces) and lays its
-   * lines out again in that font's widths. The document's own fonts and bundled fonts aren't offered:
-   * they need the font system of docs/VELLUM_VISION.md §4.3, so nothing here pretends to have them.
+   * The fonts new text can be written in (session.fontFamilies, editing/objects/font-set.js): the standard
+   * families, each shown in the browser font that stands in for it, then the bundled families Vellum could
+   * read, each shown in itself — every one listed the same way. Choosing one keeps the text's bold and
+   * italic (the family's own faces; refused where it hasn't got them) and lays its lines out again in that
+   * font's widths. The document's own fonts aren't offered yet.
    */
-  #fontMenu(anchor) {
+  async #fontMenu(anchor) {
+    this.#families ??= await this.#view.textEditing.fontFamilies().catch(() => null);
     const formats = this.#newTextFormats() ?? [];
     const current = formats.every((f) => f.family === formats[0]?.family) ? formats[0]?.family : null;
-    this.#keepMenu(openMenu(FAMILY_NAMES.map((family) => ({
-      label: family, checked: current === family, font: STANDARD_CSS[family], action: () => this.formatSelected({ family }),
+    this.#keepMenu(openMenu((this.#families ?? STANDARD_FAMILIES).map(({ id, name, faces }) => ({
+      label: name, checked: current === id, font: cssFont(faces[0]), action: () => this.formatSelected({ family: id }),
     })), { anchor, align: 'center', className: 'font-menu' }));
   }
 
@@ -2274,7 +2305,7 @@ export class TextEditor {
       ed.mirror.append(h('span', {
         text: part,
         style: {
-          fontFamily: standardFamily(f.font),
+          fontFamily: cssFont(f.font),
           fontSize: `${f.size * ed.perPoint}px`,
           lineHeight: `${LINE_SPACING * f.size * ed.perPoint}px`,
           fontWeight: f.bold ? '700' : '400',
@@ -2390,7 +2421,7 @@ export class TextEditor {
     if (this.#editor !== ed || ed.input.value !== text) return;
     ed.done.disabled = !result.ok;
     const run = ed.item.run;
-    const family = result.mode === 'standard' || result.mode === 'new' ? standardFamily(result.font) : run.newText ? standardFamily(run.font.name)
+    const family = result.mode === 'standard' ? standardFamily(result.font) : result.mode === 'new' ? cssFont(result.font) : run.newText ? cssFont(run.font.name)
       : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font);
     ed.input.style.fontFamily = family;
     if (!result.ok) this.#setStatus(result.message, 'error');
@@ -2451,7 +2482,7 @@ export class TextEditor {
     Object.assign(ed.input.style, {
       fontSize: `${height / em}px`,
       lineHeight: `${height}px`,
-      fontFamily: run.newText ? standardFamily(run.font.name) : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font),
+      fontFamily: run.newText ? cssFont(run.font.name) : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font),
       color: ed.ink,
       letterSpacing: `${(first.tc ?? 0) * (first.th ?? 1) * perPoint}px`,
       paddingInline: `${pad}px`,

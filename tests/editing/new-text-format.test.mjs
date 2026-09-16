@@ -200,7 +200,7 @@ test('font selection: another standard family, its bold and italic kept, laid ou
   assert.equal(styledFont('Helvetica-BoldOblique', { family: 'Times' }), 'Times-BoldItalic', 'the family’s own face, not a slant');
   assert.equal(styledFont('Times-Italic', { family: 'Courier' }), 'Courier-Oblique');
   assert.equal(styledFont('Helvetica', { family: 'Times', bold: true }), 'Times-Bold', 'a family and a style at once');
-  assert.equal(styledFont('Helvetica', { family: 'Liu' }), null, 'a font Vellum doesn’t have is never substituted');
+  assert.equal(styledFont('Helvetica', { family: 'Garamond' }), null, 'a font Vellum doesn’t have is never substituted');
   assert.equal(styledFont('Arial', { family: 'Times' }), null);
 
   const base = { lib, text: 'alpha beta gamma delta', transform: [1, 0, 0, 1, 72, 700], entry: 'e', width: 70, font: 'Helvetica-Bold' };
@@ -217,8 +217,8 @@ test('font selection: another standard family, its bold and italic kept, laid ou
   assert.ok(topLeft(courier).every((v, i) => near(v, topLeft(record)[i])), 'the box’s top-left corner stays where it was');
 
   // A font Vellum doesn't have is refused in plain words, with nothing changed.
-  assert.throws(() => planFormat({ lib, record, changes: { family: 'Liu' } }),
-    (e) => e instanceof EditError && e.kind === 'content' && /standard PDF fonts/.test(e.message));
+  assert.throws(() => planFormat({ lib, record, changes: { family: 'Garamond' } }),
+    (e) => e instanceof EditError && e.kind === 'content' && /can write new text in/.test(e.message));
   assert.throws(() => planFormat({ lib, record, changes: { family: 'Times New Roman' } }), EditError);
   // A character the chosen face can't write is refused, not drawn in another font.
   assert.throws(() => planFormat({ lib, record: planNewText({ ...base, text: 'Hi' }), changes: { family: 'Times', size: 5000 } }), EditError);
@@ -233,7 +233,7 @@ test('font selection in a session: one undo step, written and reopened in the ch
     assert.equal(await session.formatText(1, [key], { family: 'Times' }), true);
     assert.equal(store.edits[0].font, 'Times-BoldItalic', 'the family chosen, the style kept');
     assert.equal(await session.formatText(1, [key], { family: 'Times' }), false, 'the same font again changes nothing');
-    await assert.rejects(session.formatText(1, [key], { family: 'Liu' }), (e) => e.kind === 'content');
+    await assert.rejects(session.formatText(1, [key], { family: 'Garamond' }), (e) => e.kind === 'content');
     assert.equal(store.edits[0].font, 'Times-BoldItalic', 'a refused font changes nothing');
     assert.equal(store.edits.length, 1, 'still its one record');
     assert.equal(depth(store), 4, 'add, retype, bold and italic, font');

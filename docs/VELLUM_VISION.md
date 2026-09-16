@@ -366,8 +366,8 @@ filling, stamps and signatures:
 - missing characters in the chosen font are refused with a reason, never drawn in another font
 - all fonts are local and vendored; nothing is downloaded at runtime
 - infrastructure prerequisite for embedding any bundled font: a font parser for pdf-lib's custom-font
-  embedding (e.g. `@pdf-lib/fontkit`), vendored locally like the other libraries. It is not in the
-  repository and is not added until font selection is implemented.
+  embedding, vendored locally like the other libraries — `@pdf-lib/fontkit` (`web/vendor/fontkit`),
+  added with font selection for bundled fonts
 
 ### 4.4 Bundled selectable font: Liu (requirement)
 
@@ -394,7 +394,7 @@ available fonts, and can select it like any other. Specifically:
 Character: when supplied, it should be a genuinely cute, friendly, charming typeface that suits its name
 and is usable for real text (not a logo-only face).
 
-**Prerequisites before implementation** (none exist today, and none may be fabricated):
+**Prerequisites before implementation** (none may be fabricated; 1 and 2 don't exist yet, 3 does):
 
 1. The actual font file (TTF or OTF), supplied by the owner.
 2. A licence that permits bundling and redistribution with Vellum, use in the application, and embedding
