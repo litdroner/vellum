@@ -248,34 +248,40 @@ export class PdfSource {
   #scanned = false;
 
   /**
-   * Every font object the document's pages name in their resources (and those of the forms they draw),
-   * read into `fonts` the same way a page's analysis reads them: the families a font menu can show before
-   * every page has been read. Only fonts named by reference, so each is the model a page would use. The
-   * font programs aren't read, and no glyph is confirmed by this.
+   * Every font object the document's pages name in their resources, inherited ones too (and those of the
+   * forms they draw), read into `fonts` the same way a page's analysis reads them and under the same keys:
+   * the families a font menu can show before every page has been read. Done once per document. The font
+   * programs aren't read, and no glyph is confirmed by this.
    */
   scanFonts() {
     if (this.#scanned) return this.fonts;
     this.#scanned = true;
     const { PDFName, PDFDict, PDFRef, PDFStream } = this.lib;
     const seen = new Set();
-    const visit = (resources, depth) => {
+    const visit = (resources, scope, depth) => {
       const dict = this.lookup(resources);
       if (!(dict instanceof PDFDict) || seen.has(dict) || depth > 16) return;
       seen.add(dict);
       const fonts = this.lookup(dict.get(PDFName.of('Font')));
       if (fonts instanceof PDFDict) {
-        for (const raw of fonts.values()) if (raw instanceof PDFRef) this.fontFor(raw, null);
+        for (const [name, raw] of fonts.entries()) {
+          try { this.fontFor(raw, `${scope}/Font/${name.decodeText()}`); } catch { /* an unreadable entry adds nothing */ }
+        }
       }
       const xobjects = this.lookup(dict.get(PDFName.of('XObject')));
       if (!(xobjects instanceof PDFDict)) return;
-      for (const raw of xobjects.values()) {
-        const stream = this.lookup(raw);
-        if (stream instanceof PDFStream && this.nameOf(stream.dict.get(PDFName.of('Subtype'))) === 'Form') visit(stream.dict.get(PDFName.of('Resources')), depth + 1);
+      for (const [name, raw] of xobjects.entries()) {
+        try {
+          const stream = this.lookup(raw);
+          if (!(stream instanceof PDFStream) || this.nameOf(stream.dict.get(PDFName.of('Subtype'))) !== 'Form') continue;
+          const key = raw instanceof PDFRef ? raw.toString() : `${scope}/XObject/${name.decodeText()}`;
+          visit(stream.dict.get(PDFName.of('Resources')), key, depth + 1);
+        } catch { /* an unreadable form adds nothing */ }
       }
     };
-    for (const page of this.pages) {
-      try { visit(page.node.Resources(), 0); } catch { /* a page whose resources can't be read adds nothing */ }
-    }
+    this.pages.forEach((page, index) => {
+      try { visit(page.node.Resources(), `page${index}`, 0); } catch { /* a page whose resources can't be read adds nothing */ }
+    });
     return this.fonts;
   }
 

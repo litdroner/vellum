@@ -370,8 +370,16 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
       `q 40 0 0 14 ${72 + serifWidth + 1} 597 cm /Im1 Do Q`,
       text('LS', 14, 72, 570, 'Plain quiz'),
     ].join('\n'), res);
-    // A third family, only on page 2 and drawing none of page 1's lines: listed, never usable for them.
-    b.page(PageSizes.Letter, text('FF', 14, 72, 720, '0123'), { Font: { FF: b.cff('FoxitFixed.pfb') } });
+    // A third family, drawing none of page 1's lines: listed, never usable for them. Only on page 2, named where
+    // the page's own resources don't show it: as a direct font dictionary inside a form. Page 3 draws the serif's
+    // bold from resources it inherits from the page tree: the same family, listed once.
+    const fixed = b.ctx.register(b.ctx.flateStream(text('FF', 14, 0, 0, '0123'), {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, -4, 60, 14], Resources: { Font: { FF: b.ctx.lookup(b.cff('FoxitFixed.pfb')) } },
+    }));
+    b.page(PageSizes.Letter, 'q 1 0 0 1 72 720 cm /Fm1 Do Q', { XObject: { Fm1: fixed } });
+    const inherits = b.page(PageSizes.Letter, text('FB', 14, 72, 720, '4567'));
+    inherits.node.delete(PDFName.of('Resources'));
+    b.doc.catalog.Pages().set(PDFName.of('Resources'), b.ctx.obj({ Font: { FB: b.cff('FoxitSerifBold.pfb') } }));
   });
 
   // Composite (Type 0, Identity-H) font with a ToUnicode CMap.
