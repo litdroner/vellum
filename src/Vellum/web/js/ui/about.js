@@ -13,7 +13,7 @@ export function aboutContent(version) {
     h('div', { class: 'about-version', text: version ? `Version ${version}` : '' }),
     h('p', { class: 'about-credit' }, 'Developed by ', h('strong', { text: 'Pankaj Manhas' }), ' · Homelabs'),
     h('p', { class: 'about-origin', text: 'Made in India' }),
-    h('p', { class: 'about-libs', text: 'Built with pdf.js (Apache-2.0), pdf-lib (MIT), fontkit (MIT), pako (MIT), Lucide icons (ISC) and the Jost typeface (SIL OFL).' }));
+    h('p', { class: 'about-libs', text: 'Built with pdf.js (Apache-2.0), pdf-lib (MIT), fontkit (MIT), pako (MIT), Lucide icons (ISC) and the Jost typeface (SIL OFL). The fonts for new text are under the SIL OFL (fonts/document/NOTICE.txt).' }));
 }
 
 export async function showAbout({ version, updates }) {

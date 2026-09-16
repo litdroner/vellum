@@ -22,6 +22,7 @@
 
 import { EditError } from '../edits.js';
 import { STANDARD_FAMILIES, STYLES, bundledKey, documentKey, FONTS, standardFaces } from './text-format.js';
+import { BUNDLED_FONTS } from './bundled-fonts.js';
 
 export { documentKey };
 
@@ -44,26 +45,20 @@ export const noShaping = () => ({ liga: false, clig: false, dlig: false, hlig: f
  */
 const NEEDS_SHAPING = /[̀-ͯ֐-ࣿऀ-෿฀-࿿က-႟ក-៿᪰-᫿᷀-᷿⃐-⃿יִ-﷿︠-︯ﹰ-﻿]/u;
 
-/**
- * The document fonts bundled with Vellum, as their files in web/fonts/document: { id, name, faces:
- * { regular, bold?, italic?, 'bold-italic'? } }. A font is listed here only with its licence beside it
- * in that folder, and only when the licence allows bundling it, using it in the app and embedding it in PDFs.
- */
-const BUNDLED = Object.freeze([]);
-
 const FONTS_DIR = new URL('../../../fonts/document/', import.meta.url);
 
-/** family id → { id, name, faces: Map style → () => Promise<Uint8Array> } */
+/** family id → { id, name, group, faces: Map style → () => Promise<Uint8Array> } */
 const families = new Map();
 /** font key → Promise<{ font, bytes, refusal }> */
 const loaded = new Map();
 
 /**
  * Makes a family of bundled fonts available: `id` (lower-case letters, digits and hyphens), its `name` as
- * the font selector shows it, and `faces`, style → the font file's bytes or a function that reads them.
- * The fonts listed in BUNDLED are registered this way when this module loads; tests register their own.
+ * the font selector shows it, the `group` the selector lists it in, and `faces`, style → the font file's
+ * bytes or a function that reads them. The fonts of objects/bundled-fonts.js are registered this way when
+ * this module loads; tests register their own.
  */
-export function registerBundledFamily({ id, name, faces }) {
+export function registerBundledFamily({ id, name, group = 'bundled', faces }) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || typeof name !== 'string' || !name) throw new TypeError('A bundled family needs an id and a name.');
   const readers = new Map();
   for (const [style, source] of Object.entries(faces)) {
@@ -71,14 +66,15 @@ export function registerBundledFamily({ id, name, faces }) {
     readers.set(style, typeof source === 'function' ? source : async () => source);
   }
   if (!readers.has('regular')) throw new TypeError('A bundled family needs a regular face.');
-  families.set(`bundled:${id}`, { id: `bundled:${id}`, name, faces: readers });
+  families.set(`bundled:${id}`, { id: `bundled:${id}`, name, group, faces: readers });
   for (const style of STYLES) loaded.delete(`bundled:${id}/${style}`);
 }
 
-for (const { id, name, faces } of BUNDLED) {
+for (const { id, name, group, faces } of BUNDLED_FONTS) {
   registerBundledFamily({
     id,
     name,
+    group,
     faces: Object.fromEntries(Object.entries(faces).map(([style, file]) => [style, async () => {
       const response = await fetch(new URL(file, FONTS_DIR));
       if (!response.ok) throw new Error(`${file}: ${response.status}`);
@@ -89,8 +85,8 @@ for (const { id, name, faces } of BUNDLED) {
 
 /** The bundled families, as the font selector lists them (faces as keys; null where a family hasn't got one). */
 export function bundledFamilies() {
-  return [...families.values()].map(({ id, name, faces }) => ({
-    id, name, faces: STYLES.map((style) => (faces.has(style) ? `${id}/${style}` : null)),
+  return [...families.values()].map(({ id, name, group, faces }) => ({
+    id, name, group, faces: STYLES.map((style) => (faces.has(style) ? `${id}/${style}` : null)),
   }));
 }
 
@@ -283,7 +279,7 @@ export function documentFontSet(models, loaded = new Map()) {
       const generic = m?.flags.fixedPitch ? 'monospace' : m?.flags.serif ? 'serif' : 'sans-serif';
       return m && loaded.get(m.key) ? `"${loaded.get(m.key)}", ${generic}` : generic;
     });
-    return { id, name, faces: keys, css };
+    return { id, name, group: 'document', faces: keys, css };
   });
   return {
     families,
@@ -304,6 +300,7 @@ export function withDocumentFonts(set, models, loaded) {
   return {
     families: [...standard, ...documents.families, ...rest],
     face: (key) => (documentKey(key) ? documents.face(key) : set.face(key)),
+    load: (keys) => set.load?.(keys),
   };
 }
 
@@ -344,22 +341,34 @@ export function checkedDocumentFaces(lib, source, record, keys) {
 }
 
 /**
- * Every font new text may be written in: the standard families, then the bundled families whose faces
- * could all be read. `lib` is pdf-lib.
+ * Every font new text may be written in: the standard families, then the bundled families. A bundled face
+ * is read only when it is wanted — `load(keys)` reads the faces those font keys name (a family's id: all of
+ * its faces), and until then `face(key)` is null for it, so text is never planned in a face that hasn't been
+ * measured. A family any of whose faces couldn't be read is no longer offered. `lib` is pdf-lib.
  */
 export async function fontSet(lib) {
   const standard = standardFontSet(lib);
   const faces = new Map();
-  const usable = [];
-  for (const family of bundledFamilies()) {
-    const read = await Promise.all(family.faces.map((key) => (key ? readBundledFont(key).catch(() => null) : null)));
-    if (read.some((r, i) => family.faces[i] && !r)) continue; // a face that can't be read: the family isn't offered
-    read.forEach((r, i) => { if (r) faces.set(family.faces[i], fontkitFace(r.font, { name: faceName(family.faces[i]), refusal: r.refusal })); });
-    usable.push(family);
-  }
+  const unreadable = new Set();
   return {
-    families: [...standard.families, ...usable],
+    get families() {
+      return [...standard.families, ...bundledFamilies().filter((family) => !unreadable.has(family.id))];
+    },
     face: (key) => standard.face(key) ?? faces.get(key) ?? null,
+    async load(keys) {
+      const wanted = new Set();
+      for (const key of keys ?? []) {
+        const family = bundledKey(key)?.family ?? (families.has(key) ? key : null);
+        if (!family || unreadable.has(family)) continue;
+        if (family === key) bundledFamilies().find((f) => f.id === family).faces.forEach((k) => { if (k) wanted.add(k); });
+        else wanted.add(key);
+      }
+      await Promise.all([...wanted].filter((key) => !faces.has(key)).map(async (key) => {
+        const read = await readBundledFont(key).catch(() => null);
+        if (!read) unreadable.add(bundledKey(key).family); // a face that can't be read: the family isn't offered
+        else faces.set(key, fontkitFace(read.font, { name: faceName(key), refusal: read.refusal }));
+      }));
+    },
   };
 }
 

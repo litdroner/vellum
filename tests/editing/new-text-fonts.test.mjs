@@ -77,6 +77,9 @@ test('a bundled face measures what pdf-lib writes: glyph advances, nothing shape
 test('a font set: the standard families, then the bundled families it could read, with the faces they have', async () => {
   const lib = await loadPdfLib();
   const fonts = await fontSet(lib);
+  assert.ok(fonts.families.some((f) => f.id === 'bundled:test-missing'), 'listed before any file is read');
+  assert.equal(fonts.face('bundled:test-sans/regular'), null, 'a face is measured only once it has been read');
+  await fonts.load(['bundled:test-sans', 'bundled:test-locked/regular', 'bundled:test-missing/regular']);
   const ids = fonts.families.map((f) => f.id);
   assert.deepEqual(ids.slice(0, 3), ['Helvetica', 'Times', 'Courier']);
   assert.ok(ids.includes('bundled:test-sans') && ids.includes('bundled:test-locked'));
@@ -98,6 +101,7 @@ test('a font set: the standard families, then the bundled families it could read
 test('new text in a bundled family: laid out in its widths, its own bold kept, refusals with nothing changed', async () => {
   const lib = await loadPdfLib();
   const fonts = await fontSet(lib);
+  await fonts.load(['bundled:test-sans', 'bundled:test-locked', 'bundled:test-missing']);
   const record = planNewText(base(lib, fonts, { size: 14 }));
   const bold = planFormat({ fonts, record: planFormat({ fonts, record, changes: { bold: true } }), changes: { family: 'bundled:test-sans' } });
   assert.equal(bold.font, 'bundled:test-sans/bold', 'the family chosen, its own bold face kept');

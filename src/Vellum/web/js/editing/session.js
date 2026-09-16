@@ -240,14 +240,18 @@ export class TextEditing {
   /**
    * The fonts new text may be written in (objects/font-set.js): the standard families, the opened PDF's
    * own fonts as far as its pages read so far have confirmed their glyphs, and the bundled families whose
-   * files could be read (those read once; a failure is tried again next time).
+   * files could be read (those read once; a failure is tried again next time). A bundled face is read when
+   * it is needed: the faces this document's new text is written in, and those of `wanted` (font keys or a
+   * family's id — a family being chosen, text being pasted).
    */
-  async #fonts() {
+  async #fonts(wanted = []) {
     if (!this.#fontSet) {
       this.#fontSet = loadPdfLib().then((lib) => fontSet(lib));
       this.#fontSet.catch(() => { this.#fontSet = null; });
     }
     const set = await this.#fontSet;
+    const used = this.#view.annotations.edits.filter((e) => e.kind === newTextKind).flatMap(fontsOf);
+    await set.load([...used, ...wanted]);
     const base = this.#sources.has('base') ? await this.#sources.get('base').catch(() => null) : null;
     if (!base) return set;
     // The name pdf.js loaded each of the file's fonts under, from the base pages it has drawn.
@@ -282,7 +286,7 @@ export class TextEditing {
     if ((range || text !== undefined) && keys.length !== 1) {
       throw new EditError('format', 'Part of a text box is formatted one box at a time, so nothing was changed.');
     }
-    const fonts = await this.#fonts();
+    const fonts = await this.#fonts(typeof changes?.family === 'string' ? [changes.family] : []);
     const { found } = await this.#objectsAt(pageNumber, keys);
     const pairs = [];
     for (const { object, record } of found) {
@@ -652,7 +656,7 @@ export class TextEditing {
     if (!clip?.items?.length) throw new EditError('missing', 'Nothing has been copied.');
     if (!isValid(offset)) throw new EditError('content', 'That change couldn’t be worked out, so nothing was changed.');
     const constraints = await this.#constraints();
-    const fonts = await this.#fonts();
+    const fonts = await this.#fonts(clip.items.filter((item) => item.kind === newTextKind).flatMap(fontsOf));
     const { entry, analysis } = await this.objects(pageNumber);
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });

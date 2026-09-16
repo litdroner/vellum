@@ -1225,9 +1225,17 @@ export class TextEditor {
     noteFamilies(families);
     const formats = this.#newTextFormats() ?? [];
     const current = formats.every((f) => f.family === formats[0]?.family) ? formats[0]?.family : null;
-    this.#keepMenu(openMenu((families ?? STANDARD_FAMILIES).map(({ id, name, faces }) => ({
-      label: name, checked: current === id, font: cssFont(faces.find(Boolean)), action: () => this.formatSelected({ family: id }),
-    })), { anchor, align: 'center', className: 'font-menu' }));
+    // One list, a separator between groups: standard, the document's own, then the bundled groups (sans, serif, …).
+    const items = [];
+    let group;
+    for (const { id, name, faces, group: next = 'standard' } of families ?? STANDARD_FAMILIES) {
+      if (group !== undefined && next !== group) items.push('-');
+      group = next;
+      items.push({ label: name, checked: current === id, font: cssFont(faces.find(Boolean)), action: () => this.formatSelected({ family: id }) });
+    }
+    const menu = openMenu(items, { anchor, align: 'center', className: 'font-menu' });
+    menu.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: 'nearest' });
+    this.#keepMenu(menu);
   }
 
   #sizeMenu(anchor) {

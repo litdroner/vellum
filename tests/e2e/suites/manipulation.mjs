@@ -1001,8 +1001,11 @@ export async function run(t) {
   const fontAt = await centreOf(fontButton);
   await c.mouse(fontAt[0], fontAt[1]);
   check('it opens a menu of the fonts new text can be written in',
-    await waitFor(`[...document.querySelectorAll('.menu.font-menu .menu-label')].map((e) => e.textContent).join(',') === 'Helvetica,Times,Courier'`, 3000),
+    await waitFor(`[...document.querySelectorAll('.menu.font-menu .menu-label')].map((e) => e.textContent).join(',').startsWith('Helvetica,Times,Courier,')`, 3000),
     await q(`[...document.querySelectorAll('.menu .menu-label')].map((e) => e.textContent).join(',')`));
+  check('the bundled library is listed too, in groups, and the long list scrolls',
+    await q(`(() => { const m = document.querySelector('.menu.font-menu'); const labels = [...m.querySelectorAll('.menu-label')].map((e) => e.textContent); return ['Inter', 'Merriweather', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Noto Sans'].every((n) => labels.includes(n)) && m.querySelectorAll('.menu-sep').length >= 5 && m.scrollHeight > m.clientHeight && m.getBoundingClientRect().bottom <= innerHeight; })()`),
+    await q(`document.querySelector('.menu.font-menu')?.querySelectorAll('.menu-item').length`));
   const timesAt = await centreOf(`[...document.querySelectorAll('.menu.font-menu .menu-item')].find((b) => b.textContent.includes('Times'))`);
   await c.mouse(timesAt[0], timesAt[1]);
   await rest(OBJ);
@@ -1018,6 +1021,15 @@ export async function run(t) {
   check('and the page with it', await waitFor(`${shownFamily}.then((f) => f === 'sans-serif')`, 8000), await q(shownFamily));
   check('a font Vellum doesn’t have is refused, with nothing changed',
     (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Garamond' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
+  // A bundled family (web/fonts/document), read over the app's resource server when it is chosen.
+  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'bundled:inter' })`);
+  await rest(OBJ);
+  check('a bundled family: its own bold face, read when chosen, one undo step',
+    (await waitFor(`${V(OBJ)}.annotations.edits.find((e) => e.kind === 'inserted-text')?.font === 'bundled:inter/bold'`, 8000)) && (await undoDepth(OBJ)) === fontDepth + 3 && (await waitFor(`${fontButton}.textContent === 'Inter'`, 3000)),
+    JSON.stringify(await newRecord()));
+  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Helvetica' })`);
+  await rest(OBJ);
+  check('and back to Helvetica', (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 4, JSON.stringify(await newRecord()));
 
   // Mixed formatting (0.6): a word of the box formatted from the open editor, with what was typed, in one step.
   const mixedDepth = await undoDepth(OBJ); // counted while the editor is shut: counting rebuilds the pages, which closes it
