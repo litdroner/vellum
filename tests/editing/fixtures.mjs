@@ -370,6 +370,8 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
       `q 40 0 0 14 ${72 + serifWidth + 1} 597 cm /Im1 Do Q`,
       text('LS', 14, 72, 570, 'Plain quiz'),
     ].join('\n'), res);
+    // A third family, only on page 2 and drawing none of page 1's lines: listed, never usable for them.
+    b.page(PageSizes.Letter, text('FF', 14, 72, 720, '0123'), { Font: { FF: b.cff('FoxitFixed.pfb') } });
   });
 
   // Composite (Type 0, Identity-H) font with a ToUnicode CMap.

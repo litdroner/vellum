@@ -41,8 +41,10 @@ export async function run(t) {
   await c.mouse(at[0], at[1]);
   await waitFor(`document.querySelector('.font-menu')`, 5000);
   const boldMenu = await q(menuItems);
-  check('its menu lists the PDF’s own families only; the serif can’t be chosen for a bold line',
-    boldMenu?.length === 2 && boldMenu.some((i) => i.checked && i.label.includes('Liberation')) && boldMenu.some((i) => !i.checked && i.disabled), JSON.stringify(boldMenu));
+  check('its menu lists the PDF’s own families only, page 2’s too; the serif can’t be chosen for a bold line',
+    boldMenu?.length === 3 && boldMenu.some((i) => i.checked && i.label.includes('Liberation')) && boldMenu.some((i) => !i.checked && i.disabled && !i.label.includes('Fixed')), JSON.stringify(boldMenu));
+  check('a family the line can’t be set in is shown, marked and disabled',
+    boldMenu?.some((i) => i.label === 'Chrom Fixed OTF (can’t be used for this line)' && i.disabled && !i.checked), JSON.stringify(boldMenu));
   await c.key('Escape');
   await sleep(300);
   await c.key('Escape');

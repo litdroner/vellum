@@ -32,10 +32,14 @@ test('another family of the PDF’s own fonts: listed, one step, saved as the sa
     const key = at(objects, LINE, 720).ref.key;
     const listed = await session.runFontFamilies(1, key);
     const sans = listed.find((f) => f.id === 'doc:LiberationSans');
-    const serif = listed.find((f) => f.id !== sans?.id);
+    const fixed = listed.find((f) => /Fixed/.test(f.id));
+    const serif = listed.find((f) => f.id !== sans?.id && f !== fixed);
     assert.ok(sans?.current && serif && !serif.current, JSON.stringify(listed));
     assert.equal(serif.refusal, null, 'the serif can be chosen');
-    assert.equal(listed.length, 2, 'only the document’s own families');
+    assert.equal(listed.length, 3, 'the document’s own families, each once (two Liberation Sans faces are one family)');
+    assert.ok(fixed && !fixed.current && fixed.refusal, 'the family only page 2 has, not read yet: listed, can’t be chosen');
+    await assert.rejects(session.formatText(1, [key], { family: fixed.id }), (err) => err.detail?.reason === 'family', 'and refused if asked for');
+    assert.deepEqual(store.edits, [], 'nothing stored for it');
     const family = (await session.fontFamilies()).find((f) => f.id === serif.id);
 
     assert.equal(await session.formatText(1, [key], { size: 18, color: '#cc0000' }), true);

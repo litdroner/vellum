@@ -16,10 +16,10 @@ import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { cleanText, defaultTextPlacement, fontsOf, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
-import { documentKey, fontSet, withDocumentFonts } from './objects/font-set.js';
+import { documentKey, embeddedFamilies, fontSet, withDocumentFonts } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
 import { planRunFormat, runFormatError, withRunFormat } from './objects/run-format.js';
-import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, withRunFace } from './objects/run-face.js';
+import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, runStyleOf, styleName, withRunFace } from './objects/run-face.js';
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
@@ -449,11 +449,15 @@ export class TextEditing {
    * one: `key`) could be set in, from the edit bar's font menu: [{ id, name, css, current, refusal }],
    * `refusal` the reason choosing it would be refused (objects/run-face.js planRunFace, and the new width
    * checked as formatText checks it), null when it can be chosen. Only the document's own families: the
-   * standard and bundled fonts aren't used for text the PDF already draws.
+   * standard and bundled fonts aren't used for text the PDF already draws. Every embedded text font family
+   * the PDF names is listed (PdfSource.scanFonts), also those on pages not read yet or never seen drawing:
+   * those have no face that can be chosen, so they are refused.
    */
   async runFontFamilies(pageNumber, key) {
+    const base = await this.#source('base').catch(() => null);
+    base?.scanFonts();
     const fonts = await this.#fonts();
-    const models = (await this.#source('base').catch(() => null))?.fonts ?? null;
+    const models = base?.fonts ?? null;
     const page = await this.#objectsAt(pageNumber, [key]);
     const [{ object, record }] = page.found;
     if (object.kind !== 'text-run' || object.ref.newText) return [];
@@ -461,7 +465,12 @@ export class TextEditing {
     const from = object.ref.copy ? record?.from ?? null : null;
     const analysis = page.origins.get(from ? originKey(from) : '');
     const current = runFamilyOf(run, record, fonts);
-    return fonts.families.filter((f) => f.group === 'document').map(({ id, name, css }) => {
+    const listed = fonts.families.filter((f) => f.group === 'document');
+    const unseen = embeddedFamilies(models?.values() ?? []).filter((f) => !listed.some((l) => l.id === f.id)).map(({ id, name }) => ({
+      id, name, css: null, current: id === current,
+      refusal: id === current ? null : runFaceError('face', { style: styleName(runStyleOf(run, record)) }).message,
+    }));
+    return listed.map(({ id, name, css }) => {
       let refusal = null;
       if (id !== current) {
         try {
@@ -473,7 +482,7 @@ export class TextEditing {
         }
       }
       return { id, name, css, current: id === current, refusal };
-    });
+    }).concat(unseen);
   }
 
   /**

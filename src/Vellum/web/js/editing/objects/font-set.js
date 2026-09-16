@@ -267,6 +267,20 @@ function documentFace(model) {
 export const documentFamilyOf = (model) => `doc:${model.name.replace(/[-,].*$/, '') || model.name}`;
 
 /**
+ * The families of the document's embedded text fonts, usable or not (no Type 3 or symbol fonts): [{ id, name }]
+ * by documentFamilyOf, once each, in the order `models` has them — for listing what the PDF has.
+ */
+export function embeddedFamilies(models) {
+  const found = new Map();
+  for (const model of models) {
+    if (!model?.name || !model.embedded || model.kind === 'type3' || model.symbolFont) continue;
+    const id = documentFamilyOf(model);
+    if (!found.has(id)) found.set(id, { id, name: readable(id.slice('doc:'.length)) });
+  }
+  return [...found.values()];
+}
+
+/**
  * The document's own fonts as families, from its FontModels (editing/source.js PdfSource.fonts): the
  * usable ones, grouped by family name with each one's bold and italic from the font itself. Where a
  * family has two fonts of one style (two subsets), the one pdf.js has confirmed more glyphs of is used.

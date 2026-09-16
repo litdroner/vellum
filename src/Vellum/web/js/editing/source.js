@@ -245,6 +245,40 @@ export class PdfSource {
     return model;
   }
 
+  #scanned = false;
+
+  /**
+   * Every font object the document's pages name in their resources (and those of the forms they draw),
+   * read into `fonts` the same way a page's analysis reads them: the families a font menu can show before
+   * every page has been read. Only fonts named by reference, so each is the model a page would use. The
+   * font programs aren't read, and no glyph is confirmed by this.
+   */
+  scanFonts() {
+    if (this.#scanned) return this.fonts;
+    this.#scanned = true;
+    const { PDFName, PDFDict, PDFRef, PDFStream } = this.lib;
+    const seen = new Set();
+    const visit = (resources, depth) => {
+      const dict = this.lookup(resources);
+      if (!(dict instanceof PDFDict) || seen.has(dict) || depth > 16) return;
+      seen.add(dict);
+      const fonts = this.lookup(dict.get(PDFName.of('Font')));
+      if (fonts instanceof PDFDict) {
+        for (const raw of fonts.values()) if (raw instanceof PDFRef) this.fontFor(raw, null);
+      }
+      const xobjects = this.lookup(dict.get(PDFName.of('XObject')));
+      if (!(xobjects instanceof PDFDict)) return;
+      for (const raw of xobjects.values()) {
+        const stream = this.lookup(raw);
+        if (stream instanceof PDFStream && this.nameOf(stream.dict.get(PDFName.of('Subtype'))) === 'Form') visit(stream.dict.get(PDFName.of('Resources')), depth + 1);
+      }
+    };
+    for (const page of this.pages) {
+      try { visit(page.node.Resources(), 0); } catch { /* a page whose resources can't be read adds nothing */ }
+    }
+    return this.fonts;
+  }
+
   describeFont(dict, key) {
     const { PDFName, PDFDict, PDFArray, PDFStream } = this.lib;
     const get = (d, k) => (d instanceof PDFDict ? this.lookup(d.get(PDFName.of(k))) : undefined);

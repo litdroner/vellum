@@ -50,7 +50,7 @@ const MESSAGES = {
   bounds: 'In that face the line would be wider and go past the edge of the page or the area it is shown in, so nothing was changed.',
 };
 
-const styleName = ({ bold, italic }) => (bold && italic ? 'bold italic' : bold ? 'bold' : italic ? 'italic' : 'regular');
+export const styleName = ({ bold, italic }) => (bold && italic ? 'bold italic' : bold ? 'bold' : italic ? 'italic' : 'regular');
 const listOf = (chars) => chars.map((ch) => (ch === ' ' ? 'a space' : `“${ch}”`)).join(', ');
 
 /** The EditError for a refusal key of this module. */
