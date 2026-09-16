@@ -111,14 +111,16 @@ export function createCommands(app, ui, actions) {
     'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text', run: () => doc()?.textEditor?.addText() },
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold new text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic new text', run: () => doc()?.textEditor?.formatSelected('italic') },
-    'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline new text', run: () => doc()?.textEditor?.formatSelected('underline') },
+    'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },
     // One command per font new text can be written in (editing/objects/text-format.js), so the palette
     // offers exactly the fonts the format bar's font menu does.
     ...Object.fromEntries(FAMILY_NAMES.map((family) => [`edit.textFont${family}`, {
       group: 'Edit', icon: 'type', doc: true, label: `New text in ${family}`, run: () => doc()?.textEditor?.formatSelected({ family }),
     }])),
-    'edit.textLarger': { group: 'Edit', icon: 'plus', doc: true, label: 'Larger new text', run: () => doc()?.textEditor?.formatSelected('larger') },
-    'edit.textSmaller': { group: 'Edit', icon: 'minus', doc: true, label: 'Smaller new text', run: () => doc()?.textEditor?.formatSelected('smaller') },
+    'edit.textLarger': { group: 'Edit', icon: 'plus', doc: true, label: 'Larger text', run: () => doc()?.textEditor?.formatSelected('larger') },
+    'edit.textSmaller': { group: 'Edit', icon: 'minus', doc: true, label: 'Smaller text', run: () => doc()?.textEditor?.formatSelected('smaller') },
+    'edit.textColour': { group: 'Edit', icon: 'palette', doc: true, label: 'Text colour…', run: () => doc()?.textEditor?.textColourMenu() },
+    'edit.textOpacity': { group: 'Edit', icon: 'blend', doc: true, label: 'Text opacity…', run: () => doc()?.textEditor?.textOpacityMenu() },
     'edit.textAlignLeft': { group: 'Edit', icon: 'text-align-start', doc: true, label: 'Align new text left', run: () => doc()?.textEditor?.formatSelected('left') },
     'edit.textAlignCenter': { group: 'Edit', icon: 'text-align-center', doc: true, label: 'Centre new text', run: () => doc()?.textEditor?.formatSelected('center') },
     'edit.textAlignRight': { group: 'Edit', icon: 'text-align-end', doc: true, label: 'Align new text right', run: () => doc()?.textEditor?.formatSelected('right') },

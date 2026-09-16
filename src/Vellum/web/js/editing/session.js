@@ -18,6 +18,7 @@ import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInser
 import { cleanText, defaultTextPlacement, fontsOf, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
 import { documentKey, fontSet, withDocumentFonts } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
+import { planRunFormat, runFormatError, withRunFormat } from './objects/run-format.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
@@ -161,8 +162,8 @@ export class TextEditing {
       // the text, though, so a run that has also been moved keeps its one record — holding the
       // file’s own glyphs again, which is what it would have had if it had only ever been moved.
       if (!item.edit) return false;
-      const placed = item.edit.transform
-        ? planTextTransform({ run: item.run, transform: item.edit.transform, entry: entry.id, id: item.edit.id })
+      const placed = item.edit.transform || item.edit.format
+        ? planTextTransform({ run: item.run, transform: item.edit.transform ?? null, entry: entry.id, id: item.edit.id, format: item.edit.format ?? null })
         : null;
       store.applyEdit(item.edit, placed);
       return true;
@@ -172,7 +173,7 @@ export class TextEditing {
     // back, and must not become a second record either.
     const record = planTextEdit({
       run: item.run, text: next, entry: entry.id, glyphs: source.glyphs,
-      id: item.edit?.id, transform: item.edit?.transform ?? null, ...(await this.#constraints()),
+      id: item.edit?.id, transform: item.edit?.transform ?? null, format: item.edit?.format ?? null, ...(await this.#constraints()),
     });
     store.applyEdit(item.edit, record);
     return true;
@@ -287,7 +288,10 @@ export class TextEditing {
       throw new EditError('format', 'Part of a text box is formatted one box at a time, so nothing was changed.');
     }
     const fonts = await this.#fonts(typeof changes?.family === 'string' ? [changes.family] : []);
-    const { found } = await this.#objectsAt(pageNumber, keys);
+    const constraints = await this.#constraints();
+    const { entry, found } = await this.#objectsAt(pageNumber, keys);
+    // The page's own text (and pasted copies of it) is formatted on its own terms (objects/run-format.js).
+    if (found.some(({ object }) => !object.ref.newText)) return this.#formatRuns(entry, found, changes, { range, text, constraints });
     const pairs = [];
     for (const { object, record } of found) {
       if (!object.ref.newText || record?.kind !== newTextKind) {
@@ -301,6 +305,40 @@ export class TextEditing {
     }
     if (!pairs.length) return false;
     view.annotations.applyEdits(pairs);
+    return true;
+  }
+
+  /**
+   * Formats text the page already draws — runs, and pasted copies of them — with `changes` holding any of
+   * size, color, opacity and underline (objects/run-format.js planRunFormat): ONE undo step for all of
+   * `found`, false when nothing changed, EditError with nothing changed when any of them refuses. Each
+   * keeps its one record: a text record takes the format and a size's scale into its own (planTextTransform,
+   * so it is checked as any placement is), a copy into its copy record. A run's record that ends up saying
+   * nothing — no transform, no format, its own glyphs — goes, as a move back to where it started does.
+   * New text isn't formatted in the same step: it has its own format and fonts.
+   */
+  #formatRuns(entry, found, changes, { range, text, constraints }) {
+    if (found.some(({ object }) => object.ref.newText)) {
+      throw new EditError('format', 'New text and the page’s own text are formatted separately, so nothing was changed.');
+    }
+    if (range || text !== undefined) throw runFormatError('range');
+    const pairs = [];
+    for (const { object, record } of found) {
+      if (object.kind !== 'text-run') throw new EditError('format', 'Only text can be formatted, so nothing was changed.', { key: object.ref.key });
+      this.#refuse(object, 'editText', found.length);
+      const run = object.record;
+      const { format, transform } = planRunFormat({ run, record, changes, pdfa: constraints.embeddedFontsOnly });
+      let next;
+      if (object.ref.copy) next = planCopy({ ...record, transform, format });
+      else {
+        const base = record ?? planTextTransform({ run, transform: null, entry: entry.id });
+        next = planTextTransform({ record: withRunFormat(base, format), transform, entry: entry.id });
+        if (!next.transform && !next.format && next.encoding.mode === 'original') next = null;
+      }
+      if (JSON.stringify(record) !== JSON.stringify(next)) pairs.push([record, next]);
+    }
+    if (!pairs.length) return false;
+    this.#view.annotations.applyEdits(pairs);
     return true;
   }
 
@@ -487,7 +525,7 @@ export class TextEditing {
       // on the record because it is not about the text, exactly as retyping keeps it.
       ? planTextEdit({
         run: object.record, text: '', entry: current.id, glyphs,
-        id: record?.id, transform: record?.transform ?? null, ...constraints,
+        id: record?.id, transform: record?.transform ?? null, format: record?.format ?? null, ...constraints,
       })
       // A picture put there from a file is its record, so deleting it is taking the record away.
       : object.ref.inserted ? null
@@ -723,6 +761,7 @@ export class TextEditing {
       if (item.encoding?.mode === 'standard' && constraints.embeddedFontsOnly) {
         throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; this text uses a substitute font, so it wasn’t pasted.');
       }
+      if ((item.format?.color !== undefined || item.format?.opacity !== undefined) && constraints.embeddedFontsOnly) throw runFormatError('pdfa');
       const sameContent = entry.src === src && entry.index === item.from.index;
       placed.push({ item, quad: source.geometry.quad, from: sameContent ? null : { src, index: item.from.index } });
     }
@@ -765,7 +804,7 @@ export class TextEditing {
     const next = planTextTransform({
       run: record ? null : object.record, record, transform: absolute, entry: entry.id, id: record?.id,
     });
-    return !next.transform && next.encoding?.mode === 'original' ? null : next;
+    return !next.transform && !next.format && next.encoding?.mode === 'original' ? null : next;
   }
 
   /** What the whole document requires of an edit (PDF/A: embedded fonts only). */

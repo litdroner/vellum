@@ -3,7 +3,7 @@
 // first glyph and its exact original text, so it can be found — and checked — every time the
 // document is composed; it never stores positions that could drift.
 //
-//   { id, kind: 'text', entry, target: { key, text, glyphs }, text, encoding, transform? }
+//   { id, kind: 'text', entry, target: { key, text, glyphs }, text, encoding, transform?, format? }
 //     entry     the page plan entry (pages/plan.js) the edit belongs to: it moves with its page
 //     encoding  { mode: 'font', items }   written with the run's own font, codes proven present
 //               { mode: 'standard', font } a standard font of the same style (the original can't)
@@ -15,6 +15,9 @@
 //               record instead of adding another; and left out altogether when it would be the
 //               identity, so an untransformed edit is the record — and writes the bytes — it
 //               always was.
+//     format    { color?, opacity?, underline? }, only once the run has been formatted
+//               (objects/run-format.js): how its redraw differs from the page's own. A size change
+//               isn't here: it is a uniform scale in `transform`.
 //
 // Images are the other kind of content edit. Their record shape, their planner (planImageEdit) and
 // everything about writing them live with their handler, in objects/image.js.
@@ -94,13 +97,13 @@ function placementOf(transform) {
  * `transform` is the run's placement, carried straight through: retyping text that has been moved
  * must not put it back (planTextTransform says what a transform is and what may be in one).
  */
-export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedFontsOnly = false, transform = null }) {
+export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedFontsOnly = false, transform = null, format = null }) {
   if (!run?.editable) refuseRun(run);
   // A run is one line: line breaks and tabs become spaces (reflowing paragraphs comes later).
   const clean = text.replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
   const target = targetOf(run);
   const placement = placementOf(transform);
-  const record = { id, kind: 'text', entry, target, text: clean, ...(placement ? { transform: placement } : {}) };
+  const record = { id, kind: 'text', entry, target, text: clean, ...(placement ? { transform: placement } : {}), ...(format ? { format: { ...format } } : {}) };
   if (!clean.trim()) return { ...record, text: '', encoding: { mode: 'none' } };
 
   const own = run.font.planText(clean);
@@ -138,7 +141,7 @@ export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedF
  * The identity is not stored: like an image edit, a transform that changes nothing plans a record
  * the caller is expected to drop rather than keep.
  */
-export function planTextTransform({ run = null, record = null, transform, entry, id = record?.id ?? newId() }) {
+export function planTextTransform({ run = null, record = null, transform, entry, id = record?.id ?? newId(), format = null }) {
   if (record && record.kind !== 'text') throw new EditError('unsupported', REASONS.unsupported, { kind: record.kind });
   // Eligibility is the engine’s own verdict and nothing new: a run 0.4 already found editable.
   // Given a record and no run, that verdict is already in the record — it couldn’t exist otherwise.
@@ -153,7 +156,7 @@ export function planTextTransform({ run = null, record = null, transform, entry,
   }
   return {
     id, kind: 'text', entry, target: targetOf(run), text: run.text,
-    encoding: { mode: 'original' }, ...(placement ? { transform: placement } : {}),
+    encoding: { mode: 'original' }, ...(placement ? { transform: placement } : {}), ...(format ? { format: { ...format } } : {}),
   };
 }
 

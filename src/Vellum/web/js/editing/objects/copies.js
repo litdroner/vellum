@@ -1,7 +1,7 @@
 // Copies of objects a page already draws — text runs and pictures — pasted onto that page again.
 // Registered in registry.js, which is what makes the two kinds here writable.
 //
-//   { id, kind: 'text-copy', entry, from?, target: { key, text, glyphs }, text, encoding, transform }
+//   { id, kind: 'text-copy', entry, from?, target: { key, text, glyphs }, text, encoding, transform, format? }
 //   { id, kind: 'image-copy', entry, from?, target: { key, stream, opIndex, name, inline, ctm, width, height },
 //     transform, replacement? }
 //
@@ -49,7 +49,8 @@ import { pdfaClaim } from '../source.js';
 import { num, pdfName } from '../content/writer.js';
 import { IDENTITY, multiply } from '../matrix.js';
 import { determinant, isValid, quantize } from './transform.js';
-import { addStandardFont, drawText, encodeStandard, originalItems, replayColour, sameGlyphs } from './text-run.js';
+import { addStandardFont, drawText, encodeStandard, opacityStates, originalItems, refuseFormatsInPdfa, replayColour, sameGlyphs, styleOf } from './text-run.js';
+import { runFormatRefusal } from './run-format.js';
 import { embedPictures, replacementOf, targetOf as imageTargetOf, updateResources, verify as verifyImage } from './image.js';
 import { kind as insertedKind } from './inserted-image.js';
 import { newId } from '../../annotations/model.js';
@@ -89,6 +90,7 @@ export function snapshotOf(object, record = null) {
       text: record?.text ?? run.text,
       encoding: record?.encoding ?? { mode: 'original' },
       transform: record?.transform ?? IDENTITY,
+      ...(record?.format ? { format: record.format } : {}),
     });
   }
   if (object.kind === 'image') {
@@ -106,7 +108,7 @@ export function snapshotOf(object, record = null) {
  * A copy's record at `transform` (absolute, as a moved object's): for a new copy and for every later
  * change to one (same `id`). EditError when it can't be written.
  */
-export function planCopy({ kind, target, text, encoding, replacement = null, transform, entry, from = null, id = newId() }) {
+export function planCopy({ kind, target, text, encoding, replacement = null, transform, entry, from = null, id = newId(), format = null }) {
   const kept = kind === TEXT ? textPlacement(transform ?? []) : quantize(transform ?? []);
   if (!kept || !target) throw unusable();
   if (from && !(typeof from.src === 'string' && from.src !== 'blank' && Number.isInteger(from.index) && from.index >= 0)) throw unusable();
@@ -115,7 +117,9 @@ export function planCopy({ kind, target, text, encoding, replacement = null, tra
     const reason = textTransformRefusal(kept);
     if (reason) throw new EditError('not-editable', REASONS[reason], { reason, transform: kept });
     if (!['original', 'font', 'standard'].includes(encoding?.mode) || typeof text !== 'string') throw unusable();
-    return structuredClone({ id, kind, entry, ...origin, target, text, encoding, transform: kept });
+    // A format's shape is checked here; whether the run it draws can take it, by its planner and the writer.
+    if (format && runFormatRefusal({ first: { tr: 0 } }, format) === 'content') throw unusable();
+    return structuredClone({ id, kind, entry, ...origin, target, text, encoding, transform: kept, ...(format ? { format } : {}) });
   }
   if (kind === IMAGE) {
     if (target.inline || !target.name) throw new EditError('not-editable', REASONS.unsupported, { reason: 'unsupported' });
@@ -148,10 +152,12 @@ export const textCopy = Object.freeze({
     if (records.some((e) => e.encoding?.mode === 'standard') && pdfaClaim(lib, doc)) {
       throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; a copy that uses a substitute font would break it, so nothing was changed.');
     }
+    refuseFormatsInPdfa(lib, doc, records);
   },
 
   write({ lib, doc, page, index, analysis: own, records, origins }) {
     const standardFonts = new Map();
+    const states = opacityStates(lib, doc, page);
     const imports = importer(lib, doc, page, index);
     const append = records.map((record) => {
       const origin = originOf(record, own, origins, index);
@@ -163,6 +169,9 @@ export const textCopy = Object.freeze({
       }
       if (!isValid(record.transform) || textTransformRefusal(record.transform)) {
         throw new EditError('content', `Text copied on page ${index + 1} is placed in a way Vellum can’t write, so nothing was changed.`);
+      }
+      if (runFormatRefusal(run, record.format)) {
+        throw new EditError('content', `Text copied on page ${index + 1} is formatted in a way Vellum can’t write, so nothing was changed.`);
       }
       const { mode } = record.encoding ?? {};
       let fontName = run.fontName;
@@ -183,7 +192,8 @@ export const textCopy = Object.freeze({
       } else {
         throw new EditError('content', `Text copied on page ${index + 1} can’t be written, so nothing was changed.`);
       }
-      return drawText(analysis, run, fontName, items, record.transform, rename);
+      const style = styleOf(record, run, states, mode === 'standard' ? lib.StandardFontEmbedder.for(record.encoding.font) : null);
+      return drawText(analysis, run, fontName, items, record.transform, rename, style);
     });
     return { patches: [], append };
   },

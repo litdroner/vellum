@@ -109,6 +109,8 @@ function check(analysis, lines) {
     if (!run?.editable) refuse('One of the paragraph’s lines can’t be edited, so it can’t be reflowed.', 'not-editable');
     if (record?.encoding?.mode === 'standard') refuse('A line of this paragraph is already set in a substitute font, so it can’t be reflowed in its own font.', 'substitute');
     if (record?.encoding?.mode === 'none' || record?.removed) refuse('A line of this paragraph has been removed, so it can’t be reflowed.', 'removed');
+    // A formatted line's colour, opacity or underline would stay with the line, not with the words that move.
+    if (record?.format) refuse('A line of this paragraph has been formatted, so it can’t be reflowed yet.', 'formatted');
     const { show, first } = endsOf(analysis, run);
     style.push(styleOf(show, first));
     // Set with the font's own widths and nothing else: each glyph starts where the one before it ends.

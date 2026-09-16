@@ -12,6 +12,7 @@ import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
+import { runFormatOf } from '../editing/objects/run-format.js';
 import { LINE_SPACING, LIMITS as TEXT_LIMITS, STANDARD_FAMILIES, STYLES, bundledKey, remapSpans } from '../editing/objects/text-format.js';
 import { bundledFamilies, documentKey, readBundledFont } from '../editing/objects/font-set.js';
 import { openMenu } from './menu.js';
@@ -1049,13 +1050,19 @@ export class TextEditor {
     return { el, arrange: children, spacing, replace, format };
   }
 
-  // ---- formatting new text -----------------------------------------------------------------------
+  // ---- formatting text ---------------------------------------------------------------------------
   // Over new text (objects/inserted-text.js) the same bar formats it: its font (one of the standard
   // families, #fontMenu), size (#sizeMenu, or a step at a time), the family's own bold and italic,
   // underline, alignment, colour and opacity — for every selected object when all of them are new text,
   // one undo step (session.formatText). Its box's right-edge handle sets the width its lines wrap to
-  // (#wrapHandle). Text of the page itself isn't formatted here: changing the font of text the file
-  // already draws needs the font system of docs/VELLUM_VISION.md §4.3.
+  // (#wrapHandle).
+  //
+  // Text the page already draws — runs, and pasted copies of them, all of the selection — is formatted from
+  // the command palette rather than a bar (a bar over every selected line would stand on its rotate handle):
+  // Larger text, Smaller text, Underline text, Text colour… and Text opacity… (textColourMenu,
+  // textOpacityMenu), one undo step for all of it (editing/objects/run-format.js). Its font, bold, italic and
+  // alignment are refused with the reason: another face would re-encode text in a font it isn't drawn in,
+  // and a line of the page isn't a box.
   //
   // The same controls sit on the OPEN editor's own bar, where they act on the characters selected there
   // rather than on the whole box: the face, size, underline, colour and opacity of those characters alone
@@ -1088,6 +1095,24 @@ export class TextEditor {
     const objects = keys.map((key) => this.#liveObject(page, key));
     if (!objects.every((o) => o?.ref.newText && o.capabilities.editText === true && o.record.format)) return null;
     return objects.map((o) => o.record.format);
+  }
+
+  /** The formats formatting acts on: new text's, or else the selected page text's (each marked `pageText`). */
+  #formats() {
+    return this.#newTextFormats() ?? this.#pageTextFormats();
+  }
+
+  /**
+   * One format per selected object when every one of them is text the page draws (or a pasted copy of it)
+   * that can be edited, and nothing is being typed: how it reads now (run-format.js runFormatOf). Else null.
+   */
+  #pageTextFormats() {
+    if (!this.active || this.#editor) return null;
+    const { page, keys } = this.#selection;
+    if (!keys.length) return null;
+    const objects = keys.map((key) => this.#liveObject(page, key));
+    if (!objects.every((o) => o?.kind === 'text-run' && !o.ref.newText && o.capabilities.editText === true)) return null;
+    return objects.map((o) => ({ ...runFormatOf(o.record, o.edit), pageText: true }));
   }
 
   /** The open editor when it is on new text that can still be changed; else null. */
@@ -1166,18 +1191,20 @@ export class TextEditor {
   }
 
   /**
-   * Formats the selected new text: 'bold', 'italic' and 'underline' switch that style (on for all unless
+   * Formats the selected text — new text, or the page's own (then only size, underline, colour and opacity;
+   * anything else is refused with the reason, editing/objects/run-format.js): 'bold', 'italic' and 'underline' switch that style (on for all unless
    * all have it), 'left', 'center' and 'right' align it, 'larger' and 'smaller' step its size, and an
    * object sets fields directly ({ family }, { size }, { color }, { opacity }, { width }). One undo step;
-   * resolves true when something changed. The command palette and the format bar call this.
+   * resolves true when something changed. The command palette and the format bar call this. A refusal —
+   * such as bold for the page's own text — is said, and resolves false.
    *
    * With the editor open on new text it formats the characters selected there — and keeps what has been
    * typed in the same step — so a word of a box reads differently from the rest of it.
    */
   async formatSelected(what) {
-    const formats = this.#newTextFormats();
+    const formats = this.#formats();
     if (!formats) {
-      this.#notify(this.active ? 'Select text added with “Add text” to format it.' : 'Switch to Edit mode (E) to format text.');
+      this.#notify(this.active ? 'Select text to format it.' : 'Switch to Edit mode (E) to format text.');
       return false;
     }
     const [first] = formats;
@@ -1195,7 +1222,7 @@ export class TextEditor {
     const text = ed && ed.input.value !== ed.item.text ? ed.input.value : undefined;
     const caret = ed ? [ed.input.selectionStart, ed.input.selectionEnd] : null;
     await this.#settled();
-    this.#warnTagged('newText');
+    this.#warnTagged(formats[0].pageText ? 'text' : 'newText');
     // The rebuild this asks for would close the editor: it is the editor's own change, so it stays.
     this.#keepOpen = ed;
     try {
@@ -1239,15 +1266,47 @@ export class TextEditor {
   }
 
   #sizeMenu(anchor) {
-    const formats = this.#newTextFormats() ?? [];
+    const formats = this.#formats() ?? [];
     const current = formats.every((f) => f.size === formats[0]?.size) ? formats[0]?.size : null;
     this.#keepMenu(openMenu(TEXT_SIZES.map((size) => ({
       label: `${size} pt`, checked: current === size, action: () => this.formatSelected({ size }),
     })), { anchor, align: 'center' }));
   }
 
+  /** The colour menu for the selected text, opened beside the selection (the palette's Text colour…). */
+  textColourMenu() {
+    return this.#menuBesideSelection((at) => this.#colourMenu(at));
+  }
+
+  /** The opacity menu for the selected text, opened beside the selection (the palette's Text opacity…). */
+  textOpacityMenu() {
+    return this.#menuBesideSelection((at) => this.#opacityMenu(at));
+  }
+
+  /** Opens a format menu at the selection's top-left corner on screen; says why not when nothing can be formatted. */
+  #menuBesideSelection(open) {
+    const formats = this.#formats();
+    const { page: n, keys } = this.#selection;
+    const page = formats ? this.#pages.get(n) : null;
+    const pageView = page?.data ? this.#view.viewer.getPageView(page.n - 1) : null;
+    const quads = pageView ? keys.map((key) => this.#shownQuad(page, key, this.#liveObject(page.n, key)?.geometry.quad ?? null)) : [];
+    const box = quads.length && quads.every(Boolean) ? unionBox(quads) : null;
+    const corners = box ? toClientQuad(pageView, boxQuad(box)) : null;
+    if (!corners) {
+      this.#notify(this.active ? 'Select text to format it.' : 'Switch to Edit mode (E) to format text.');
+      return false;
+    }
+    open({ x: Math.min(...corners.map((p) => p[0])), y: Math.max(...corners.map((p) => p[1])) });
+    return true;
+  }
+
+  /** Where a format menu opens: `{ anchor }` for a bar's button, or a point `{ x, y }`. */
+  #menuPlace(at) {
+    return at instanceof Element ? { anchor: at, align: 'center' } : { x: at.x, y: at.y };
+  }
+
   #colourMenu(anchor) {
-    const current = this.#newTextFormats()?.[0]?.color;
+    const current = this.#formats()?.[0]?.color;
     const picker = h('input', { type: 'color', value: current ?? '#000000', 'aria-label': 'Custom text colour', hidden: true });
     picker.addEventListener('change', () => {
       picker.remove();
@@ -1257,14 +1316,14 @@ export class TextEditor {
       ...TEXT_COLOURS.map(([color, label]) => ({ label, swatch: color, checked: current === color, action: () => this.formatSelected({ color }) })),
       '-',
       { label: 'Custom colour…', icon: 'pipette', action: () => { this.#view.container.append(picker); picker.click(); } },
-    ], { anchor, align: 'center', className: 'palette-menu' }));
+    ], { ...this.#menuPlace(anchor), className: 'palette-menu' }));
   }
 
   #opacityMenu(anchor) {
-    const current = this.#newTextFormats()?.[0]?.opacity;
+    const current = this.#formats()?.[0]?.opacity;
     this.#keepMenu(openMenu(TEXT_OPACITIES.map((opacity) => ({
       label: `${Math.round(opacity * 100)}%`, checked: current === opacity, action: () => this.formatSelected({ opacity }),
-    })), { anchor, align: 'center' }));
+    })), this.#menuPlace(anchor)));
   }
 
   /**

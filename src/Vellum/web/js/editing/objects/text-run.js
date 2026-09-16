@@ -20,6 +20,11 @@
 // from the codes the file already holds, so no font is looked up, nothing is re-encoded, no text
 // is reflowed and no glyph changes. Moved text is the same text.
 //
+// A record may also carry a `format` (objects/run-format.js): a fill colour, an opacity or an underline.
+// Those change only step 3 — the fill replayed is the new colour, an ExtGState of the page's own follows
+// the original's to set the opacity, and the underline is a filled rule in the text's own text space,
+// as wide as the glyphs drawn — and are checked again here (runFormatRefusal), whatever the planner said.
+//
 // The page writer does the rest: splicing the patches in, closing what the page leaves open, and
 // making the new content stream.
 
@@ -28,6 +33,8 @@ import { pdfaClaim } from '../source.js';
 import { multiply } from '../matrix.js';
 import { num, hexString, pdfName, operand } from '../content/writer.js';
 import { PdfName } from '../content/lexer.js';
+import { RUN_UNDERLINE, runFormatRefusal } from './run-format.js';
+import { rgbOf } from './text-format.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
 
@@ -39,6 +46,14 @@ export function precheck({ lib, doc, records }) {
   // PDF/A needs every font embedded; the standard fonts Vellum substitutes aren't.
   if (records.some((e) => e.encoding?.mode === 'standard') && pdfaClaim(lib, doc)) {
     throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; a change that uses a substitute font would break it, so nothing was changed.');
+  }
+  refuseFormatsInPdfa(lib, doc, records);
+}
+
+/** A new colour or opacity isn't written into a PDF/A document (objects/run-format.js). */
+export function refuseFormatsInPdfa(lib, doc, records) {
+  if (records.some((e) => e.format && (e.format.color !== undefined || e.format.opacity !== undefined)) && pdfaClaim(lib, doc)) {
+    throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard. Vellum doesn’t check a new colour or transparency against it, so nothing was changed.');
   }
 }
 
@@ -59,6 +74,9 @@ export function write({ lib, doc, page, index, analysis, records }) {
     if (record.transform && textTransformRefusal(record.transform)) {
       throw new EditError('content', `Text on page ${index + 1} is being moved or scaled in a way Vellum can’t write, so nothing was changed.`);
     }
+    if (runFormatRefusal(run, record.format)) {
+      throw new EditError('content', `Text on page ${index + 1} is formatted in a way Vellum can’t write, so nothing was changed.`);
+    }
     for (const [si, gi] of run.glyphs) {
       const set = edited.get(si) ?? new Set();
       if (set.has(gi)) throw new EditError('changed', 'Two edits refer to the same text.');
@@ -72,6 +90,7 @@ export function write({ lib, doc, page, index, analysis, records }) {
 
   const append = [];
   const standardFonts = new Map();
+  const states = opacityStates(lib, doc, page);
   for (const { record, run } of targets) {
     if (record.encoding.mode === 'none') continue;
     let fontName = run.fontName;
@@ -84,7 +103,8 @@ export function write({ lib, doc, page, index, analysis, records }) {
     } else if (record.encoding.mode === 'original') {
       items = originalItems(analysis, run);
     }
-    append.push(drawText(analysis, run, fontName, items, record.transform ?? null));
+    const style = styleOf(record, run, states, record.encoding.mode === 'standard' ? lib.StandardFontEmbedder.for(record.encoding.font) : null);
+    append.push(drawText(analysis, run, fontName, items, record.transform ?? null, null, style));
   }
   return { patches, append };
 }
@@ -195,13 +215,15 @@ function gapBefore(previous, glyph) {
  * `transform`, which is why it is applied to the CTM and not to the text matrix: multiply(ctm, T)
  * is "the original placement, then T", and T is in the page's own user space.
  */
-export function drawText(analysis, run, fontName, items, transform = null, rename = null) {
+export function drawText(analysis, run, fontName, items, transform = null, rename = null, style = null) {
   const [si, gi] = run.glyphs[0];
   const show = analysis.shows[si];
   const first = show.glyphs[gi];
-  const lines = ['q', ...replayColour(show.fill, rename)];
+  const lines = ['q', ...(style?.color ? [fillOf(style.color)] : replayColour(show.fill, rename))];
   if (show.tr === 1 || show.tr === 2) lines.push(...replayColour(show.stroke, rename), `${num(show.lineWidth)} w`);
   for (const name of show.gsNames) lines.push(`${pdfName(rename ? rename('ExtGState', name) : name)} gs`);
+  // After the original's own states, so only the opacity is replaced: blend mode and the rest stay.
+  if (style?.opacityState) lines.push(`${pdfName(style.opacityState)} gs`);
   const placed = transform ? multiply(show.ctm, transform) : show.ctm;
   lines.push(
     `${placed.map(num).join(' ')} cm`,
@@ -211,9 +233,69 @@ export function drawText(analysis, run, fontName, items, transform = null, renam
     `${first.tm.map(num).join(' ')} Tm`,
     `${textArray(items)} TJ`,
     'ET',
-    'Q',
   );
+  if (style?.underline) lines.push(underlineOf(show, first, items, style.widthOf));
+  lines.push('Q');
   return lines.join('\n');
+}
+
+/** The fill colour operator for '#rrggbb', in DeviceRGB. */
+const fillOf = (color) => `${rgbOf(color).map(num).join(' ')} rg`;
+
+/**
+ * The underline under `items` as drawn from `first`: a filled rule in the text's own text space, from
+ * the first glyph's origin to where the pen ends — measured by the PDF text model itself
+ * (tx = (w0·Tfs + Tc + Tw·[single-byte 32])·Th, a TJ number n moving it −n/1000·Tfs·Th) over the
+ * widths `widthOf(item)` gives in thousandths of an em — below the baseline (and its rise).
+ */
+function underlineOf(show, first, items, widthOf) {
+  const { fontSize: fs, tc, tw, th, ts } = show;
+  let width = 0;
+  for (const item of items) {
+    if (item.space) width += (SPACE_ADVANCE / 1000) * fs * th;
+    else if (item.adjust !== undefined) width += (-item.adjust / 1000) * fs * th;
+    else {
+      const w = widthOf(item);
+      if (!Number.isFinite(w)) throw new EditError('content', 'The width of this text couldn’t be measured, so it can’t be underlined.');
+      width += ((w / 1000) * fs + tc + (item.byteLength === 1 && item.code === 32 ? tw : 0)) * th;
+    }
+  }
+  const thickness = RUN_UNDERLINE.thickness * fs;
+  const y = ts + RUN_UNDERLINE.position * fs - thickness / 2;
+  const rule = [0, y, width, thickness].map((v) => num(Math.round(v * 1e4) / 1e4)).join(' ');
+  return `${first.tm.map(num).join(' ')} cm\n${rule} re f`;
+}
+
+/** The ExtGStates a page's formatted text sets its opacity with: one per opacity, added when first asked. */
+export function opacityStates(lib, doc, page) {
+  const names = new Map();
+  return (opacity) => {
+    if (!names.has(opacity)) {
+      const state = doc.context.register(doc.context.obj({ Type: 'ExtGState', ca: opacity, CA: opacity }));
+      names.set(opacity, addResource(lib, doc, page, 'ExtGState', 'VlGS', state));
+    }
+    return names.get(opacity);
+  };
+}
+
+/**
+ * How drawText formats a record's run (objects/run-format.js), or null when it isn't formatted. `standard`
+ * is the standard font's embedder when the text is written in one, whose widths the underline is measured
+ * in; otherwise the run's own font's — the widths pdf.js confirmed it draws.
+ */
+export function styleOf(record, run, states, standard = null) {
+  const format = record.format;
+  if (!format) return null;
+  const font = run.font;
+  const widthOf = standard
+    ? (item) => standard.widthOfTextAtSize(item.char, 1000)
+    : (item) => (font.widthOf(item.code) ?? NaN) * font.widthScale * 1000;
+  return {
+    color: format.color ?? null,
+    opacityState: format.opacity !== undefined ? states(format.opacity) : null,
+    underline: format.underline === true,
+    widthOf,
+  };
 }
 
 const DEVICE_SPACES = new Set(['DeviceGray', 'DeviceRGB', 'DeviceCMYK', 'Pattern']);
@@ -277,5 +359,5 @@ export function addResource(lib, doc, page, category, prefix, value) {
 
 export function encodeStandard(lib, name, text) {
   const encoding = lib.StandardFontEmbedder.for(name).encoding;
-  return [...text].map((ch) => ({ code: encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code, byteLength: 1 }));
+  return [...text].map((ch) => ({ code: encoding.encodeUnicodeCodePoint(ch.codePointAt(0)).code, byteLength: 1, char: ch }));
 }

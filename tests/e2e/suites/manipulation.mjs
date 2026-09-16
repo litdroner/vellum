@@ -1096,6 +1096,62 @@ export async function run(t) {
     savedRun?.font === 'Helvetica-Bold' && savedRun.lines >= 2 && Math.abs(savedRun.size - 14) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true
       && JSON.stringify(savedRun.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0x2f, 0x6f, 0xd6]), JSON.stringify(savedRun));
 
+  // ---- formatting the page's own text (0.6): size, underline, colour, opacity; font refused ---------------
+
+  area('page text format');
+  const PLAIN = F('simple');
+  await activate(PLAIN);
+  await editMode(PLAIN);
+  const third = (await objectsOn(PLAIN, 1)).find((o) => o.kind === 'text-run' && o.text === 'Third line.');
+  check('a line of page text to format', Boolean(third));
+  if (third) {
+    await selectObject(PLAIN, 1, third.key);
+    await rest(PLAIN);
+    check('no floating format bar stands over a selected line of page text',
+      !(await q(`(() => { const el = document.querySelector('.vl-arrange-bar [data-format="bold"]'); return Boolean(el && !el.hidden && el.offsetWidth > 0); })()`)));
+    await q(`${V(PLAIN)}.focus()`);
+    await c.key('Ctrl+K');
+    await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+    await c.type('Text colour');
+    await sleep(300);
+    check('the command palette offers “Text colour…”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Text colour'))`));
+    await c.key('Escape');
+    await sleep(300);
+    check('Text colour… opens the colour menu beside the selection', (await q(`${V(PLAIN)}.textEditor.textColourMenu()`)) === true
+      && await waitFor(`Boolean(document.querySelector('.menu.palette-menu'))`, 2000));
+    await c.key('Escape');
+    await sleep(300);
+    const formatDepth = await undoDepth(PLAIN);
+    for (const what of [`'larger'`, `'underline'`, `{ color: '#d62f2f' }`, `{ opacity: 0.5 }`]) {
+      check(`formatSelected(${what}) changes it`, (await q(`${V(PLAIN)}.textEditor.formatSelected(${what})`)) === true);
+      await rest(PLAIN);
+    }
+    const formatted = () => q(`(() => { const e = ${V(PLAIN)}.annotations.edits.find((r) => r.kind === 'text' && \`run:\${r.target.key}\` === ${JSON.stringify(third.key)}); return e ? { format: e.format, transform: e.transform, mode: e.encoding.mode } : null; })()`);
+    const held = JSON.stringify(await formatted());
+    const heldRecord = JSON.parse(held);
+    check('one record: its format, and 14 pt as a uniform scale of its own glyphs',
+      heldRecord?.mode === 'original' && heldRecord.format?.color === '#d62f2f' && heldRecord.format.opacity === 0.5 && heldRecord.format.underline === true
+        && Object.keys(heldRecord.format).length === 3 && heldRecord.transform?.[0] === 1.1667 && heldRecord.transform[3] === 1.1667 && heldRecord.transform[1] === 0 && heldRecord.transform[2] === 0, held);
+    check('four undo steps', (await undoDepth(PLAIN)) === formatDepth + 4);
+    check('bold is refused for page text, nothing changed',
+      (await q(`${V(PLAIN)}.textEditor.formatSelected('bold')`)) === false && JSON.stringify(await formatted()) === held);
+
+    await q('__vellum.actions.save()');
+    await waitFor(`!${V(PLAIN)}.annotations.dirty`, 25000);
+    await q(`__vellum.app.close(${V(PLAIN)})`);
+    await waitFor(`!${V(PLAIN)}`);
+    await q(`__vellum.actions.openRecent(${JSON.stringify(PLAIN)})`);
+    await rest(PLAIN);
+    const reopened = await q(`(async () => {
+      const { runs } = await ${V(PLAIN)}.textEditing.page(1);
+      const item = runs.find((r) => r.run.text === 'Third line.');
+      return item ? { size: item.run.frame.size, font: item.run.font?.name, editable: item.run.editable, fill: item.run.first.fill.color?.args, ca: item.run.first.ca, count: runs.filter((r) => r.run.text === 'Third line.').length } : null;
+    })()`);
+    check('saved and reopened: the same editable Helvetica text, 14 pt, red, half opaque, drawn once',
+      reopened?.editable === true && reopened.font === 'Helvetica' && Math.abs(reopened.size - 14) < 0.01 && reopened.ca === 0.5 && reopened.count === 1
+        && JSON.stringify(reopened.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0xd6, 0x2f, 0x2f]), JSON.stringify(reopened));
+  }
+
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,
     await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }
