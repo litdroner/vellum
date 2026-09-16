@@ -2,7 +2,8 @@
 //
 //   format: { font, size, underline, align, color, opacity, width }
 //     font        a font by its key (isFontKey): a standard PDF font by its PostScript name, or a font
-//                 bundled with Vellum as 'bundled:<family>/<style>' (objects/font-set.js). Its family is
+//                 bundled with Vellum as 'bundled:<family>/<style>', or a font of the document itself as
+//                 'doc:<object>-<generation>' (objects/font-set.js). Its family is
 //                 chosen (styledFont with a `family`) and its bold and italic are the family's own faces —
 //                 never a synthesized slant or a thicker stroke
 //     size        points
@@ -75,8 +76,19 @@ export function bundledKey(font) {
   return match ? { family: `bundled:${match[1]}`, style: match[2] } : null;
 }
 
-/** Can a record name this font: a standard PDF font, or a bundled font's key? Whether it is there is the font set's to say. */
-export const isFontKey = (font) => FONTS.includes(font) || Boolean(bundledKey(font));
+const DOCUMENT_KEY = /^doc:(\d+)-(\d+)$/;
+
+/** A document font's key ('doc:<object>-<generation>') read: { ref: '12 0 R', objectNumber, generation }, or null. */
+export function documentKey(font) {
+  const match = typeof font === 'string' ? DOCUMENT_KEY.exec(font) : null;
+  return match ? { ref: `${match[1]} ${match[2]} R`, objectNumber: Number(match[1]), generation: Number(match[2]) } : null;
+}
+
+/**
+ * Can a record name this font: a standard PDF font, a bundled font's key, or a font of the document
+ * (objects/font-set.js)? Whether it is there is the font set's to say.
+ */
+export const isFontKey = (font) => FONTS.includes(font) || Boolean(bundledKey(font)) || Boolean(documentKey(font));
 
 export const ALIGNS = Object.freeze(['left', 'center', 'right']);
 

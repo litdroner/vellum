@@ -105,7 +105,7 @@ test('new text in a bundled family: laid out in its widths, its own bold kept, r
   assert.equal(planFormat({ fonts, record: bold, changes: { family: 'Times' } }).font, 'Times-Bold', 'and back to a standard family');
 
   assert.throws(() => planFormat({ fonts, record: bold, changes: { italic: true } }),
-    (e) => e instanceof EditError && e.kind === 'content' && /italic face/.test(e.message), 'a face the family hasn’t got');
+    (e) => e instanceof EditError && e.kind === 'content' && /style asked for/.test(e.message), 'a face the family hasn’t got');
   assert.throws(() => planFormat({ fonts, record, changes: { family: 'bundled:test-missing' } }),
     (e) => e instanceof EditError && /can write new text in/.test(e.message), 'a family that couldn’t be read');
   assert.throws(() => planFormat({ fonts, record, changes: { family: 'bundled:test-locked' } }),

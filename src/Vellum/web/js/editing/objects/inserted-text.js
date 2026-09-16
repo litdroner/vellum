@@ -8,6 +8,10 @@
 //     width,                       alignment, '#rrggbb', fill opacity, and the box's width (null: as typed)
 //     spans,                       where part of the box reads in another face, size, underline, colour or
 //                                  opacity — [{ n, … }] over the text, or absent when it reads alike all through
+//     glyphs,                      for a font of the document itself: { key: { character: [code, byteLength, width] } },
+//                                  the glyphs pdf.js confirmed it draws that the text is written with (a space it
+//                                  doesn't draw [null, 0, width], a gap) — checked against the font when written;
+//                                  absent when the text uses no document font
 //     box: [x1 y1 x2 y2],          the lines' extent in their own text space, in points (text-format.js layoutText)
 //     transform: [a b c d e f] }   text space (the first baseline's start at the origin, y up) → the ORIGINAL page's user space
 //
@@ -36,8 +40,10 @@
 // The fonts are a font set's (objects/font-set.js), chosen by family (planFormat with a `family`). The
 // standard fonts are the ones every PDF reader has, and are not embedded: their codes are the font's own
 // standard (WinAnsi) encoding. A bundled font is embedded once for the document before any page is
-// written (prepare), a subset of the glyphs its text shows, which are its glyph ids (Identity-H). A
-// character a face doesn't have is refused, never drawn in another font. A PDF/A file is still refused new
+// written (prepare), a subset of the glyphs its text shows, which are its glyph ids (Identity-H). A font of
+// the document itself is its own font object, added to the page's resources: the codes are the record's
+// `glyphs`, each checked against that font first (font-set.js checkedDocumentFaces), and the font program is
+// never changed. A character a face doesn't have is refused, never drawn in another font. A PDF/A file is still refused new
 // text: the standard fonts aren't embedded, and an embedded subset hasn't been checked against the
 // standard. Nothing already on the page is touched.
 //
@@ -53,10 +59,10 @@ import { applyLinear, invert, multiply, translate } from '../matrix.js';
 import { quantize } from './transform.js';
 import { addResource, addStandardFont } from './text-run.js';
 import {
-  DEFAULT_FORMAT, FAMILY_NAMES, FONTS, applyChanges, bundledKey, formatOf, formatRuns, layoutText, normalizeRuns, remapSpans,
+  DEFAULT_FORMAT, FAMILY_NAMES, FONTS, applyChanges, bundledKey, documentKey, formatOf, formatRuns, layoutText, normalizeRuns, remapSpans,
   rgbOf, runRanges,
 } from './text-format.js';
-import { embedBundledFonts, standardFontSet } from './font-set.js';
+import { checkedDocumentFaces, embedBundledFonts, standardFontSet } from './font-set.js';
 import { newId } from '../../annotations/model.js';
 
 export { FAMILY_NAMES, FONTS };
@@ -87,7 +93,7 @@ const REFUSED_FORMAT = {
 };
 
 const REFUSED_FAMILY = 'That font isn’t one Vellum can write new text in, so nothing was changed.';
-const REFUSED_FACE = 'That font hasn’t got the bold or italic face asked for, so nothing was changed.';
+const REFUSED_FACE = 'That font hasn’t got a face in the style asked for, so nothing was changed.';
 
 /** The refusal for a format field that can't be used, wherever it was asked for. */
 const refuseFormat = (bad, fields = {}) => (bad === 'font'
@@ -105,7 +111,7 @@ export const fontsOf = (record) => [record.font, ...(Array.isArray(record.spans)
  * where part of the box reads differently; it is normalized here, so a record always holds the one set of
  * fields that says what it reads as.
  */
-export function planNewText({ lib, fonts = standardFontSet(lib), text, transform, entry, id = newId(), spans = null, ...fields }) {
+export function planNewText({ lib, fonts = standardFontSet(lib), text, transform, entry, id = newId(), spans = null, glyphs: _glyphs, ...fields }) {
   const clean = cleanText(text);
   if (!clean.trim()) throw new EditError('content', 'New text needs at least one character.');
   const { format, bad } = formatOf(fields);
@@ -113,9 +119,18 @@ export function planNewText({ lib, fonts = standardFontSet(lib), text, transform
   const { runs, bad: badSpan } = formatRuns(clean, format, spans);
   if (badSpan) throw refuseFormat(badSpan, fields);
   const faces = fonts.face;
+  const glyphs = {}; // a document font's key → the glyphs this text is written with (objects/font-set.js)
   // Every stretch of the box is written in its OWN face, so each is checked against that face alone.
   for (const range of runRanges(runs)) {
     const face = faces(range.format.font);
+    if (face?.document) {
+      const part = clean.slice(range.start, range.end);
+      const missing = face.missing(part);
+      if (missing.length) {
+        throw new EditError('characters', `${face.name} is this PDF’s own font, and Vellum can only write the characters it has seen the document draw in it — not ${listOf(missing)} — so nothing was changed.`, { missing });
+      }
+      glyphs[range.format.font] = { ...glyphs[range.format.font], ...face.glyphs(part) };
+    }
     if (!face) throw new EditError('content', REFUSED_FAMILY, { field: 'font', font: range.format.font });
     if (face.refusal) throw new EditError('font', face.refusal, { font: range.format.font });
     const unshaped = face.unshaped?.(clean.slice(range.start, range.end)) ?? [];
@@ -133,8 +148,12 @@ export function planNewText({ lib, fonts = standardFontSet(lib), text, transform
   if (reason) throw new EditError('not-editable', REASONS[reason], { reason, transform: kept });
   const normal = normalizeRuns(runs);
   const { box } = layoutText(faces, { text: clean, spans: normal.spans, ...normal.format });
+  // Kept in the order the text first uses each character, so the same text and fonts always make the same record.
+  const keptGlyphs = Object.keys(glyphs).length
+    ? Object.fromEntries(Object.keys(glyphs).sort().map((key) => [key, Object.fromEntries(Object.entries(glyphs[key]).sort(([a], [b]) => clean.indexOf(a) - clean.indexOf(b)))]))
+    : null;
   return {
-    id, kind, entry, text: clean, ...normal.format, ...(normal.spans ? { spans: normal.spans } : {}), box, transform: kept,
+    id, kind, entry, text: clean, ...normal.format, ...(normal.spans ? { spans: normal.spans } : {}), ...(keptGlyphs ? { glyphs: keptGlyphs } : {}), box, transform: kept,
   };
 }
 
@@ -205,15 +224,15 @@ const fillOf = (color) => {
 };
 
 /** One page's new text: nothing patched, each drawn after the page, in its own fonts. `prepared` is prepare()'s. */
-export function write({ lib, doc, page, index, records, prepared = null }) {
+export function write({ lib, doc, source, page, index, records, prepared = null }) {
   const fonts = new Map(); // font → its name in this page's /Font resources
   const states = new Map(); // opacity → its name in this page's /ExtGState resources
+  const refs = new Map(); // a document font → its object, once a record's glyphs have been checked against it
   const standard = standardFontSet(lib);
-  const faces = (font) => standard.face(font) ?? prepared?.get(font)?.face ?? null;
   const nameFor = (font) => {
     if (!fonts.has(font)) {
-      const embedded = prepared?.get(font);
-      fonts.set(font, embedded ? addResource(lib, doc, page, 'Font', 'VlF', embedded.font.ref) : addStandardFont(lib, doc, page, font));
+      const ref = refs.get(font) ?? prepared?.get(font)?.font.ref;
+      fonts.set(font, ref ? addResource(lib, doc, page, 'Font', 'VlF', ref) : addStandardFont(lib, doc, page, font));
     }
     return pdfName(fonts.get(font));
   };
@@ -235,6 +254,12 @@ export function write({ lib, doc, page, index, records, prepared = null }) {
       || spans.reduce((n, s) => n + (Number.isFinite(s?.n) ? Math.floor(s.n) : NaN), 0) !== text.length)) throw unusable();
     const { runs, bad: badSpan } = formatRuns(text, format, spans);
     if (badSpan) throw unusable();
+    // A document font draws only the glyphs the record was planned with, each checked against the font here.
+    const own = [...new Set(runs.map((r) => r.format.font))].filter((font) => documentKey(font));
+    const checked = own.length ? checkedDocumentFaces(lib, source, record, own) : new Map();
+    if (!checked) throw unusable();
+    for (const [font, { ref }] of checked) refs.set(font, ref);
+    const faces = (font) => checked.get(font)?.face ?? standard.face(font) ?? prepared?.get(font)?.face ?? null;
     for (const range of runRanges(runs)) {
       const face = faces(range.format.font);
       const part = text.slice(range.start, range.end);
@@ -259,7 +284,7 @@ export function write({ lib, doc, page, index, records, prepared = null }) {
         if (f.color !== now.color) out.push(fillOf(f.color));
         now = { font: f.font, size: f.size, color: f.color, opacity: f.opacity };
         const face = faces(f.font);
-        out.push(`${face.show ? face.show(piece.text) : hexString(face.codes(piece.text))} Tj`);
+        out.push(face.show ? face.show(piece.text) : `${hexString(face.codes(piece.text))} Tj`);
       }
     }
     out.push('ET');

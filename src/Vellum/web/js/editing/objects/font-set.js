@@ -4,6 +4,8 @@
 //   'Helvetica-Bold', …          a standard PDF font: measured from pdf-lib's metrics, never embedded
 //   'bundled:<family>/<style>'   a font bundled with Vellum (web/fonts/document): read by fontkit, and
 //                                embedded — a subset of the glyphs the text uses — when the file is saved
+//   'doc:<object>-<generation>'  a font the opened PDF already has, written only in glyphs pdf.js has seen
+//                                it draw (below: "the document's own fonts")
 //
 //   fontSet: { families: [{ id, name, faces: [regular, bold, italic, bold italic] }], face(key) → face | null }
 //
@@ -19,7 +21,9 @@
 // broken. fontkit (web/vendor/fontkit) is loaded the first time a bundled font is read.
 
 import { EditError } from '../edits.js';
-import { STANDARD_FAMILIES, STYLES, bundledKey, FONTS, standardFaces } from './text-format.js';
+import { STANDARD_FAMILIES, STYLES, bundledKey, documentKey, FONTS, standardFaces } from './text-format.js';
+
+export { documentKey };
 
 const FONTKIT = new URL('../../../vendor/fontkit/fontkit.es.min.js', import.meta.url).href;
 let fontkitPromise = null;
@@ -122,8 +126,8 @@ export function readBundledFont(key) {
 
 /**
  * A face of a font fontkit has read (objects/text-format.js): its glyphs laid out without shaping, and
- * their own advance widths. `show`, when given, is what a `Tj` of that text shows (an embedded font's
- * encodeText); a face planned with has none.
+ * their own advance widths. `show`, when given, is the operator that draws that text (a `Tj` of an
+ * embedded font's encodeText); a face planned with has none.
  */
 export function fontkitFace(font, { name, refusal = null, show = null }) {
   const em = font.unitsPerEm;
@@ -151,6 +155,192 @@ function faceName(key) {
 export function standardFontSet(lib) {
   const standard = standardFaces(lib);
   return { families: STANDARD_FAMILIES, face: (key) => (FONTS.includes(key) ? standard(key) : null) };
+}
+
+// ---- the document's own fonts ---------------------------------------------------------------------
+//
+//   'doc:<object>-<generation>'   a font the opened PDF already has (its font dictionary's object), written
+//                                with the codes pdf.js confirmed it draws (editing/fonts.js FontModel.planText)
+//
+// Only characters the document has been SEEN to draw in that font are written, each with exactly the code
+// and width pdf.js drew it with — never a glyph looked up in the font program, which is never changed or
+// read. A space the font doesn't draw is a gap as wide as its space, or a quarter em, as for edited text
+// (objects/text-run.js). The table a record was planned with is kept in the record (`glyphs`), and the
+// writer checks every entry of it against the font dictionary it writes with, so a record never draws
+// codes that mean something else there.
+
+const SPACE_GAP = 250; // thousandths of an em: a space the font doesn't draw, as objects/text-run.js writes one
+
+/** A FontModel's key ('12 0 R') as a font key, or null for a font that isn't an object of its own. */
+const keyOfModel = (model) => {
+  const match = /^(\d+) (\d+) R$/.exec(model?.key ?? '');
+  return match ? `doc:${match[1]}-${match[2]}` : null;
+};
+
+/** “LiberationSans-BoldItalic” → “Liberation Sans Bold Italic”: a PostScript name as a person reads it. */
+const readable = (name) => name.replace(/[-,_]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+
+/** Can new text be written in this font of the document: embedded, drawn left to right, text and not pictures, confirmed by pdf.js? */
+function usableModel(model) {
+  if (!model || !keyOfModel(model) || !model.embedded || model.kind === 'type3' || model.vertical || model.symbolFont) return false;
+  if (['unreadable-font', 'metrics', 'cmap', 'tounicode', 'encoding'].some((issue) => model.issues.has(issue))) return false;
+  return model.verified.size > 0;
+}
+
+/** The width of a space the font doesn't draw, in its own thousandths: its space's width where the file says it, else a quarter em. */
+function spaceGap(model) {
+  const width = model.kind === 'simple' && model.unicodeOf(32) === ' ' ? model.widthOf(32) : null;
+  return width > 0 ? width : SPACE_GAP;
+}
+
+/**
+ * A face of a document font from what a record holds (`table`: character → [code, byteLength, width], a
+ * space the font doesn't draw as [null, 0, width]): what the writer lays out and draws with. `table` must
+ * already have been checked against the font.
+ */
+export function tableFace(table, { name, ascent, descent }) {
+  const entry = (ch) => (Object.hasOwn(table, ch) ? table[ch] : null);
+  return {
+    name,
+    ascent,
+    descent,
+    underline: { position: -0.1, thickness: 0.05 }, // the file doesn't say: a rule a tenth of an em below the baseline
+    missing: (text) => [...new Set([...text].filter((ch) => ch !== '\n' && !entry(ch)))],
+    unshaped: (text) => [...new Set([...text].filter((ch) => NEEDS_SHAPING.test(ch)))],
+    advance: (text) => [...text].reduce((sum, ch) => sum + (entry(ch)?.[2] ?? 0), 0) / 1000,
+    /** A `Tj` of the glyphs, or a `TJ` whose gaps are the spaces the font doesn't draw. */
+    show: (text) => {
+      const parts = [];
+      let glyphs = [];
+      for (const ch of text) {
+        const [value, length, width] = entry(ch);
+        if (value === null) {
+          if (glyphs.length) parts.push(glyphs);
+          glyphs = [];
+          parts.push(-width);
+          continue;
+        }
+        for (let i = length - 1; i >= 0; i--) glyphs.push((value >> (8 * i)) & 0xff);
+      }
+      if (glyphs.length) parts.push(glyphs);
+      const hex = (bytes) => `<${bytes.map((b) => b.toString(16).padStart(2, '0')).join('')}>`;
+      if (parts.length === 1 && Array.isArray(parts[0])) return `${hex(parts[0])} Tj`;
+      return `[${parts.map((p) => (Array.isArray(p) ? hex(p) : String(Math.round(p * 1000) / 1000))).join(' ')}] TJ`;
+    },
+    /** The table entries for `text`'s characters, for a record to keep. */
+    glyphs: (text) => Object.fromEntries([...new Set(text)].filter((ch) => ch !== '\n' && entry(ch)).map((ch) => [ch, entry(ch)])),
+  };
+}
+
+/** A document font's face, from what pdf.js has confirmed it draws so far. */
+function documentFace(model) {
+  const table = {};
+  const gap = spaceGap(model);
+  const lookup = (ch) => {
+    if (Object.hasOwn(table, ch)) return;
+    const plan = model.planText(ch);
+    const item = plan.ok && plan.items.length === 1 ? plan.items[0] : null;
+    if (item && !item.space && item.text === ch && Number.isInteger(item.code) && item.width > 0) table[ch] = [item.code, item.byteLength, item.width];
+    else if (ch === ' ' && (!item || item.space)) table[ch] = [null, 0, gap];
+  };
+  const face = tableFace(table, { name: readable(model.name || 'Document font'), ascent: model.ascent, descent: model.descent });
+  const withLookup = (fn) => (text) => {
+    for (const ch of text) if (ch !== '\n') lookup(ch);
+    return fn(text);
+  };
+  return {
+    ...face,
+    missing: withLookup(face.missing),
+    advance: withLookup(face.advance),
+    show: withLookup(face.show),
+    glyphs: withLookup(face.glyphs),
+    document: true,
+  };
+}
+
+/**
+ * The document's own fonts as families, from its FontModels (editing/source.js PdfSource.fonts): the
+ * usable ones, grouped by family name with each one's bold and italic from the font itself. Where a
+ * family has two fonts of one style (two subsets), the one pdf.js has confirmed more glyphs of is used.
+ * `loaded` maps a FontModel key to the name pdf.js loaded it under, for showing it while typing.
+ */
+export function documentFontSet(models, loaded = new Map()) {
+  const groups = new Map();
+  for (const model of models) {
+    if (!usableModel(model)) continue;
+    const base = model.name.replace(/[-,].*$/, '') || model.name;
+    const id = `doc:${base}`;
+    const group = groups.get(id) ?? { id, name: readable(base), models: [null, null, null, null] };
+    const i = (model.flags.bold ? 1 : 0) + (model.flags.italic ? 2 : 0);
+    if (!group.models[i] || model.verified.size > group.models[i].verified.size) group.models[i] = model;
+    groups.set(id, group);
+  }
+  const faces = new Map();
+  const families = [...groups.values()].map(({ id, name, models: chosen }) => {
+    const keys = chosen.map((m) => (m ? keyOfModel(m) : null));
+    chosen.forEach((m, i) => { if (m) faces.set(keys[i], { model: m, face: null }); });
+    const css = chosen.map((m) => {
+      const generic = m?.flags.fixedPitch ? 'monospace' : m?.flags.serif ? 'serif' : 'sans-serif';
+      return m && loaded.get(m.key) ? `"${loaded.get(m.key)}", ${generic}` : generic;
+    });
+    return { id, name, faces: keys, css };
+  });
+  return {
+    families,
+    face: (key) => {
+      const found = faces.get(key);
+      if (!found) return null;
+      found.face ??= documentFace(found.model);
+      return found.face;
+    },
+  };
+}
+
+/** A font set with the document's own fonts added: the standard families, the document's, then the bundled ones. */
+export function withDocumentFonts(set, models, loaded) {
+  const documents = documentFontSet(models, loaded);
+  const standard = set.families.filter((f) => STANDARD_FAMILIES.includes(f));
+  const rest = set.families.filter((f) => !STANDARD_FAMILIES.includes(f));
+  return {
+    families: [...standard, ...documents.families, ...rest],
+    face: (key) => (documentKey(key) ? documents.face(key) : set.face(key)),
+  };
+}
+
+/**
+ * The faces of a record's document fonts for writing: each key's table from the record checked, entry
+ * by entry, against the font dictionary `source` (editing/source.js) reads at that object — the code must
+ * be one character long in the font, mean that character and have that width. Map key → face, or
+ * null when anything doesn't match.
+ */
+export function checkedDocumentFaces(lib, source, record, keys) {
+  const faces = new Map();
+  for (const key of keys) {
+    const parsed = documentKey(key);
+    const table = record.glyphs?.[key];
+    if (!parsed || !table || typeof table !== 'object') return null;
+    let model = null;
+    try {
+      model = source.fontFor(lib.PDFRef.of(parsed.objectNumber, parsed.generation), parsed.ref);
+    } catch {
+      return null;
+    }
+    if (!model || model.key !== parsed.ref || !model.embedded || model.kind === 'type3' || model.vertical) return null;
+    for (const [ch, entry] of Object.entries(table)) {
+      if (!Array.isArray(entry) || entry.length !== 3 || [...ch].length !== 1) return null;
+      const [code, length, width] = entry;
+      if (code === null) {
+        if (ch !== ' ' || length !== 0 || !(width > 0 && width <= 2000)) return null;
+        continue;
+      }
+      if (!Number.isInteger(code) || !Number.isInteger(length) || length < 1 || length > 4 || !(width > 0)) return null;
+      const bytes = Uint8Array.from({ length }, (_, i) => (code >> (8 * (length - 1 - i))) & 0xff);
+      const decoded = model.decode(bytes);
+      if (decoded.length !== 1 || decoded[0].code !== code || decoded[0].unicode !== ch || decoded[0].width !== width) return null;
+    }
+    faces.set(key, { face: tableFace(table, { name: readable(model.name), ascent: model.ascent, descent: model.descent }), ref: lib.PDFRef.of(parsed.objectNumber, parsed.generation) });
+  }
+  return faces;
 }
 
 /**
@@ -188,7 +378,7 @@ export async function embedBundledFonts(lib, doc, keys) {
     if (!read) throw new EditError('font', 'New text is written in a font Vellum can’t read any more, so nothing was saved.', { font: key });
     if (read.refusal) throw new EditError('font', read.refusal, { font: key });
     const font = await doc.embedFont(read.bytes, { subset: true, features: noShaping() });
-    embedded.set(key, { font, face: fontkitFace(font.embedder.font, { name: faceName(key), show: (text) => font.encodeText(text).toString() }) });
+    embedded.set(key, { font, face: fontkitFace(font.embedder.font, { name: faceName(key), show: (text) => `${font.encodeText(text).toString()} Tj` }) });
   }
   return embedded;
 }

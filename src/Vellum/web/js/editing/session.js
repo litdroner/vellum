@@ -15,8 +15,8 @@ import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
-import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
-import { fontSet } from './objects/font-set.js';
+import { cleanText, defaultTextPlacement, fontsOf, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
+import { documentKey, fontSet, withDocumentFonts } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
@@ -101,9 +101,11 @@ export class TextEditing {
       if (origin) analyses.set(originKey(r.from), origin);
     }
     const added = [];
+    // New text reads its font's family and style off the fonts it may be written in.
+    const families = [...records.values()].some((r) => r.kind === newTextKind) ? (await this.#fonts()).families : undefined;
     for (const r of records.values()) {
       if (r.kind === insertedKind) added.push(insertedObject(analysis, r, added.length));
-      else if (r.kind === newTextKind) added.push(insertedTextObject(analysis, r, added.length));
+      else if (r.kind === newTextKind) added.push(insertedTextObject(analysis, r, added.length, families));
       else if (isCopy(r.kind)) {
         const source = sourceObject(origins.get(r.from ? originKey(r.from) : ''), r);
         if (source) added.push(copiedObject(source, r, added.length));
@@ -236,15 +238,25 @@ export class TextEditing {
   }
 
   /**
-   * The fonts new text may be written in (objects/font-set.js): the standard families and the bundled
-   * ones whose files could be read, read once. A failure is tried again next time.
+   * The fonts new text may be written in (objects/font-set.js): the standard families, the opened PDF's
+   * own fonts as far as its pages read so far have confirmed their glyphs, and the bundled families whose
+   * files could be read (those read once; a failure is tried again next time).
    */
-  #fonts() {
+  async #fonts() {
     if (!this.#fontSet) {
       this.#fontSet = loadPdfLib().then((lib) => fontSet(lib));
       this.#fontSet.catch(() => { this.#fontSet = null; });
     }
-    return this.#fontSet;
+    const set = await this.#fontSet;
+    const base = this.#sources.has('base') ? await this.#sources.get('base').catch(() => null) : null;
+    if (!base) return set;
+    // The name pdf.js loaded each of the file's fonts under, from the base pages it has drawn.
+    const loaded = new Map();
+    for (const [key, analysis] of this.#pages) {
+      if (!key.startsWith('base:')) continue;
+      for (const run of analysis.runs) if (run.font && run.loadedFont && !loaded.has(run.font.key)) loaded.set(run.font.key, run.loadedFont);
+    }
+    return withDocumentFonts(set, base.fonts.values(), loaded);
   }
 
   /** The font families new text may be written in, for a font selector: [{ id, name, faces }]. */
@@ -663,9 +675,13 @@ export class TextEditing {
       }
       if (item.kind === newTextKind) {
         // New text carries its text and font name, so it goes on any page of any document — but not
-        // into a PDF/A one, which needs every font embedded.
+        // into a PDF/A one, which needs every font embedded, and not in a font of the PDF it was copied
+        // from into another one, where that font isn't.
         if (constraints.embeddedFontsOnly) {
           throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded. New text is written in a standard font that isn’t, so nothing was pasted.');
+        }
+        if (foreign && fontsOf(item).some((font) => documentKey(font))) {
+          throw new EditError('paste', 'New text written in its own PDF’s fonts can’t be pasted into another document, so nothing was pasted.');
         }
         const [x1, y1, x2, y2] = item.box;
         placed.push({ item, quad: [x1, y1, x2, y1, x2, y2, x1, y2] });

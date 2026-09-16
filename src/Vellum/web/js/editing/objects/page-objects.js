@@ -140,22 +140,23 @@ export function insertedObject(analysis, record, index = 0) {
  * quad), its `format` (objects/text-format.js, with its bold and italic) and its `spans` (what each stretch
  * of the box reads as, [{ start, end, format }]) for the editor and the format bar —
  * no glyphs of the page, no show, no font object: it is drawn from its record. `font.descent` is the
- * box's bottom, so ascent to descent spans every line.
+ * box's bottom, so ascent to descent spans every line. `families` are the font families the document's new
+ * text may be written in (objects/font-set.js), which is where a font's family and style are read from.
  * Everything that may be done to it is the answer for editable text, unless the page can't be rewritten.
  */
-export function insertedTextObject(analysis, record, index = 0) {
+export function insertedTextObject(analysis, record, index = 0, families = undefined) {
   const ref = Object.freeze({ kind: 'text-run', key: insertedTextKey(record), stream: 'page', opIndex: null, runKey: null, newText: true });
   const [x1, y1, x2, y2] = record.box;
   const quad = Object.freeze([x1, y1, x2, y1, x2, y2, x1, y2]);
   const box = Object.freeze([x1, y1, x2, y2]);
   const family = record.font.split('-')[0];
   const base = formatOf(record).format ?? {};
-  const format = Object.freeze({ ...base, ...styleOf(record.font) });
+  const format = Object.freeze({ ...base, ...styleOf(record.font, families) });
   // How each stretch of the box reads (objects/text-format.js spans), for the editor and the format bar:
   // always at least one range, over the whole text, so nothing has to ask whether the box has spans.
   const ranges = runRanges(formatRuns(record.text, base, record.spans ?? null).runs ?? [{ n: record.text.length, format: base }]);
   const spans = Object.freeze(ranges.map((r) => Object.freeze({
-    start: r.start, end: r.end, format: Object.freeze({ ...r.format, ...styleOf(r.format.font) }),
+    start: r.start, end: r.end, format: Object.freeze({ ...r.format, ...styleOf(r.format.font, families) }),
   })));
   const fill = format.color && format.color !== '#000000' ? { op: 'rg', args: rgbOf(format.color) } : { op: 'g', args: [0] };
   const reasons = new Set(analysis?.tainted || analysis?.summary?.kind === 'unreadable' ? ['unreadable'] : analysis?.unbalanced ? ['structure'] : []);

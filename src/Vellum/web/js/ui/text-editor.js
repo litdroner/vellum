@@ -13,7 +13,7 @@ import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
 import { LINE_SPACING, LIMITS as TEXT_LIMITS, STANDARD_FAMILIES, STYLES, bundledKey, remapSpans } from '../editing/objects/text-format.js';
-import { bundledFamilies, readBundledFont } from '../editing/objects/font-set.js';
+import { bundledFamilies, documentKey, readBundledFont } from '../editing/objects/font-set.js';
 import { openMenu } from './menu.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
@@ -228,12 +228,27 @@ const standardFamily = (name) => STANDARD_CSS[name.split('-')[0]] ?? 'sans-serif
 /** bundled font key → its CSS family, once its file has been given to the browser (FontFace) */
 const bundledCss = new Map();
 
+/** a document font's key → the CSS font it is shown in: the font pdf.js loaded it as (session.fontFamilies `css`) */
+const documentCss = new Map();
+/** a font family's id → its name, as the session last listed them */
+const familyNames = new Map();
+
+/** Notes what the session lists for its font families: their names, and the CSS a document font is shown in. */
+function noteFamilies(families) {
+  for (const { id, name, faces, css } of families ?? []) {
+    familyNames.set(id, name);
+    if (css) faces.forEach((key, i) => { if (key) documentCss.set(key, css[i]); });
+  }
+}
+
 /**
- * The CSS font a new-text font key is shown in while typing: a standard font's browser stand-in, or a
- * bundled font itself — its own file, given to the browser under a family name of its own with the face's
- * weight and style, so the editor's bold and italic pick the very face that is written.
+ * The CSS font a new-text font key is shown in while typing: a standard font's browser stand-in, a font of
+ * the document as pdf.js loaded it for the page, or a bundled font itself — its own file, given to the
+ * browser under a family name of its own with the face's weight and style, so the editor's bold and
+ * italic pick the very face that is written.
  */
 function cssFont(key) {
+  if (documentKey(key)) return documentCss.get(key) ?? 'sans-serif';
   const bundled = bundledKey(key);
   if (!bundled) return standardFamily(key);
   const family = `vl-${bundled.family.replace(/[^a-z0-9-]/g, '-')}`;
@@ -249,14 +264,14 @@ function cssFont(key) {
   return `"${family}", sans-serif`;
 }
 
-/** A font family's name as the format bar shows it: a standard family's own, a bundled family's listed name. */
-const familyName = (id) => bundledFamilies().find((f) => f.id === id)?.name ?? id;
 const prettyFont = (name) => name.replace(/-/g, ' ').replace(/\b(MT|PSMT|PS)\b/g, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim();
 const quoteChars = (chars) => chars.map((c) => `“${c}”`).join(', ');
 
+/** A font family's name as the format bar shows it: a standard family's own, any other family's listed name. */
+const familyName = (id) => familyNames.get(id) ?? bundledFamilies().find((f) => f.id === id)?.name ?? (id?.startsWith('doc:') ? prettyFont(id.slice(4)) : id);
+
 export class TextEditor {
   #view;
-  #families = null; // the font families new text may be written in (session.fontFamilies), once read
   #notify;
   #pages = new Map(); // page number → { n, data, objects, error, loading }
   #hover = null; // { n, key }
@@ -1199,17 +1214,19 @@ export class TextEditor {
 
   /**
    * The fonts new text can be written in (session.fontFamilies, editing/objects/font-set.js): the standard
-   * families, each shown in the browser font that stands in for it, then the bundled families Vellum could
-   * read, each shown in itself — every one listed the same way. Choosing one keeps the text's bold and
-   * italic (the family's own faces; refused where it hasn't got them) and lays its lines out again in that
-   * font's widths. The document's own fonts aren't offered yet.
+   * families, each shown in the browser font that stands in for it, then the document's own fonts (as pdf.js
+   * loaded them for its pages) and the bundled families Vellum could read (each in itself) — every one
+   * listed the same way. Choosing one keeps the text's bold and italic (the family's own faces; refused
+   * where it hasn't got them) and lays its lines out again in that font's widths.
    */
   async #fontMenu(anchor) {
-    this.#families ??= await this.#view.textEditing.fontFamilies().catch(() => null);
+    // Read each time: the document's own fonts are offered as its pages are read.
+    const families = await this.#view.textEditing.fontFamilies().catch(() => null);
+    noteFamilies(families);
     const formats = this.#newTextFormats() ?? [];
     const current = formats.every((f) => f.family === formats[0]?.family) ? formats[0]?.family : null;
-    this.#keepMenu(openMenu((this.#families ?? STANDARD_FAMILIES).map(({ id, name, faces }) => ({
-      label: name, checked: current === id, font: cssFont(faces[0]), action: () => this.formatSelected({ family: id }),
+    this.#keepMenu(openMenu((families ?? STANDARD_FAMILIES).map(({ id, name, faces }) => ({
+      label: name, checked: current === id, font: cssFont(faces.find(Boolean)), action: () => this.formatSelected({ family: id }),
     })), { anchor, align: 'center', className: 'font-menu' }));
   }
 
