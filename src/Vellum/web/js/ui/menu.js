@@ -81,8 +81,9 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
   const onBlur = () => closeMenu();
 
   menu.addEventListener('keydown', onKey);
-  // Deferred so the click that opened the menu doesn't immediately close it.
-  setTimeout(() => document.addEventListener('pointerdown', onPointerDown, true));
+  // Deferred so the click that opened the menu doesn't immediately close it; not once it has closed, or
+  // the listener would outlive it and close the next menu opened on the first press inside it.
+  setTimeout(() => { if (current?.menu === menu) document.addEventListener('pointerdown', onPointerDown, true); });
   window.addEventListener('blur', onBlur);
   window.addEventListener('resize', onBlur);
 
