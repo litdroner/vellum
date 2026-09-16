@@ -1262,10 +1262,16 @@ export class TextEditor {
     // One list, a separator between groups: standard, the document's own, then the bundled groups (sans, serif, …).
     const items = [];
     let group;
-    for (const { id, name, faces, group: next = 'standard' } of families ?? STANDARD_FAMILIES) {
+    for (const { id, name, faces, preview, group: next = 'standard' } of families ?? STANDARD_FAMILIES) {
       if (group !== undefined && next !== group) items.push('-');
       group = next;
-      items.push({ label: name, checked: current === id, font: cssFont(faces.find(Boolean)), action: () => this.formatSelected({ family: id }) });
+      // A bundled family is shown in its preview face (editing/objects/bundled-fonts.js), in that face's own weight and style.
+      const shown = preview ?? faces.find(Boolean);
+      const style = bundledKey(shown)?.style ?? 'regular';
+      items.push({
+        label: name, checked: current === id, font: cssFont(shown), weight: style.startsWith('bold') ? '700' : null,
+        italic: style.endsWith('italic'), action: () => this.formatSelected({ family: id }),
+      });
     }
     const menu = openMenu(items, { anchor, align: 'center', className: 'font-menu' });
     menu.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: 'nearest' });

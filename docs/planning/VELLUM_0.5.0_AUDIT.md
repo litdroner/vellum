@@ -424,7 +424,7 @@ Also still open from Phase 3's own list: **free (non-proportional) picture resiz
 shipped as proportional scaling only.
 
 Deferred to 0.6+ (unchanged, see §1): rich-text formatting, font and colour changes (font selection,
-`docs/VELLUM_VISION.md` §4.3, with the bundled selectable font Liu as one option, §4.4), free rotation handles, cross-page moves, copy/paste, new
+`docs/VELLUM_VISION.md` §4.3, with the bundled selectable font Liu San as one option, §4.4), free rotation handles, cross-page moves, copy/paste, new
 text boxes, Form XObject editing, vector-shape editing, inline image replacement, moving annotations and
 links with content, tag-preserving edits, PDF/A font embedding, OCR, redaction, forms, signatures, AI
 (cloud processing stays out of scope). Deferral here never removes anything from the Vision.

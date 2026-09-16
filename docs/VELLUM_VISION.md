@@ -175,7 +175,7 @@ Editing real PDF content in place, under §2.2.
 - edit existing text; add new text (new text boxes)
 - advanced text editing: move, resize, rotate text; paragraph and block editing; paragraph reflow where
   it is safe (single-style first, gated on its tests)
-- text formatting: font selection from multiple selectable fonts (§4.3; the bundled selectable font Liu
+- text formatting: font selection from multiple selectable fonts (§4.3; the bundled selectable font Liu San
   is one of them, §4.4), font size, bold, italic,
   underline, alignment, text colour, opacity
 - scripts beyond Latin where a font really has the glyphs (e.g. Devanagari, CJK)
@@ -369,22 +369,23 @@ filling, stamps and signatures:
   embedding, vendored locally like the other libraries — `@pdf-lib/fontkit` (`web/vendor/fontkit`),
   added with font selection for bundled fonts
 
-### 4.4 Bundled selectable font: Liu (requirement)
+### 4.4 Bundled selectable font: Liu San (requirement)
 
-Liu is one optional document-editing font available alongside other selectable fonts. It is a
+Liu San is one optional document-editing font available alongside other selectable fonts. It is a
 deliberate, long-term requirement of the owner (§14), not a placeholder, and it stays in this document
-even while its asset is unavailable. The display name is exactly **Liu**; no other spelling or variant
-is used anywhere.
+even while its asset is unavailable. The display name is exactly **Liu San** (renamed from Liu by the owner on
+2026-09-16, §14); no other spelling or variant is used anywhere.
 
 What it is: one entry among the selectable document fonts of §4.3, and nothing more.
 
 What it is not: the default font, the UI font, a branding or display font, Vellum's application-wide
 typography, part of the design system's typefaces, a replacement for Jost, or a special system font.
 
-The experience, when font selection exists: a user opens the font selector, sees **Liu** among the
+The experience, when font selection exists: a user opens the font selector, sees **Liu San** among the
 available fonts, and can select it like any other. Specifically:
 
-- a normal selectable option, listed and previewed like every other font, following all of §4.3
+- a normal selectable option, listed and previewed like every other font (in its own bold face, so its
+  name reads as heavy as its neighbours', §14), following all of §4.3
   (compatibility checks, embedding when used where applicable, no silent substitution)
 - no special icon, heart, symbol, badge, highlight, attribution, message or explanation; its name appears
   nowhere in the UI except as its entry in the font selector
@@ -402,7 +403,7 @@ and is usable for real text (not a logo-only face).
 3. The font-selection system of §4.3, including its vendored font parser.
 
 Until they exist: no font file, licence text, font metadata or embedding capability is added or described
-as present. No font is chosen merely because it is called Liu, no arbitrary font is downloaded and
+as present. No font is chosen merely because it is called Liu San, no arbitrary font is downloaded and
 renamed, and no other font stands in for it.
 
 ## 5. Visual identity
@@ -524,7 +525,7 @@ silent font substitution; a covering labelled as redaction; modifications of the
 
 Recorded so they are not decided silently. Each needs the owner.
 
-1. **Liu font file and licence** (§4.4): supplied by the owner on 2026-09-16 (SIL OFL 1.1) and added to font selection.
+1. **Liu San font file and licence** (§4.4): supplied by the owner on 2026-09-16 (SIL OFL 1.1) and added to font selection.
 2. **Redaction method** (§3.6): the requirement is settled (true removal, no covering, no silent
    rasterising); the technical design is research and needs approval before it is built.
 3. **Local engines** for Office conversions (§3.5), OCR (§3.8), digital certificate signatures (§3.7) and
@@ -543,6 +544,7 @@ Recorded so they are not decided silently. Each needs the owner.
 | 2026-09-15 | This vision document created as the durable product memory; deferral never removes a requirement |
 | 2026-09-15 | Full scope recorded under eight pillars: READ, EDIT, ORGANIZE, CONVERT, PROTECT, SIGN, AUTOMATE, UNDERSTAND (§3) |
 | 2026-09-15 | Bundled selectable font: **Liu** — one optional document-editing font among the selectable fonts; not a default, UI or branding font; no special UI, attribution or announcement; asset and licence to be supplied (§4.4). A different name recorded earlier the same day was wrong and has been removed everywhere. |
+| 2026-09-16 | The bundled selectable font is renamed **Liu San** (display name, font names, files, commands), and the font selector previews it in its own bold face, its regular reading too light there; its text is written in the face chosen, as before (§4.4) |
 | 2026-09-15 | Font selection is a general system of multiple selectable fonts with compatibility checks, embedding and no silent substitution (§4.3); UI typography (Jost, Segoe UI Variable) unchanged |
 | 2026-09-15 | Redaction means true removal of content; a covering is not redaction; no silent rasterising; status research (§3.6) |
 | 2026-09-15 | Themes: seven base themes, each with Light and an Obsidian-treated Dark variant; Obsidian Dark is not an eighth theme (§5) |

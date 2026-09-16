@@ -5,6 +5,9 @@
 // is listed here only with its licence beside it, and only when that licence allows bundling it, using it
 // in the app and embedding it in PDFs. The files are unchanged and keep their own names.
 //
+// `preview`, where a family has it, is the style of its own face the selector shows its name in, for a family
+// whose regular face reads much lighter than its neighbours' at the menu's size. Only the menu uses it.
+//
 // Groups, in the selector's order: sans, serif, mono, legible (fonts designed for low-vision readers),
 // international (wide script coverage).
 
@@ -24,7 +27,7 @@ export const BUNDLED_FONTS = Object.freeze([
   { id: 'sourcesans3', name: 'Source Sans 3', group: 'sans', faces: { regular: 'sourcesans3/SourceSans3-Regular.ttf', bold: 'sourcesans3/SourceSans3-Bold.ttf', italic: 'sourcesans3/SourceSans3-Italic.ttf', 'bold-italic': 'sourcesans3/SourceSans3-BoldItalic.ttf' } },
   { id: 'firasans', name: 'Fira Sans', group: 'sans', faces: { regular: 'firasans/FiraSans-Regular.ttf', bold: 'firasans/FiraSans-Bold.ttf', italic: 'firasans/FiraSans-Italic.ttf', 'bold-italic': 'firasans/FiraSans-BoldItalic.ttf' } },
   { id: 'barlow', name: 'Barlow', group: 'sans', faces: { regular: 'barlow/Barlow-Regular.ttf', bold: 'barlow/Barlow-Bold.ttf', italic: 'barlow/Barlow-Italic.ttf', 'bold-italic': 'barlow/Barlow-BoldItalic.ttf' } },
-  { id: 'liu', name: 'Liu', group: 'sans', faces: { regular: 'liu/Liu-Regular.ttf', bold: 'liu/Liu-Bold.ttf', italic: 'liu/Liu-Italic.ttf', 'bold-italic': 'liu/Liu-BoldItalic.ttf' } },
+  { id: 'liusan', name: 'Liu San', group: 'sans', preview: 'bold', faces: { regular: 'liusan/LiuSan-Regular.ttf', bold: 'liusan/LiuSan-Bold.ttf', italic: 'liusan/LiuSan-Italic.ttf', 'bold-italic': 'liusan/LiuSan-BoldItalic.ttf' } },
 
   { id: 'sourceserif4', name: 'Source Serif 4', group: 'serif', faces: { regular: 'sourceserif4/SourceSerif4-Regular.ttf', bold: 'sourceserif4/SourceSerif4-Bold.ttf', italic: 'sourceserif4/SourceSerif4-Italic.ttf', 'bold-italic': 'sourceserif4/SourceSerif4-BoldItalic.ttf' } },
   { id: 'ibmplexserif', name: 'IBM Plex Serif', group: 'serif', faces: { regular: 'ibmplexserif/IBMPlexSerif-Regular.ttf', bold: 'ibmplexserif/IBMPlexSerif-Bold.ttf', italic: 'ibmplexserif/IBMPlexSerif-Italic.ttf', 'bold-italic': 'ibmplexserif/IBMPlexSerif-BoldItalic.ttf' } },

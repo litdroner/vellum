@@ -47,18 +47,19 @@ const NEEDS_SHAPING = /[̀-ͯ֐-ࣿऀ-෿฀-࿿က-႟ក-៿᪰-᫿᷀-᷿⃐
 
 const FONTS_DIR = new URL('../../../fonts/document/', import.meta.url);
 
-/** family id → { id, name, group, faces: Map style → () => Promise<Uint8Array> } */
+/** family id → { id, name, group, preview, faces: Map style → () => Promise<Uint8Array> } */
 const families = new Map();
 /** font key → Promise<{ font, bytes, refusal }> */
 const loaded = new Map();
 
 /**
  * Makes a family of bundled fonts available: `id` (lower-case letters, digits and hyphens), its `name` as
- * the font selector shows it, the `group` the selector lists it in, and `faces`, style → the font file's
+ * the font selector shows it, the `group` the selector lists it in, the `preview` style of its own faces the
+ * selector shows its name in (regular unless said), and `faces`, style → the font file's
  * bytes or a function that reads them. The fonts of objects/bundled-fonts.js are registered this way when
  * this module loads; tests register their own.
  */
-export function registerBundledFamily({ id, name, group = 'bundled', faces }) {
+export function registerBundledFamily({ id, name, group = 'bundled', preview = 'regular', faces }) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || typeof name !== 'string' || !name) throw new TypeError('A bundled family needs an id and a name.');
   const readers = new Map();
   for (const [style, source] of Object.entries(faces)) {
@@ -66,15 +67,17 @@ export function registerBundledFamily({ id, name, group = 'bundled', faces }) {
     readers.set(style, typeof source === 'function' ? source : async () => source);
   }
   if (!readers.has('regular')) throw new TypeError('A bundled family needs a regular face.');
-  families.set(`bundled:${id}`, { id: `bundled:${id}`, name, group, faces: readers });
+  if (!readers.has(preview)) throw new TypeError(`No ${preview} face to preview the family in.`);
+  families.set(`bundled:${id}`, { id: `bundled:${id}`, name, group, preview, faces: readers });
   for (const style of STYLES) loaded.delete(`bundled:${id}/${style}`);
 }
 
-for (const { id, name, group, faces } of BUNDLED_FONTS) {
+for (const { id, name, group, preview, faces } of BUNDLED_FONTS) {
   registerBundledFamily({
     id,
     name,
     group,
+    preview,
     faces: Object.fromEntries(Object.entries(faces).map(([style, file]) => [style, async () => {
       const response = await fetch(new URL(file, FONTS_DIR));
       if (!response.ok) throw new Error(`${file}: ${response.status}`);
@@ -83,10 +86,13 @@ for (const { id, name, group, faces } of BUNDLED_FONTS) {
   });
 }
 
-/** The bundled families, as the font selector lists them (faces as keys; null where a family hasn't got one). */
+/**
+ * The bundled families, as the font selector lists them (faces as keys; null where a family hasn't got one;
+ * `preview` the key of the face the selector shows the name in).
+ */
 export function bundledFamilies() {
-  return [...families.values()].map(({ id, name, group, faces }) => ({
-    id, name, group, faces: STYLES.map((style) => (faces.has(style) ? `${id}/${style}` : null)),
+  return [...families.values()].map(({ id, name, group, preview, faces }) => ({
+    id, name, group, preview: `${id}/${preview}`, faces: STYLES.map((style) => (faces.has(style) ? `${id}/${style}` : null)),
   }));
 }
 

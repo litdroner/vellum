@@ -29,7 +29,7 @@ globalThis.fetch = async (url, init) => {
 };
 
 const { BUNDLED_FONTS } = await engine('objects/bundled-fonts.js');
-const { fontSet, readBundledFont } = await engine('objects/font-set.js');
+const { bundledFamilies, fontSet, readBundledFont } = await engine('objects/font-set.js');
 const { STYLES } = await engine('objects/text-format.js');
 const { EditError } = await engine('edits.js');
 const { composeDocument } = await webModule('annotations/persist.js');
@@ -144,10 +144,19 @@ test('refused with nothing changed: a character the bundled face lacks, a script
   });
 });
 
-test('Liu in use: sentences, wrapped lines and every face, saved as embedded subsets, reopened and retyped', async () => {
+test('Liu San in use: sentences, wrapped lines and every face, saved as embedded subsets, reopened and retyped', async () => {
   const bytes = new Uint8Array(fs.readFileSync(files.simple));
-  const liu = BUNDLED_FONTS.find((f) => f.id === 'liu');
+  const liu = BUNDLED_FONTS.find((f) => f.id === 'liusan');
   assert.deepEqual(Object.keys(liu.faces), STYLES, 'the four faces supplied');
+  assert.equal(liu.name, 'Liu San', 'the name the selector and the palette show');
+  const listed = bundledFamilies().find((f) => f.id === 'bundled:liusan');
+  assert.equal(listed.preview, 'bundled:liusan/bold', 'the selector previews it in its own bold face');
+  assert.ok(bundledFamilies().filter((f) => f.id !== listed.id).every((f) => f.preview === `${f.id}/regular`), 'every other family in its regular');
+  for (const style of STYLES) {
+    const { font } = await readBundledFont(`bundled:liusan/${style}`);
+    const ps = `LiuSan-${style === 'regular' ? 'Regular' : style === 'bold' ? 'Bold' : style === 'italic' ? 'Italic' : 'BoldItalic'}`;
+    assert.deepEqual([font.familyName, font.postscriptName], ['Liu San', ps], `${style}: named Liu San in the font itself`);
+  }
   const lines = [
     ['regular', 'Hello there, reader.'],
     ['bold', 'A longer sentence: with spaces, commas; quotes “like this” and (brackets)!'],
@@ -159,28 +168,28 @@ test('Liu in use: sentences, wrapped lines and every face, saved as embedded sub
     for (const [i, [style, text]] of lines.entries()) {
       const key = await session.insertText(1, { basis: UPRIGHT, box: LETTER });
       keys.push(key);
-      const changes = { family: 'bundled:liu', bold: style.startsWith('bold'), italic: style.endsWith('italic'), size: 14, underline: i === 0, color: '#2f6fd6', opacity: 0.8 };
+      const changes = { family: 'bundled:liusan', bold: style.startsWith('bold'), italic: style.endsWith('italic'), size: 14, underline: i === 0, color: '#2f6fd6', opacity: 0.8 };
       assert.equal(await session.formatText(1, [key], changes, { text }), true, `${style} chosen`);
       if (i === 2) assert.equal(await session.formatText(1, [key], { width: 160 }), true, 'a width to wrap to');
       const record = store.edits.find((e) => e.kind === 'inserted-text' && e.text === text);
-      assert.equal(record.font, `bundled:liu/${style}`);
+      assert.equal(record.font, `bundled:liusan/${style}`);
       await session.transformObjects(1, [{ key, delta: [1, 0, 0, 1, 0, -90 * i] }]);
     }
     const before = JSON.stringify(store.edits);
     await assert.rejects(session.formatText(1, [keys[0]], {}, { text: 'Notes 中文' }),
-      (e) => e instanceof EditError && e.kind === 'characters' && /Liu, which has no “中”, “文”/.test(e.message));
-    assert.equal(JSON.stringify(store.edits), before, 'a character Liu hasn’t got: nothing changed');
+      (e) => e instanceof EditError && e.kind === 'characters' && /Liu San, which has no “中”, “文”/.test(e.message));
+    assert.equal(JSON.stringify(store.edits), before, 'a character Liu San hasn’t got: nothing changed');
     const fonts = await fontSet(await loadPdfLib());
-    await fonts.load(['bundled:liu']);
-    assert.ok(fonts.face('bundled:liu/regular').underline.thickness > 0, 'an underline to draw though the font gives none');
+    await fonts.load(['bundled:liusan']);
+    assert.ok(fonts.face('bundled:liusan/regular').underline.thickness > 0, 'an underline to draw though the font gives none');
     return composeDocument({ base: bytes, plan, edits: store.edits, sources });
   });
 
   const after = await analyzeFile(saved);
   const runs = after.pages[0].runs;
-  const inLiu = runs.filter((r) => /^Liu-/.test(r.font?.name ?? ''));
+  const inLiu = runs.filter((r) => /^LiuSan-/.test(r.font?.name ?? ''));
   for (const [style, text] of lines) {
-    const ps = `Liu-${style === 'regular' ? 'Regular' : style === 'bold' ? 'Bold' : style === 'italic' ? 'Italic' : 'BoldItalic'}`;
+    const ps = `LiuSan-${style === 'regular' ? 'Regular' : style === 'bold' ? 'Bold' : style === 'italic' ? 'Italic' : 'BoldItalic'}`;
     const words = text.split(/\s+/);
     const mine = inLiu.filter((r) => new RegExp(`^${ps}-\\d+$`).test(r.font.name));
     assert.ok(mine.length, `${ps}: ${JSON.stringify(inLiu.map((r) => [r.text, r.font.name]))}`);
@@ -190,7 +199,7 @@ test('Liu in use: sentences, wrapped lines and every face, saved as embedded sub
       assert.ok(run.editable, `${run.text}: ${[...run.reasons].join(', ')}`);
     }
   }
-  assert.ok(inLiu.filter((r) => r.font.name.startsWith('Liu-Italic-')).length >= 2, 'the long italic sentence wrapped onto lines');
+  assert.ok(inLiu.filter((r) => r.font.name.startsWith('LiuSan-Italic-')).length >= 2, 'the long italic sentence wrapped onto lines');
 
   await withSession(saved, async ({ store, session }) => {
     const { runs: reopened } = await session.page(1);
@@ -198,6 +207,6 @@ test('Liu in use: sentences, wrapped lines and every face, saved as embedded sub
     assert.ok(item, 'reopened');
     assert.equal(await session.edit(1, item.run.key, 'Hello there, reader'), true, 'retyped after reopening');
     const record = store.edits.find((e) => e.kind === 'text');
-    assert.equal(record?.encoding.mode, 'font', 'written in the embedded Liu subset itself');
+    assert.equal(record?.encoding.mode, 'font', 'written in the embedded Liu San subset itself');
   });
 });

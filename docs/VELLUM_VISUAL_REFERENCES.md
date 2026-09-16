@@ -50,8 +50,8 @@ Recorded explicitly so no one assumes they exist:
   stored anywhere in the repository or its git history.
 - **No product screenshots** are stored. The end-to-end suites and `node tools/cdp.mjs shot <png>` write
   screenshots to temporary folders only.
-- **No Liu font file**, licence or metadata (a planned document-editing font, not a UI or brand font; see
-  Vision §4.4), and no other bundled font besides Jost and pdf.js's standard fonts.
+- **Liu San** (web/fonts/document/liusan) is a bundled document-editing font like the other bundled
+  fonts, not a UI or brand font (Vision §4.4).
 - **No brand guide** beyond `DESIGN_SYSTEM.md` and the in-code icon and illustration above.
 
 ## External references (conversation only)
