@@ -21,7 +21,8 @@
 //                the baseline and a twentieth of an em thick, in the text's own text space
 //
 // Refused, with nothing stored (the reason is said, never guessed around):
-//   - a font, bold or italic: another face would re-encode the text in a font the run isn't drawn in
+//   - another font family: that would re-encode the text in a font the run isn't drawn in (bold and italic,
+//     the faces of its own family the document has, are the session's, objects/run-face.js — not a format)
 //   - alignment or a wrapping width: a run is one line of the page, not a box
 //   - colour or underline of text drawn as an outline (render modes 1 and 2): one fill colour can't say it
 //   - colour or opacity in a PDF/A document: device RGB and transparency aren't checked against the standard
@@ -32,6 +33,7 @@ import { REASONS } from '../runs.js';
 import { multiply, translate } from '../matrix.js';
 import { LIMITS } from './text-format.js';
 import { similarityScaleOf } from './transform.js';
+import { runStyleOf } from './run-face.js';
 
 /** The fields a record's `format` may hold. */
 export const RUN_FORMAT_FIELDS = Object.freeze(['color', 'opacity', 'underline']);
@@ -66,7 +68,7 @@ export function fillHexOf(show) {
 export const runSizeOf = (run, transform = null) => run.frame.size * (transform ? similarityScaleOf(transform) ?? 1 : 1);
 
 /**
- * How a run reads now, for a format bar: { size, color, opacity, underline, outlined }, `record` its edit
+ * How a run reads now, for a format bar: { size, color, opacity, underline, outlined, bold, italic }, `record` its edit
  * record (a text or text-copy record) if it has one. `color` is null where the page's colour isn't a plain
  * device grey or RGB; `opacity` null where fill and stroke differ on outlined text.
  */
@@ -81,6 +83,7 @@ export function runFormatOf(run, record = null) {
     opacity: own.opacity ?? (typeof opacity === 'number' ? round(opacity, 2) : null),
     underline: own.underline === true,
     outlined: tr === 1 || tr === 2,
+    ...runStyleOf(run, record),
   });
 }
 
@@ -105,7 +108,7 @@ const MESSAGES = {
   content: 'That formatting couldn’t be used, so nothing was changed.',
   outlined: 'This text is drawn as an outline, so its colour and underline can’t be changed as one fill, and nothing was changed.',
   pdfa: 'This PDF follows the PDF/A archiving standard. Vellum doesn’t check a new colour or transparency against it, so nothing was changed.',
-  font: 'The font of text the PDF already draws can’t be changed yet: Vellum would have to write it in a font it isn’t drawn in. Nothing was changed.',
+  font: 'Text the PDF already draws can only be set in the faces of its own font the PDF has (bold and italic), not in another font. Nothing was changed.',
   box: 'Text the PDF already draws is a line of the page, not a text box, so it can’t be aligned or wrapped. Nothing was changed.',
   size: 'That text size couldn’t be used, so nothing was changed.',
   range: 'Part of a line of the page’s own text can’t be formatted on its own yet, so nothing was changed.',

@@ -111,6 +111,8 @@ function check(analysis, lines) {
     if (record?.encoding?.mode === 'none' || record?.removed) refuse('A line of this paragraph has been removed, so it can’t be reflowed.', 'removed');
     // A formatted line's colour, opacity or underline would stay with the line, not with the words that move.
     if (record?.format) refuse('A line of this paragraph has been formatted, so it can’t be reflowed yet.', 'formatted');
+    // A line set in another face of its font (objects/run-face.js) is drawn in that face alone.
+    if (record?.face) refuse('A line of this paragraph is set in another face of its font, so it can’t be reflowed yet.', 'face');
     const { show, first } = endsOf(analysis, run);
     style.push(styleOf(show, first));
     // Set with the font's own widths and nothing else: each glyph starts where the one before it ends.

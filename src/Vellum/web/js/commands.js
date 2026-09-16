@@ -109,8 +109,8 @@ export function createCommands(app, ui, actions) {
     'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
     'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
     'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text', run: () => doc()?.textEditor?.addText() },
-    'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold new text', run: () => doc()?.textEditor?.formatSelected('bold') },
-    'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic new text', run: () => doc()?.textEditor?.formatSelected('italic') },
+    'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold text', run: () => doc()?.textEditor?.formatSelected('bold') },
+    'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },
     // One command per font new text can be written in (editing/objects/text-format.js), so the palette
     // offers exactly the fonts the format bar's font menu does.

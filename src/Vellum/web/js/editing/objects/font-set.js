@@ -254,6 +254,9 @@ function documentFace(model) {
   };
 }
 
+/** The id of the family of the document's own fonts a FontModel belongs to (documentFontSet): 'doc:' and its family name. */
+export const documentFamilyOf = (model) => `doc:${model.name.replace(/[-,].*$/, '') || model.name}`;
+
 /**
  * The document's own fonts as families, from its FontModels (editing/source.js PdfSource.fonts): the
  * usable ones, grouped by family name with each one's bold and italic from the font itself. Where a
@@ -264,8 +267,8 @@ export function documentFontSet(models, loaded = new Map()) {
   const groups = new Map();
   for (const model of models) {
     if (!usableModel(model)) continue;
-    const base = model.name.replace(/[-,].*$/, '') || model.name;
-    const id = `doc:${base}`;
+    const id = documentFamilyOf(model);
+    const base = id.slice('doc:'.length);
     const group = groups.get(id) ?? { id, name: readable(base), models: [null, null, null, null] };
     const i = (model.flags.bold ? 1 : 0) + (model.flags.italic ? 2 : 0);
     if (!group.models[i] || model.verified.size > group.models[i].verified.size) group.models[i] = model;

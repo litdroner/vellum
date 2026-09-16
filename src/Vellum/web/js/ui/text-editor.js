@@ -13,6 +13,7 @@ import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
 import { runFormatOf } from '../editing/objects/run-format.js';
+import { drawnQuadOf } from '../editing/objects/run-face.js';
 import { LINE_SPACING, LIMITS as TEXT_LIMITS, STANDARD_FAMILIES, STYLES, bundledKey, remapSpans } from '../editing/objects/text-format.js';
 import { bundledFamilies, documentKey, readBundledFont } from '../editing/objects/font-set.js';
 import { openMenu } from './menu.js';
@@ -763,7 +764,9 @@ export class TextEditor {
     for (const object of page.objects?.objects ?? []) {
       const edit = records.get(object.ref.key) ?? null;
       // A picture whose draw is gone, and text whose glyphs are gone, are not on the page to point at.
-      const quad = isRemoved(edit) ? null : transformQuad(object.geometry.quad, edit?.transform ?? null);
+      // A line set in another face of its font is as long as that face draws it (objects/run-face.js).
+      const drawn = edit?.face ? drawnQuadOf(object, edit, page.objects.origins?.get(object.ref.copy && edit.from ? originKey(edit.from) : '')) : null;
+      const quad = isRemoved(edit) ? null : transformQuad(drawn ?? object.geometry.quad, edit?.transform ?? null);
       quads.set(object.ref.key, quad);
       if (!quad) continue;
       const live = { ...object, geometry: { ...object.geometry, quad, box: quadBox(quad) }, edit };
@@ -1059,10 +1062,12 @@ export class TextEditor {
   //
   // Text the page already draws — runs, and pasted copies of them, all of the selection — is formatted from
   // the command palette rather than a bar (a bar over every selected line would stand on its rotate handle):
-  // Larger text, Smaller text, Underline text, Text colour… and Text opacity… (textColourMenu,
-  // textOpacityMenu), one undo step for all of it (editing/objects/run-format.js). Its font, bold, italic and
-  // alignment are refused with the reason: another face would re-encode text in a font it isn't drawn in,
-  // and a line of the page isn't a box.
+  // Larger text, Smaller text, Underline text, Bold text, Italic text, Text colour… and Text opacity…
+  // (textColourMenu, textOpacityMenu), one undo step for all of it (editing/objects/run-format.js). Bold and
+  // italic set each whole line in that face of its own font, where the same PDF has one that draws every
+  // character of it and the line's new width covers nothing else (editing/objects/run-face.js). Another font
+  // and alignment are refused with the reason: another font would re-encode text in a font it isn't drawn
+  // in, and a line of the page isn't a box.
   //
   // The same controls sit on the OPEN editor's own bar, where they act on the characters selected there
   // rather than on the whole box: the face, size, underline, colour and opacity of those characters alone
@@ -1191,12 +1196,13 @@ export class TextEditor {
   }
 
   /**
-   * Formats the selected text — new text, or the page's own (then only size, underline, colour and opacity;
-   * anything else is refused with the reason, editing/objects/run-format.js): 'bold', 'italic' and 'underline' switch that style (on for all unless
+   * Formats the selected text — new text, or the page's own (then only size, bold, italic, underline, colour and
+   * opacity; anything else is refused with the reason, editing/objects/run-format.js and run-face.js): 'bold',
+   * 'italic' and 'underline' switch that style (on for all unless
    * all have it), 'left', 'center' and 'right' align it, 'larger' and 'smaller' step its size, and an
    * object sets fields directly ({ family }, { size }, { color }, { opacity }, { width }). One undo step;
    * resolves true when something changed. The command palette and the format bar call this. A refusal —
-   * such as bold for the page's own text — is said, and resolves false.
+   * such as a face the PDF hasn't got for the page's own text — is said, and resolves false.
    *
    * With the editor open on new text it formats the characters selected there — and keeps what has been
    * typed in the same step — so a word of a box reads differently from the rest of it.

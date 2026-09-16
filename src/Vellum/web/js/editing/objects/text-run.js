@@ -25,6 +25,12 @@
 // the original's to set the opacity, and the underline is a filled rule in the text's own text space,
 // as wide as the glyphs drawn — and are checked again here (runFormatRefusal), whatever the planner said.
 //
+// A record may also carry a `face` (objects/run-face.js): another face of the run's font family in the same
+// document. That too changes only step 3, and only for `encoding.mode: 'original'`: the font set is the
+// sibling font object, added to the page's resources, and each glyph is drawn with the code and width that
+// font's table in the record gives its character — the table checked here against the font object first
+// (font-set.js checkedDocumentFaces), and every glyph of the run found in it, or nothing is written.
+//
 // The page writer does the rest: splicing the patches in, closing what the page leaves open, and
 // making the new content stream.
 
@@ -35,6 +41,8 @@ import { num, hexString, pdfName, operand } from '../content/writer.js';
 import { PdfName } from '../content/lexer.js';
 import { RUN_UNDERLINE, runFormatRefusal } from './run-format.js';
 import { rgbOf } from './text-format.js';
+import { checkedDocumentFaces } from './font-set.js';
+import { faceGlyphsOf, runFaceRefusal } from './run-face.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
 
@@ -61,7 +69,7 @@ export function refuseFormatsInPdfa(lib, doc, records) {
  * The changes one page's text edits make: byte patches into the page's own content, and the text
  * to draw after it. Throws (and nothing is written) if a record no longer matches the file.
  */
-export function write({ lib, doc, page, index, analysis, records }) {
+export function write({ lib, doc, source, page, index, analysis, records }) {
   const targets = [];
   const edited = new Map(); // show index → Set of glyph indexes taken out
   for (const record of records) {
@@ -77,6 +85,9 @@ export function write({ lib, doc, page, index, analysis, records }) {
     if (runFormatRefusal(run, record.format)) {
       throw new EditError('content', `Text on page ${index + 1} is formatted in a way Vellum can’t write, so nothing was changed.`);
     }
+    if (runFaceRefusal(record.face) || (record.face && record.encoding?.mode !== 'original')) {
+      throw new EditError('content', `Text on page ${index + 1} is set in a font Vellum can’t write, so nothing was changed.`);
+    }
     for (const [si, gi] of run.glyphs) {
       const set = edited.get(si) ?? new Set();
       if (set.has(gi)) throw new EditError('changed', 'Two edits refer to the same text.');
@@ -91,6 +102,7 @@ export function write({ lib, doc, page, index, analysis, records }) {
   const append = [];
   const standardFonts = new Map();
   const states = opacityStates(lib, doc, page);
+  const faces = documentFaces(lib, doc, source, page);
   for (const { record, run } of targets) {
     if (record.encoding.mode === 'none') continue;
     let fontName = run.fontName;
@@ -102,6 +114,7 @@ export function write({ lib, doc, page, index, analysis, records }) {
       items = encodeStandard(lib, name, record.text);
     } else if (record.encoding.mode === 'original') {
       items = originalItems(analysis, run);
+      if (record.face) ({ fontName, items } = faces(analysis, run, record.face, items, index));
     }
     const style = styleOf(record, run, states, record.encoding.mode === 'standard' ? lib.StandardFontEmbedder.for(record.encoding.font) : null);
     append.push(drawText(analysis, run, fontName, items, record.transform ?? null, null, style));
@@ -279,9 +292,42 @@ export function opacityStates(lib, doc, page) {
 }
 
 /**
+ * A page's writer of runs set in another face of their font (objects/run-face.js): (analysis, run, face,
+ * items, index) → { fontName, items }, `items` the run's own (originalItems) with each glyph's code, length
+ * and width replaced by its character's in the face — the face's table checked against its font object
+ * first, the font added to the page's resources once. EditError, and nothing is written, when the table
+ * doesn't match the font or a glyph of the run isn't in it.
+ */
+export function documentFaces(lib, doc, source, page) {
+  const names = new Map();
+  return (analysis, run, face, items, index) => {
+    const checked = source ? checkedDocumentFaces(lib, source, { glyphs: { [face.font]: face.glyphs } }, [face.font])?.get(face.font) : null;
+    const found = checked ? faceGlyphsOf(analysis, run, face.glyphs) : null;
+    if (!found?.entries) {
+      throw new EditError('changed', `The font text on page ${index + 1} is set in isn’t in the file as expected any more, so nothing was changed.`);
+    }
+    if (!names.has(face.font)) names.set(face.font, addResource(lib, doc, page, 'Font', 'VlF', checked.ref));
+    const first = analysis.shows[run.glyphs[0][0]];
+    let i = 0;
+    const drawn = items.map((item) => {
+      if (item.adjust !== undefined) return item;
+      const [si, gi] = run.glyphs[i];
+      const [code, byteLength, width] = found.entries[i++];
+      if (code !== null) return { code, byteLength, width };
+      // A space the face hasn't drawn: its width, and the spacing the line's own space had, as a TJ gap.
+      const glyph = analysis.shows[si].glyphs[gi];
+      const spacing = first.tc + (glyph.byteLength === 1 && glyph.code === 32 ? first.tw : 0);
+      return { adjust: -(width + (spacing * 1000) / first.fontSize) };
+    });
+    return { fontName: names.get(face.font), items: drawn };
+  };
+}
+
+/**
  * How drawText formats a record's run (objects/run-format.js), or null when it isn't formatted. `standard`
  * is the standard font's embedder when the text is written in one, whose widths the underline is measured
- * in; otherwise the run's own font's — the widths pdf.js confirmed it draws.
+ * in; otherwise the width an item carries (a glyph in another face, documentFaces), else the run's own
+ * font's — the widths pdf.js confirmed it draws.
  */
 export function styleOf(record, run, states, standard = null) {
   const format = record.format;
@@ -289,7 +335,7 @@ export function styleOf(record, run, states, standard = null) {
   const font = run.font;
   const widthOf = standard
     ? (item) => standard.widthOfTextAtSize(item.char, 1000)
-    : (item) => (font.widthOf(item.code) ?? NaN) * font.widthScale * 1000;
+    : (item) => item.width ?? (font.widthOf(item.code) ?? NaN) * font.widthScale * 1000;
   return {
     color: format.color ?? null,
     opacityState: format.opacity !== undefined ? states(format.opacity) : null,

@@ -13,7 +13,7 @@
 // before the gesture that uses them.
 
 export const files = {
-  images: 'images', simple: 'simple', overlap: 'overlap', objects: 'objects',
+  images: 'images', simple: 'simple', overlap: 'overlap', objects: 'objects', faces: 'faces',
 };
 
 /** Modifier bits for the DevTools client (tools/cdp-client.mjs). */
@@ -1150,6 +1150,61 @@ export async function run(t) {
     check('saved and reopened: the same editable Helvetica text, 14 pt, red, half opaque, drawn once',
       reopened?.editable === true && reopened.font === 'Helvetica' && Math.abs(reopened.size - 14) < 0.01 && reopened.ca === 0.5 && reopened.count === 1
         && JSON.stringify(reopened.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0xd6, 0x2f, 0x2f]), JSON.stringify(reopened));
+  }
+
+  // ---- the page's own text in another face of its font the PDF has (0.6): bold, refused where it won't fit ----
+
+  area('page text face');
+  const FACES = F('faces');
+  await activate(FACES);
+  await editMode(FACES);
+  const faceLines = (await objectsOn(FACES, 1)).filter((o) => o.kind === 'text-run' && o.text === 'Plain sentence here');
+  check('three lines of Liberation Sans regular to set in bold', faceLines.length === 3, String(faceLines.length));
+  if (faceLines.length === 3) {
+    const faceRecord = () => q(`(() => { const e = ${V(FACES)}.annotations.edits.find((r) => r.kind === 'text'); return e ? { face: e.face?.font ?? null, bold: e.face?.bold, mode: e.encoding.mode, n: ${V(FACES)}.annotations.edits.length } : null; })()`);
+    // The line with a picture just after it, and the one at the page's edge: a wider face is refused.
+    const reasons = [];
+    let refusedBoth = true;
+    for (const line of faceLines.slice(1)) {
+      await selectObject(FACES, 1, line.key);
+      await rest(FACES);
+      refusedBoth &&= (await q(`${V(FACES)}.textEditor.formatSelected('bold')`)) === false;
+      reasons.push(await q(`${V(FACES)}.textEditing.formatText(1, [${JSON.stringify(line.key)}], { bold: true }).then(() => 'changed', (e) => e.detail?.reason ?? e.message)`));
+    }
+    check('bold is refused where the wider line would cover a picture or leave the page, nothing changed',
+      refusedBoth && JSON.stringify(reasons) === JSON.stringify(['overlap', 'bounds']) && (await faceRecord()) === null, JSON.stringify(reasons));
+
+    await selectObject(FACES, 1, faceLines[0].key);
+    await rest(FACES);
+    await q(`${V(FACES)}.focus()`);
+    await c.key('Ctrl+K');
+    await waitFor(`document.activeElement?.closest?.('.palette')`, 3000);
+    await c.type('Bold text');
+    await sleep(300);
+    check('the command palette offers “Bold text”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Bold text'))`));
+    await c.key('Escape');
+    await sleep(300);
+    const faceDepth = await undoDepth(FACES);
+    check('formatSelected(\'bold\') sets the line in the PDF’s own bold face', (await q(`${V(FACES)}.textEditor.formatSelected('bold')`)) === true);
+    await rest(FACES);
+    const held = await faceRecord();
+    check('one record in the file’s own glyphs, naming a font object of the file, one undo step',
+      held?.n === 1 && held.mode === 'original' && held.bold === true && /^doc:\d+-\d+$/.test(held.face ?? '') && (await undoDepth(FACES)) === faceDepth + 1, JSON.stringify(held));
+
+    await q('__vellum.actions.save()');
+    await waitFor(`!${V(FACES)}.annotations.dirty`, 25000);
+    await q(`__vellum.app.close(${V(FACES)})`);
+    await waitFor(`!${V(FACES)}`);
+    await q(`__vellum.actions.openRecent(${JSON.stringify(FACES)})`);
+    await rest(FACES);
+    const reopened = await q(`(async () => {
+      const { runs } = await ${V(FACES)}.textEditing.page(1);
+      const items = runs.filter((r) => r.run.text === 'Plain sentence here');
+      return items.map((r) => ({ font: r.run.font?.name, editable: r.run.editable, x: Math.round(r.run.origin[0] * 1000) / 1000, y: Math.round(r.run.origin[1] * 1000) / 1000 }));
+    })()`);
+    check('saved and reopened: the same editable text from the same start, in LiberationSans-Bold, drawn once',
+      reopened?.length === 3 && reopened.filter((r) => r.font === 'LiberationSans-Bold').length === 1
+        && reopened.some((r) => r.font === 'LiberationSans-Bold' && r.editable === true && r.x === 72 && r.y === 720), JSON.stringify(reopened));
   }
 
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0,

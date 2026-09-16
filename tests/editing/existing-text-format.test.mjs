@@ -7,7 +7,7 @@
 // baseline start), in the new DeviceRGB fill, through an opacity state of its own that keeps the original's
 // other states, with an underline as wide as the glyphs drawn (Tc, Tw and Tz included); retyping keeps the
 // format and a pasted copy carries it; a record that says nothing any more goes. Refused with nothing
-// stored: a font, bold or italic; alignment or width; part of a line; colour or underline of outlined
+// stored: another font (bold and italic: existing-text-face.test.mjs); alignment or width; part of a line; colour or underline of outlined
 // text; colour or opacity in a PDF/A file; a size out of range; mixing new text in; reflowing a formatted
 // paragraph — and the writer refuses a format the planner would never have made.
 // Run: node --test "tests/editing/*.test.mjs"
@@ -39,7 +39,7 @@ test('a run’s size, colour, opacity and underline: one step each, saved as the
   await withSession(bytes, async ({ store, session, sources, plan }) => {
     const caption = await objectByText(session, 1, 'Plain caption');
     const key = caption.ref.key;
-    assert.deepEqual({ ...runFormatOf(caption.record) }, { size: 12, color: '#000000', opacity: 1, underline: false, outlined: false });
+    assert.deepEqual({ ...runFormatOf(caption.record) }, { size: 12, color: '#000000', opacity: 1, underline: false, outlined: false, bold: false, italic: false });
 
     assert.equal(await session.formatText(1, [key], { size: 18 }), true);
     assert.equal(await session.formatText(1, [key], { color: '#CC0000' }), true);
@@ -53,7 +53,7 @@ test('a run’s size, colour, opacity and underline: one step each, saved as the
     assert.deepEqual(record.format, { color: '#cc0000', opacity: 0.5, underline: true });
     assert.deepEqual(record.transform, [1.5, 0, 0, 1.5, -36, -220], 'a scale of 1.5 about the baseline start (72, 440)');
     const live = (await session.objects(1)).objects.find((o) => o.ref.key === key);
-    assert.deepEqual({ ...runFormatOf(live.record, record) }, { size: 18, color: '#cc0000', opacity: 0.5, underline: true, outlined: false });
+    assert.deepEqual({ ...runFormatOf(live.record, record) }, { size: 18, color: '#cc0000', opacity: 0.5, underline: true, outlined: false, bold: false, italic: false });
 
     const before = (await analyzeFile(bytes)).pages[0];
     const original = before.runs.find((r) => r.text === 'Plain caption');
@@ -171,8 +171,9 @@ test('refused with nothing stored: fonts, boxes, part of a line, outlines, PDF/A
       assert.deepEqual(store.edits, [], `nothing stored for ${JSON.stringify(changes)}`);
     };
     await refused([key], { family: 'Times' }, 'font');
-    await refused([key], { bold: true }, 'font');
-    await refused([key], { italic: true }, 'font');
+    // Bold and italic are the faces of its font the PDF has (existing-text-face.test.mjs): this one has none.
+    await refused([key], { bold: true }, 'face');
+    await refused([key], { italic: true }, 'face');
     await refused([key], { align: 'center' }, 'box');
     await refused([key], { width: 200 }, 'box');
     await refused([key], { color: '#ff0000' }, 'range', { range: [0, 6] });

@@ -18,6 +18,9 @@
 //     format    { color?, opacity?, underline? }, only once the run has been formatted
 //               (objects/run-format.js): how its redraw differs from the page's own. A size change
 //               isn't here: it is a uniform scale in `transform`.
+//     face      { font, bold, italic, glyphs }, only for `encoding.mode: 'original'` once the run is set in
+//               another face of its font the same document has (objects/run-face.js): the font object
+//               it is redrawn with, and that font's codes for its characters.
 //
 // Images are the other kind of content edit. Their record shape, their planner (planImageEdit) and
 // everything about writing them live with their handler, in objects/image.js.
@@ -141,7 +144,7 @@ export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedF
  * The identity is not stored: like an image edit, a transform that changes nothing plans a record
  * the caller is expected to drop rather than keep.
  */
-export function planTextTransform({ run = null, record = null, transform, entry, id = record?.id ?? newId(), format = null }) {
+export function planTextTransform({ run = null, record = null, transform, entry, id = record?.id ?? newId(), format = null, face = null }) {
   if (record && record.kind !== 'text') throw new EditError('unsupported', REASONS.unsupported, { kind: record.kind });
   // Eligibility is the engine’s own verdict and nothing new: a run 0.4 already found editable.
   // Given a record and no run, that verdict is already in the record — it couldn’t exist otherwise.
@@ -157,6 +160,7 @@ export function planTextTransform({ run = null, record = null, transform, entry,
   return {
     id, kind: 'text', entry, target: targetOf(run), text: run.text,
     encoding: { mode: 'original' }, ...(placement ? { transform: placement } : {}), ...(format ? { format: { ...format } } : {}),
+    ...(face ? { face: structuredClone(face) } : {}),
   };
 }
 

@@ -317,6 +317,36 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ].join('\n'), res);
   });
 
+  // A family's faces embedded (Liberation Sans regular, bold, italic, bold italic): a line of the page's own
+  // text set in another of them. The italic hasn't drawn “h” or “r”; one line has a picture just after it and
+  // one ends half a point inside the page's right edge, so a wider face is refused for both.
+  await build('faces', async (b) => {
+    const regular = readTrueType(new Uint8Array(fs.readFileSync(path.join(STANDARD_FONTS, 'LiberationSans-Regular.ttf'))));
+    const line = 'Plain sentence here';
+    const width = [...line].reduce((sum, ch) => sum + regular.width(regular.glyphOf(ch.codePointAt(0))), 0) * 14 / 1000;
+    const Im1 = b.image(4, 4);
+    const res = {
+      Font: {
+        LS: b.trueTypeSimple('LiberationSans-Regular.ttf'),
+        LB: b.trueTypeSimple('LiberationSans-Bold.ttf', { subsetTag: 'BOLDAA' }),
+        LI: b.trueTypeSimple('LiberationSans-Italic.ttf'),
+        LZ: b.trueTypeSimple('LiberationSans-BoldItalic.ttf'),
+        H: b.std(StandardFonts.Helvetica),
+      },
+      XObject: { Im1 },
+    };
+    b.page(PageSizes.Letter, [
+      text('LS', 14, 72, 720, line),
+      text('LB', 14, 72, 690, 'Plain sentence here in bold'),
+      text('LI', 14, 72, 660, 'Plain sentence italic'),
+      text('LZ', 14, 72, 630, 'Plain sentence here bold italic'),
+      text('LS', 14, 72, 600, line),
+      `q 40 0 0 14 ${72 + width + 1} 597 cm /Im1 Do Q`,
+      text('LS', 14, 612 - width - 0.5, 570, line),
+      text('H', 14, 72, 540, 'Helvetica plain'),
+    ].join('\n'), res);
+  });
+
   // Composite (Type 0, Identity-H) font with a ToUnicode CMap.
   await build('composite', async (b) => {
     const words = 'Composite Identity font text with spaces';

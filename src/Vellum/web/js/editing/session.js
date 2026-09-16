@@ -19,10 +19,12 @@ import { cleanText, defaultTextPlacement, fontsOf, keyOf as newTextKey, kind as 
 import { documentKey, fontSet, withDocumentFonts } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
 import { planRunFormat, runFormatError, withRunFormat } from './objects/run-format.js';
+import { drawnQuadOf, planRunFace, runFaceError, withRunFace } from './objects/run-face.js';
+import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
-import { transformQuad, unionBox } from './objects/geometry.js';
+import { boxQuad, quadWithin, transformQuad, unionBox } from './objects/geometry.js';
 import { IDENTITY, multiply, translate } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
@@ -162,12 +164,16 @@ export class TextEditing {
       // the text, though, so a run that has also been moved keeps its one record — holding the
       // file’s own glyphs again, which is what it would have had if it had only ever been moved.
       if (!item.edit) return false;
-      const placed = item.edit.transform || item.edit.format
-        ? planTextTransform({ run: item.run, transform: item.edit.transform ?? null, entry: entry.id, id: item.edit.id, format: item.edit.format ?? null })
+      const placed = item.edit.transform || item.edit.format || item.edit.face
+        ? planTextTransform({
+          run: item.run, transform: item.edit.transform ?? null, entry: entry.id, id: item.edit.id, format: item.edit.format ?? null, face: item.edit.face ?? null,
+        })
         : null;
       store.applyEdit(item.edit, placed);
       return true;
     }
+    // Another face draws the file's own glyphs of the line (objects/run-face.js): retyped text has none.
+    if (item.edit?.face) throw runFaceError('retype');
     const source = await this.#source(entry.src);
     // The run's placement is carried through: retyping text that has been moved must not move it
     // back, and must not become a second record either.
@@ -207,6 +213,7 @@ export class TextEditing {
     this.#refuse(object, 'editText');
     const run = object.record;
     if (text === run.text) return planCopy({ ...record, text: run.text, encoding: { mode: 'original' } });
+    if (record.face) throw runFaceError('retype');
     const planned = planTextEdit({ run, text, entry: record.entry, glyphs, id: record.id, ...constraints });
     if (planned.encoding.mode === 'none') return null;
     return planCopy({ ...record, text: planned.text, encoding: planned.encoding });
@@ -289,9 +296,14 @@ export class TextEditing {
     }
     const fonts = await this.#fonts(typeof changes?.family === 'string' ? [changes.family] : []);
     const constraints = await this.#constraints();
-    const { entry, found } = await this.#objectsAt(pageNumber, keys);
+    // The opened PDF's own fonts, another face of which a line of the page may be set in (objects/run-face.js).
+    const models = changes?.bold !== undefined || changes?.italic !== undefined
+      ? (await this.#source('base').catch(() => null))?.fonts ?? null
+      : null;
+    const page = await this.#objectsAt(pageNumber, keys);
+    const { entry, found } = page;
     // The page's own text (and pasted copies of it) is formatted on its own terms (objects/run-format.js).
-    if (found.some(({ object }) => !object.ref.newText)) return this.#formatRuns(entry, found, changes, { range, text, constraints });
+    if (found.some(({ object }) => !object.ref.newText)) return this.#formatRuns(page, changes, { range, text, constraints, fonts, models });
     const pairs = [];
     for (const { object, record } of found) {
       if (!object.ref.newText || record?.kind !== newTextKind) {
@@ -310,33 +322,47 @@ export class TextEditing {
 
   /**
    * Formats text the page already draws — runs, and pasted copies of them — with `changes` holding any of
-   * size, color, opacity and underline (objects/run-format.js planRunFormat): ONE undo step for all of
+   * size, color, opacity and underline (objects/run-format.js planRunFormat), and bold and italic — the face
+   * of its font the same PDF has in that style (objects/run-face.js planRunFace; refused where the wider or
+   * narrower line isn't safe, #refuseFaceGeometry): ONE undo step for all of
    * `found`, false when nothing changed, EditError with nothing changed when any of them refuses. Each
    * keeps its one record: a text record takes the format and a size's scale into its own (planTextTransform,
    * so it is checked as any placement is), a copy into its copy record. A run's record that ends up saying
    * nothing — no transform, no format, its own glyphs — goes, as a move back to where it started does.
    * New text isn't formatted in the same step: it has its own format and fonts.
    */
-  #formatRuns(entry, found, changes, { range, text, constraints }) {
+  #formatRuns(page, changes, { range, text, constraints, fonts, models }) {
+    const { entry, found, origins } = page;
     if (found.some(({ object }) => object.ref.newText)) {
       throw new EditError('format', 'New text and the page’s own text are formatted separately, so nothing was changed.');
     }
     if (range || text !== undefined) throw runFormatError('range');
+    const { bold, italic, ...rest } = changes && typeof changes === 'object' ? changes : {};
+    const style = bold !== undefined || italic !== undefined ? { bold, italic } : null;
     const pairs = [];
+    const refaced = [];
     for (const { object, record } of found) {
       if (object.kind !== 'text-run') throw new EditError('format', 'Only text can be formatted, so nothing was changed.', { key: object.ref.key });
       this.#refuse(object, 'editText', found.length);
       const run = object.record;
-      const { format, transform } = planRunFormat({ run, record, changes, pdfa: constraints.embeddedFontsOnly });
+      // A copy's run is read from the page it names, or from this page's own content.
+      const from = object.ref.copy ? record.from ?? null : null;
+      const face = style
+        ? planRunFace({ run, record, analysis: origins.get(from ? originKey(from) : ''), changes: style, fonts, models: (from?.src ?? entry.src) === 'base' ? models : null })
+        : record?.face ?? null;
+      const { format, transform } = planRunFormat({ run, record, changes: style ? rest : changes, pdfa: constraints.embeddedFontsOnly });
       let next;
-      if (object.ref.copy) next = planCopy({ ...record, transform, format });
+      if (object.ref.copy) next = planCopy({ ...record, transform, format, face });
       else {
         const base = record ?? planTextTransform({ run, transform: null, entry: entry.id });
-        next = planTextTransform({ record: withRunFormat(base, format), transform, entry: entry.id });
-        if (!next.transform && !next.format && next.encoding.mode === 'original') next = null;
+        next = planTextTransform({ record: withRunFace(withRunFormat(base, format), face), transform, entry: entry.id });
+        if (!next.transform && !next.format && !next.face && next.encoding.mode === 'original') next = null;
       }
-      if (JSON.stringify(record) !== JSON.stringify(next)) pairs.push([record, next]);
+      if (JSON.stringify(record) === JSON.stringify(next)) continue;
+      pairs.push([record, next]);
+      if (JSON.stringify(record?.face ?? null) !== JSON.stringify(face)) refaced.push({ object, record, next });
     }
+    if (refaced.length) this.#refuseFaceGeometry(page, refaced);
     if (!pairs.length) return false;
     this.#view.annotations.applyEdits(pairs);
     return true;
@@ -415,7 +441,44 @@ export class TextEditing {
       }
       return { object, record };
     });
-    return { entry, found, analysis, origins };
+    return { entry, found, analysis, origins, objects, records };
+  }
+
+  /**
+   * Refuses, with nothing changed, lines set in another face (`changed`: [{ object, record, next }], from
+   * #formatRuns) whose new width can't be shown to be safe: a line that would newly cover another object on
+   * the page, or another of the lines changed with it (objects/overlap.js, as a gesture's warning judges it,
+   * a tenth of the line's height being the depth that counts), or reach further past the page's box or the
+   * shape clipping it than it did. Nothing else on the page is ever moved to make room.
+   */
+  #refuseFaceGeometry({ analysis, origins, objects, records }, changed) {
+    const drawn = (object, record) => drawnQuadOf(object, record, origins.get(object.ref.copy && record?.from ? originKey(record.from) : ''));
+    const moving = changed.map(({ object, record, next }) => {
+      const before = drawn(object, record);
+      const after = drawn(object, next);
+      if (!before || !after) throw runFaceError('bounds');
+      // The shape clipping the line where the page draws it, in that page's space, before any transform.
+      const clip = object.record.first?.clip?.box;
+      if (clip && !quadWithin(after, unionBox([boxQuad(clip), before]))) throw runFaceError('bounds');
+      const to = transformQuad(after, next?.transform ?? null);
+      return { key: object.ref.key, from: transformQuad(before, record?.transform ?? null), to, height: Math.hypot(to[6] - to[0], to[7] - to[1]) };
+    });
+    const box = analysis?.box ?? null;
+    for (const m of moving) if (!box || !quadWithin(m.to, unionBox([boxQuad(box), m.from]))) throw runFaceError('bounds');
+    const tolerance = Math.max(0.5, 0.1 * Math.min(...moving.map((m) => m.height)));
+    const others = objects
+      .filter((o) => !o.reasons?.some((r) => r === 'blank' || r === 'invisible'))
+      .map((o) => {
+        const record = records.get(o.ref.key) ?? null;
+        return { key: o.ref.key, quad: isRemoved(record) ? null : transformQuad(drawn(o, record) ?? o.geometry.quad, record?.transform ?? null) };
+      });
+    if (newOverlaps(moving, others, tolerance).length) throw runFaceError('overlap');
+    for (let i = 0; i < moving.length; i++) {
+      for (let j = i + 1; j < moving.length; j++) {
+        const [a, b] = [moving[i], moving[j]];
+        if (overlapDepth(a.to, b.to) > tolerance && !(overlapDepth(a.from, b.from) > tolerance)) throw runFaceError('overlap');
+      }
+    }
   }
 
   /** Refuses a verb in the words the capability already answered with — for a group, saying so. */
@@ -762,6 +825,8 @@ export class TextEditing {
         throw new EditError('pdfa', 'This PDF follows the PDF/A archiving standard, which needs every font embedded; this text uses a substitute font, so it wasn’t pasted.');
       }
       if ((item.format?.color !== undefined || item.format?.opacity !== undefined) && constraints.embeddedFontsOnly) throw runFormatError('pdfa');
+      // Another face is a font object of the PDF the line was copied in (objects/run-face.js), and of no other.
+      if (item.face && (foreign || src !== 'base')) throw runFaceError('source');
       const sameContent = entry.src === src && entry.index === item.from.index;
       placed.push({ item, quad: source.geometry.quad, from: sameContent ? null : { src, index: item.from.index } });
     }
@@ -804,7 +869,7 @@ export class TextEditing {
     const next = planTextTransform({
       run: record ? null : object.record, record, transform: absolute, entry: entry.id, id: record?.id,
     });
-    return !next.transform && !next.format && next.encoding?.mode === 'original' ? null : next;
+    return !next.transform && !next.format && !next.face && next.encoding?.mode === 'original' ? null : next;
   }
 
   /** What the whole document requires of an edit (PDF/A: embedded fonts only). */
