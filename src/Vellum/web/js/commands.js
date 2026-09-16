@@ -10,6 +10,7 @@
 //   palette: false keeps it out of the palette
 
 import { FAMILY_NAMES } from './editing/objects/text-format.js';
+import { BUNDLED_FONTS } from './editing/objects/bundled-fonts.js';
 
 export function createCommands(app, ui, actions) {
   const doc = () => (app.active?.status === 'ready' ? app.active : null);
@@ -112,10 +113,14 @@ export function createCommands(app, ui, actions) {
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },
-    // One command per font new text can be written in (editing/objects/text-format.js), so the palette
-    // offers exactly the fonts the format bar's font menu does.
+    // One command per font new text can be written in — the standard families (editing/objects/text-format.js)
+    // and the bundled ones (editing/objects/bundled-fonts.js) — so the palette offers the fonts the format
+    // bar's font menu does, but for the document's own, which depend on the file open.
     ...Object.fromEntries(FAMILY_NAMES.map((family) => [`edit.textFont${family}`, {
       group: 'Edit', icon: 'type', doc: true, label: `New text in ${family}`, run: () => doc()?.textEditor?.formatSelected({ family }),
+    }])),
+    ...Object.fromEntries(BUNDLED_FONTS.map(({ id, name }) => [`edit.textFont.${id}`, {
+      group: 'Edit', icon: 'type', doc: true, label: `New text in ${name}`, run: () => doc()?.textEditor?.formatSelected({ family: `bundled:${id}` }),
     }])),
     'edit.textLarger': { group: 'Edit', icon: 'plus', doc: true, label: 'Larger text', run: () => doc()?.textEditor?.formatSelected('larger') },
     'edit.textSmaller': { group: 'Edit', icon: 'minus', doc: true, label: 'Smaller text', run: () => doc()?.textEditor?.formatSelected('smaller') },

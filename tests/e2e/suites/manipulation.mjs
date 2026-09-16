@@ -1021,9 +1021,24 @@ export async function run(t) {
   check('and the page with it', await waitFor(`${shownFamily}.then((f) => f === 'sans-serif')`, 8000), await q(shownFamily));
   check('a font Vellum doesn’t have is refused, with nothing changed',
     (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Garamond' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
-  // A bundled family (web/fonts/document), read over the app's resource server when it is chosen.
-  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'bundled:inter' })`);
-  await rest(OBJ);
+  // A bundled family (web/fonts/document), chosen from the menu and read over the app's resource server then.
+  const pickFont = async (name) => {
+    const at = await centreOf(fontButton);
+    await c.mouse(at[0], at[1]);
+    await waitFor(`[...document.querySelectorAll('.menu.font-menu .menu-label')].some((e) => e.textContent === ${JSON.stringify(name)})`, 3000);
+    const item = `[...document.querySelectorAll('.menu.font-menu .menu-item')].find((b) => b.querySelector('.menu-label')?.textContent === ${JSON.stringify(name)})`;
+    await q(`${item}.scrollIntoView({ block: 'center' })`);
+    await sleep(150);
+    const itemAt = await centreOf(item);
+    await c.mouse(itemAt[0], itemAt[1]);
+    await rest(OBJ);
+  };
+  await pickFont('DM Serif Display');
+  check('a bundled family without a bold face isn’t chosen for bold text: refused, nothing changed',
+    (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2
+      && await waitFor(`[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent.includes('style asked for'))`, 3000),
+    await q(`[...document.querySelectorAll('#toasts .toast')].map((t) => t.textContent).join(' | ')`));
+  await pickFont('Inter');
   check('a bundled family: its own bold face, read when chosen, one undo step',
     (await waitFor(`${V(OBJ)}.annotations.edits.find((e) => e.kind === 'inserted-text')?.font === 'bundled:inter/bold'`, 8000)) && (await undoDepth(OBJ)) === fontDepth + 3 && (await waitFor(`${fontButton}.textContent === 'Inter'`, 3000)),
     JSON.stringify(await newRecord()));
@@ -1077,6 +1092,10 @@ export async function run(t) {
   await c.type('Add text');
   await sleep(300);
   check('the command palette offers “Add text”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Add text'))`));
+  await q(`(() => { const i = document.activeElement; i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await c.type('New text in Merriweather');
+  await sleep(300);
+  check('and the bundled fonts, as the font menu does', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('New text in Merriweather'))`));
   await c.key('Escape');
   await sleep(300);
 
@@ -1095,6 +1114,36 @@ export async function run(t) {
   check('saved and reopened: lines of editable page text in Helvetica Bold 14, blue, still turned',
     savedRun?.font === 'Helvetica-Bold' && savedRun.lines >= 2 && Math.abs(savedRun.size - 14) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true
       && JSON.stringify(savedRun.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0x2f, 0x6f, 0xd6]), JSON.stringify(savedRun));
+
+  // New text in a bundled font, saved: the face embedded as a subset, reopened as editable text in it.
+  await editMode(OBJ);
+  await q(`${V(OBJ)}.objectSelection.clear()`);
+  check('Add text again, for a bundled font', (await q(`${V(OBJ)}.textEditor.addText(1)`)) === true);
+  await waitFor(`document.querySelector('.vl-text-input')?.value === 'New text'`, 6000);
+  await c.type('Bundled Lora');
+  await c.key('Enter');
+  await rest(OBJ);
+  const loraKey = (await selection(OBJ))?.key;
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(loraKey)}])`);
+  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'bundled:lora' })`);
+  await rest(OBJ);
+  await q(`${V(OBJ)}.textEditor.formatSelected('italic')`);
+  await rest(OBJ);
+  const loraRecord = () => q(`(${V(OBJ)}.annotations.edits.find((e) => e.kind === 'inserted-text' && e.text === 'Bundled Lora') ?? null)`);
+  check('written in Lora’s own italic face', (await loraRecord())?.font === 'bundled:lora/italic', JSON.stringify(await loraRecord()));
+  await q('__vellum.actions.save()');
+  await waitFor(`!${V(OBJ)}.annotations.dirty`, 25000);
+  await q(`__vellum.app.close(${V(OBJ)})`);
+  await waitFor(`!${V(OBJ)}`);
+  await q(`__vellum.actions.openRecent(${JSON.stringify(OBJ)})`);
+  await rest(OBJ);
+  const loraRun = await q(`(async () => {
+    const { runs } = await ${V(OBJ)}.textEditing.page(1);
+    const item = runs.find((r) => r.run.text === 'Bundled Lora');
+    return item ? { font: item.run.font?.name, embedded: item.run.font?.embedded, editable: item.run.editable } : null;
+  })()`);
+  check('saved and reopened: editable page text in an embedded subset of Lora Italic',
+    /^Lora-Italic-\d+$/.test(loraRun?.font ?? '') && loraRun.embedded === true && loraRun.editable === true, JSON.stringify(loraRun));
 
   // ---- formatting the page's own text (0.6): size, underline, colour, opacity; font refused ---------------
 
