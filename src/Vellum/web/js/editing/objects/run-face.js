@@ -18,6 +18,10 @@
 // is re-encoded, the font program is never read or changed. The writer checks the table against the font
 // object again before drawing (font-set.js checkedDocumentFaces), and that every glyph of the run is in it.
 //
+// Another family works the same way (session formatText { family }): a face of a family of the SAME document's
+// own fonts, in the style the line reads in now, with every character of the line confirmed in it. The
+// document's families are the only ones offered; the standard and bundled fonts are never used for it.
+//
 // `bold` and `italic` are what the record says the line reads as, for the format bar; the writer doesn't
 // rely on them. Back in the run's own style, the face goes: the run is drawn in its own font again.
 //
@@ -35,7 +39,9 @@ import { documentKey } from './text-format.js';
 const MESSAGES = {
   content: 'That font change couldn’t be used, so nothing was changed.',
   source: 'This text isn’t in the opened PDF itself, so it can only be set in its own font. Nothing was changed.',
-  face: (style) => `This PDF doesn’t have a ${style} face of this text’s font that Vellum has seen it draw, so nothing was changed.`,
+  font: 'Text the PDF already draws can only be set in fonts this PDF has itself. Nothing was changed.',
+  family: 'This PDF doesn’t have that font, so nothing was changed.',
+  face: (style) => `This PDF doesn’t have a ${style} face of that font that Vellum has seen it draw, so nothing was changed.`,
   glyphs: (missing) => `The ${missing.style} face of this font in the PDF hasn’t been seen drawing ${missing.list}, so this line can’t be set in it. Nothing was changed.`,
   ligature: 'This line draws several letters as one glyph, which can’t be matched in another face, so nothing was changed.',
   retyped: 'This line has been retyped, so it can only be set in its own font. Nothing was changed.',
@@ -58,6 +64,15 @@ export function runFaceError(reason, detail = {}) {
 export function runStyleOf(run, record = null) {
   if (record?.face) return { bold: record.face.bold, italic: record.face.italic };
   return { bold: Boolean(run.font?.flags?.bold), italic: Boolean(run.font?.flags?.italic) };
+}
+
+/**
+ * The id of the family of the document's own fonts (font-set.js documentFontSet) a run reads in now: its
+ * record's face's family, as `fonts` lists it, or its own font's. null when it can't be told.
+ */
+export function runFamilyOf(run, record = null, fonts = null) {
+  if (record?.face) return fonts?.families?.find((f) => f.faces?.includes(record.face.font))?.id ?? null;
+  return run?.font?.name ? documentFamilyOf(run.font) : null;
 }
 
 /** Why `face` can't be on a record, or null: its shape only (the writer checks it against the file). */
@@ -96,7 +111,7 @@ export function faceGlyphsOf(analysis, run, table) {
 }
 
 /**
- * The face `changes` ({ bold?, italic? }) asks for, for `run` as `record` (its text or text-copy record, or
+ * The face `changes` ({ bold?, italic?, family? }) asks for, for `run` as `record` (its text or text-copy record, or
  * null) has it: the record's new `face`, or null for the run's own font. `analysis` is the page the run is
  * read from; `fonts` the document's font set (font-set.js withDocumentFonts); `models` the opened PDF's own
  * FontModels (editing/source.js PdfSource.fonts), which the run's font must be one of. EditError when it
@@ -104,15 +119,20 @@ export function faceGlyphsOf(analysis, run, table) {
  */
 export function planRunFace({ run, record = null, analysis, changes, fonts, models }) {
   if (!run?.editable) throw new EditError('not-editable', REASONS.unsupported, { reason: 'unsupported' });
+  if (changes.family !== undefined && !(typeof changes.family === 'string' && changes.family.startsWith('doc:'))) throw runFaceError('font');
   const now = runStyleOf(run, record);
   const want = { bold: changes.bold ?? now.bold, italic: changes.italic ?? now.italic };
   if (typeof want.bold !== 'boolean' || typeof want.italic !== 'boolean') throw runFaceError('content');
-  if (want.bold === now.bold && want.italic === now.italic) return record?.face ?? null;
-  if (record && record.encoding?.mode !== 'original') throw runFaceError('retyped');
   const own = run.font;
-  if (want.bold === Boolean(own?.flags?.bold) && want.italic === Boolean(own?.flags?.italic)) return null;
+  const ownFamily = runFamilyOf(run);
+  const nowFamily = runFamilyOf(run, record, fonts) ?? ownFamily;
+  const wantFamily = changes.family ?? nowFamily;
+  if (want.bold === now.bold && want.italic === now.italic && wantFamily === nowFamily) return record?.face ?? null;
+  if (record && record.encoding?.mode !== 'original') throw runFaceError('retyped');
+  if (wantFamily === ownFamily && want.bold === Boolean(own?.flags?.bold) && want.italic === Boolean(own?.flags?.italic)) return null;
   if (!own?.key || !models || models.get(own.key) !== own) throw runFaceError('source');
-  const family = fonts?.families?.find((f) => f.id === documentFamilyOf(own));
+  const family = fonts?.families?.find((f) => f.id === wantFamily && f.group === 'document');
+  if (!family && changes.family !== undefined) throw runFaceError('family');
   const key = family?.faces?.[(want.bold ? 1 : 0) + (want.italic ? 2 : 0)] ?? null;
   const face = documentKey(key) ? fonts.face(key) : null;
   if (!face?.document) throw runFaceError('face', { style: styleName(want) });

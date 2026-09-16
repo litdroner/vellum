@@ -1343,6 +1343,8 @@ kbd {
 .vl-arrange-bar { z-index: 21; gap: 2px; }
 /* Formatting new text, in the same bar: its font, its size between Smaller and Larger, its colour as a swatch. */
 .vl-text-font { max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.vl-run-font { display: inline-flex; align-items: center; gap: 2px; max-width: 200px; }
+.vl-run-font > span:first-child { overflow: hidden; text-overflow: ellipsis; }
 .vl-text-size { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .vl-text-colour { width: 18px; height: 18px; margin: 0 4px; }
 .vl-edit-font { flex: none; padding: 0 4px; color: var(--ink-2); font-size: 12px; white-space: nowrap; }

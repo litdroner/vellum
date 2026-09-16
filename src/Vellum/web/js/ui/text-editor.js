@@ -1065,9 +1065,10 @@ export class TextEditor {
   // Larger text, Smaller text, Underline text, Bold text, Italic text, Text colour… and Text opacity…
   // (textColourMenu, textOpacityMenu), one undo step for all of it (editing/objects/run-format.js). Bold and
   // italic set each whole line in that face of its own font, where the same PDF has one that draws every
-  // character of it and the line's new width covers nothing else (editing/objects/run-face.js). Another font
-  // and alignment are refused with the reason: another font would re-encode text in a font it isn't drawn
-  // in, and a line of the page isn't a box.
+  // character of it and the line's new width covers nothing else (editing/objects/run-face.js). Its font family
+  // is chosen on the open editor's bar (#runFontMenu), among the PDF's own families on the same terms; a
+  // standard or bundled font, and alignment, are refused with the reason: those would re-encode text in a
+  // font it isn't drawn in, and a line of the page isn't a box.
   //
   // The same controls sit on the OPEN editor's own bar, where they act on the characters selected there
   // rather than on the whole box: the face, size, underline, colour and opacity of those characters alone
@@ -2273,12 +2274,17 @@ export class TextEditor {
     const done = h('button', { class: 'btn primary small', title: 'Keep this text (Enter)', onMousedown: keep, onClick: () => this.#commit() }, 'Done');
     // The same format controls as the bar over a selected box, acting on what is selected here.
     const format = item.run.newText ? this.#buildFormat(keep) : null;
+    // A line of the page's own text: its font, chosen among the families of the PDF's own fonts (#runFontMenu).
+    const runFont = format ? null : h('button', {
+      class: 'tb-btn small vl-edit-font vl-run-font', title: 'Font', 'aria-haspopup': 'menu', onMousedown: keep,
+      onClick: () => this.#runFontMenu(ed, runFont),
+    });
     const bar = h('div', { class: `vl-pop vl-edit-bar ui${format ? ' formatting' : ''}`, role: 'toolbar', 'aria-label': 'Text editing' },
       h('span', { class: 'vl-pop-icon', html: icon('type', 15) }),
-      ...(format ? format.els.slice(1) : [h('span', { class: 'vl-edit-font', text: `${prettyFont(item.run.font?.name || 'Font')} · ${Math.round(item.run.frame.size * 10) / 10} pt` })]),
+      ...(format ? format.els.slice(1) : [runFont, h('span', { class: 'vl-edit-font', text: `${Math.round(item.run.frame.size * 10) / 10} pt` })]),
       h('div', { class: 'vl-sep' }), status, cancel, done);
     const ed = {
-      n, key, item, el, paper: el.firstChild, mirror, input, bar, status, done, format,
+      n, key, item, el, paper: el.firstChild, mirror, input, bar, status, done, format, runFont,
       menu: null, formatShown: null, perPoint: 1, ink: '', pending: false,
     };
     this.#editor = ed;
@@ -2306,8 +2312,57 @@ export class TextEditor {
     input.focus({ preventScroll: true });
     input.select();
     this.#syncEditorFormat(ed);
+    if (runFont) this.#syncRunFont(ed);
     this.#preview();
     if (item.run.tagged) this.#warnTagged('text');
+  }
+
+  /** Shows the font the open editor's line of page text reads in on its Font button. */
+  async #syncRunFont(ed, families = null) {
+    const show = (name) => {
+      ed.runFont.textContent = '';
+      ed.runFont.append(h('span', { text: `Font: ${name}` }), h('span', { html: icon('chevron-down', 14) }));
+      ed.runFont.setAttribute('aria-label', `Font: ${name}`);
+    };
+    if (!families) show(prettyFont(ed.item.run.font?.name || 'Font'));
+    const listed = families ?? await this.#view.textEditing.runFontFamilies(ed.n, editedKeyOf(ed.key)).catch(() => []);
+    const current = listed.find((f) => f.current);
+    if (current && this.#editor === ed) show(current.name);
+    if (this.#editor === ed) this.#placeBar(ed);
+    return listed;
+  }
+
+  /**
+   * The Font menu of the open editor on a line of the page's own text: the families of the opened PDF's own
+   * fonts (session.runFontFamilies), its own checked, each shown in itself. One the line can't be set in —
+   * a face of its style or a character of it that font hasn't drawn, a new width that would cover
+   * something or leave the page — is there but can't be chosen. Choosing one sets the whole line in it
+   * (formatSelected { family }, editing/objects/run-face.js): the editor closes, the line stays selected.
+   * The standard and bundled fonts aren't offered: they would re-encode text the PDF draws.
+   */
+  async #runFontMenu(ed, anchor) {
+    const families = await this.#syncRunFont(ed);
+    if (this.#editor !== ed) return;
+    const items = families.map((f) => ({
+      label: f.refusal ? `${f.name} (can’t be used for this line)` : f.name,
+      checked: f.current, disabled: Boolean(f.refusal) || f.current, font: f.css?.find(Boolean),
+      action: () => this.#setRunFont(ed, f.id),
+    }));
+    if (!items.length) items.push({ label: 'This PDF has no fonts this line can be set in', disabled: true });
+    this.#keepMenu(openMenu(items, { anchor, align: 'center', className: 'font-menu' }));
+  }
+
+  async #setRunFont(ed, family) {
+    if (this.#editor !== ed) return;
+    if (ed.input.value !== ed.item.text) {
+      this.#setStatus('Keep or cancel the typing first, then choose a font.', 'error');
+      ed.input.focus({ preventScroll: true });
+      return;
+    }
+    const key = editedKeyOf(ed.key);
+    this.#closeEditor();
+    await this.#select({ n: ed.n, key });
+    await this.formatSelected({ family });
   }
 
   /**

@@ -19,7 +19,7 @@ import { cleanText, defaultTextPlacement, fontsOf, keyOf as newTextKey, kind as 
 import { documentKey, fontSet, withDocumentFonts } from './objects/font-set.js';
 import { remapSpans } from './objects/text-format.js';
 import { planRunFormat, runFormatError, withRunFormat } from './objects/run-format.js';
-import { drawnQuadOf, planRunFace, runFaceError, withRunFace } from './objects/run-face.js';
+import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, withRunFace } from './objects/run-face.js';
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
@@ -297,7 +297,7 @@ export class TextEditing {
     const fonts = await this.#fonts(typeof changes?.family === 'string' ? [changes.family] : []);
     const constraints = await this.#constraints();
     // The opened PDF's own fonts, another face of which a line of the page may be set in (objects/run-face.js).
-    const models = changes?.bold !== undefined || changes?.italic !== undefined
+    const models = changes?.bold !== undefined || changes?.italic !== undefined || changes?.family !== undefined
       ? (await this.#source('base').catch(() => null))?.fonts ?? null
       : null;
     const page = await this.#objectsAt(pageNumber, keys);
@@ -337,8 +337,8 @@ export class TextEditing {
       throw new EditError('format', 'New text and the page’s own text are formatted separately, so nothing was changed.');
     }
     if (range || text !== undefined) throw runFormatError('range');
-    const { bold, italic, ...rest } = changes && typeof changes === 'object' ? changes : {};
-    const style = bold !== undefined || italic !== undefined ? { bold, italic } : null;
+    const { bold, italic, family, ...rest } = changes && typeof changes === 'object' ? changes : {};
+    const style = bold !== undefined || italic !== undefined || family !== undefined ? { bold, italic, family } : null;
     const pairs = [];
     const refaced = [];
     for (const { object, record } of found) {
@@ -442,6 +442,38 @@ export class TextEditing {
       return { object, record };
     });
     return { entry, found, analysis, origins, objects, records };
+  }
+
+  /**
+   * The families of the opened PDF's own fonts one line of the page's own text (a run, or a pasted copy of
+   * one: `key`) could be set in, from the edit bar's font menu: [{ id, name, css, current, refusal }],
+   * `refusal` the reason choosing it would be refused (objects/run-face.js planRunFace, and the new width
+   * checked as formatText checks it), null when it can be chosen. Only the document's own families: the
+   * standard and bundled fonts aren't used for text the PDF already draws.
+   */
+  async runFontFamilies(pageNumber, key) {
+    const fonts = await this.#fonts();
+    const models = (await this.#source('base').catch(() => null))?.fonts ?? null;
+    const page = await this.#objectsAt(pageNumber, [key]);
+    const [{ object, record }] = page.found;
+    if (object.kind !== 'text-run' || object.ref.newText) return [];
+    const run = object.record;
+    const from = object.ref.copy ? record?.from ?? null : null;
+    const analysis = page.origins.get(from ? originKey(from) : '');
+    const current = runFamilyOf(run, record, fonts);
+    return fonts.families.filter((f) => f.group === 'document').map(({ id, name, css }) => {
+      let refusal = null;
+      if (id !== current) {
+        try {
+          const face = planRunFace({ run, record, analysis, changes: { family: id }, fonts, models: (from?.src ?? page.entry.src) === 'base' ? models : null });
+          this.#refuseFaceGeometry(page, [{ object, record, next: withRunFace(record ?? {}, face) }]);
+        } catch (err) {
+          if (!(err instanceof EditError)) throw err;
+          refusal = err.message;
+        }
+      }
+      return { id, name, css, current: id === current, refusal };
+    });
   }
 
   /**

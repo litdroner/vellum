@@ -347,6 +347,31 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ].join('\n'), res);
   });
 
+  // Two families of the document's own fonts (Liberation Sans, and Foxit Serif as a bare CFF): a line of one set
+  // in the other. The serif has no bold and hasn't drawn “q”, “u” or “z”; its line at 600 has a picture just after
+  // it, so the wider sans is refused there.
+  await build('families', async (b) => {
+    const line = 'Plain sentence here';
+    const serifWidth = lib.StandardFontEmbedder.for(StandardFonts.TimesRoman).widthOfTextAtSize(line, 14);
+    const Im1 = b.image(4, 4);
+    const res = {
+      Font: {
+        LS: b.trueTypeSimple('LiberationSans-Regular.ttf'),
+        LB: b.trueTypeSimple('LiberationSans-Bold.ttf', { subsetTag: 'BOLDAB' }),
+        FX: b.cff('FoxitSerif.pfb'),
+      },
+      XObject: { Im1 },
+    };
+    b.page(PageSizes.Letter, [
+      text('LS', 14, 72, 720, line),
+      text('FX', 14, 72, 690, 'Plain sentence here in serif'),
+      text('LB', 14, 72, 660, 'Plain sentence here in bold'),
+      text('FX', 14, 72, 600, line),
+      `q 40 0 0 14 ${72 + serifWidth + 1} 597 cm /Im1 Do Q`,
+      text('LS', 14, 72, 570, 'Plain quiz'),
+    ].join('\n'), res);
+  });
+
   // Composite (Type 0, Identity-H) font with a ToUnicode CMap.
   await build('composite', async (b) => {
     const words = 'Composite Identity font text with spaces';
