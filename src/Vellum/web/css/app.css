@@ -1320,11 +1320,24 @@ kbd {
 }
 /* New text: a box of lines, growing as they are typed (text-editor.js #layoutLines). */
 .vl-text-input.lines { display: block; height: auto; resize: none; overflow: hidden; padding-block: 0; }
+/* A box that reads in several formats: its pieces drawn over the text being typed, which is then
+   invisible but for its caret, so what is typed looks like what will be drawn (text-editor.js #paintMixed). */
+.vl-text-editor.mixed .vl-text-paper { position: relative; }
+.vl-text-mirror {
+  position: absolute;
+  inset: 0 auto auto 0;
+  min-width: 100%;
+  margin: 0;
+  pointer-events: none;
+  user-select: none;
+}
 .vl-text-editor.saving { box-shadow: 0 0 0 1.5px var(--accent-line), 0 0 0 5px var(--accent-soft); }
 .vl-text-editor.saving .vl-text-input { cursor: progress; }
 :root[data-page-tone="dark"] .vl-text-paper { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
 :root[data-page-tone="sepia"] .vl-text-paper { filter: url(#page-tone-sepia); }
 .vl-edit-bar { z-index: 22; max-width: min(560px, calc(100% - 24px)); }
+/* The same bar carrying the format controls for new text needs the room they take. */
+.vl-edit-bar.formatting { max-width: min(780px, calc(100% - 24px)); }
 /* Over a selection of several objects: line them up, space them evenly. */
 .vl-arrange-bar { z-index: 21; gap: 2px; }
 /* Formatting new text, in the same bar: its font, its size between Smaller and Larger, its colour as a swatch. */

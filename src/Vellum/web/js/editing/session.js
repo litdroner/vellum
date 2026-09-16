@@ -16,6 +16,7 @@ import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
 import { defaultPlacement, keyOf as insertedKey, kind as insertedKind, planInsertion } from './objects/inserted-image.js';
 import { cleanText, defaultTextPlacement, keyOf as newTextKey, kind as newTextKind, planFormat, planNewText, PLACEHOLDER } from './objects/inserted-text.js';
+import { remapSpans } from './objects/text-format.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
@@ -226,7 +227,10 @@ export class TextEditing {
   #retypedNewText(lib, object, record, text) {
     if (!object.ref.newText || record?.kind !== newTextKind) throw new EditError('missing', 'That text isn’t on this page any more.');
     this.#refuse(object, 'editText');
-    return cleanText(text).trim() ? planNewText({ lib, ...record, text }) : null;
+    const clean = cleanText(text);
+    if (!clean.trim()) return null;
+    // What stayed keeps how it read; what was typed takes the format around it (objects/text-format.js).
+    return planNewText({ lib, ...record, text: clean, spans: remapSpans(record.text, clean, record.spans ?? null) });
   }
 
   /**
@@ -235,10 +239,18 @@ export class TextEditing {
    * every one of `keys`, which must all be new text — one undo step, false when nothing changed. Throws
    * EditError, with nothing changed, when any of them can't take it (a character the chosen face doesn't
    * have, a family that isn't one of the standard ones, a size out of range).
+   *
+   * `range` ([from, to) over the box's text) formats only that much of it — the face, size, underline,
+   * colour and opacity of those characters alone; alignment and width stay the whole box's. `text`
+   * retypes the box in the same step, so typing and formatting in the open editor is one undo step.
+   * Both are for one box at a time: they mean nothing across a selection of several.
    */
-  async formatText(pageNumber, keys, changes) {
+  async formatText(pageNumber, keys, changes, { range = null, text } = {}) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    if ((range || text !== undefined) && keys.length !== 1) {
+      throw new EditError('format', 'Part of a text box is formatted one box at a time, so nothing was changed.');
+    }
     const lib = await loadPdfLib();
     const { found } = await this.#objectsAt(pageNumber, keys);
     const pairs = [];
@@ -247,7 +259,7 @@ export class TextEditing {
         throw new EditError('format', 'Only new text can be formatted here, so nothing was changed.', { key: object.ref.key });
       }
       this.#refuse(object, 'editText', found.length);
-      const planned = planFormat({ lib, record, changes });
+      const planned = planFormat({ lib, record, changes, range, text });
       const { id, entry, ...before } = record;
       const { id: _id, entry: _entry, ...after } = planned;
       if (JSON.stringify(before) !== JSON.stringify(after)) pairs.push([record, planned]);

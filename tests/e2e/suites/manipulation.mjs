@@ -930,7 +930,7 @@ export async function run(t) {
   check('it is selected, as new text', ((await selection(OBJ))?.key ?? '').startsWith('text:'), JSON.stringify(await selection(OBJ)));
   const textKey = (await selection(OBJ))?.key;
   await c.type('Hello new text');
-  check('the editor says which font it is written in', await waitFor(`document.querySelector('.vl-edit-status')?.textContent.includes('Helvetica')`, 3000));
+  check('the editor’s own bar says which font it is written in', await waitFor(`document.querySelector('.vl-edit-bar .vl-text-font')?.textContent === 'Helvetica'`, 3000));
   await c.key('Enter');
   await rest(OBJ);
   check('typing over it and Enter keeps the text: one record, two undo steps',
@@ -1018,6 +1018,39 @@ export async function run(t) {
   check('and the page with it', await waitFor(`${shownFamily}.then((f) => f === 'sans-serif')`, 8000), await q(shownFamily));
   check('a font Vellum doesn’t have is refused, with nothing changed',
     (await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'Liu' })`)) === false && (await newRecord())?.font === 'Helvetica-Bold' && (await undoDepth(OBJ)) === fontDepth + 2);
+
+  // Mixed formatting (0.6): a word of the box formatted from the open editor, with what was typed, in one step.
+  const mixedDepth = await undoDepth(OBJ); // counted while the editor is shut: counting rebuilds the pages, which closes it
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
+  await q(`${V(OBJ)}.focus()`);
+  await c.key('Enter');
+  const box = `document.querySelector('textarea.vl-text-input')`;
+  check('the open editor carries the format controls on its own bar',
+    await waitFor(`${box}?.value === 'Hello new text\\nsecond line' && Boolean(document.querySelector('.vl-edit-bar [data-format="bold"]'))`, 4000));
+  await q(`(() => { const i = ${box}; i.focus(); i.setSelectionRange(i.value.length, i.value.length); })()`);
+  await c.type('!');
+  await q(`${box}.setSelectionRange(6, 9)`);
+  const coloured = await q(`${V(OBJ)}.textEditor.formatSelected({ color: '#d62f2f' })`);
+  await rest(OBJ);
+  const mixed = await newRecord();
+  const spanColours = (mixed?.spans ?? []).map((s) => [s.n, s.color ?? null]);
+  check('the selected word takes the colour, the rest keeps its own, the typing kept: one record',
+    coloured === true && mixed?.text === 'Hello new text\nsecond line!' && mixed.color === '#2f6fd6'
+      && JSON.stringify(spanColours) === JSON.stringify([[6, null], [3, '#d62f2f'], [18, null]]),
+    JSON.stringify(mixed));
+  check('the editor stays open on it, the word still selected and drawn in its pieces',
+    await waitFor(`${box}?.selectionStart === 6 && ${box}.selectionEnd === 9 && Boolean(document.querySelector('.vl-text-editor.mixed .vl-text-mirror span'))`, 4000));
+  await c.key('Enter');
+  await rest(OBJ);
+  check('Enter keeps it as it is: typing and formatting were one undo step', !(await q(box)) && (await newRecord())?.spans?.length === 3 && (await undoDepth(OBJ)) === mixedDepth + 1);
+  await q(`${V(OBJ)}.annotations.undo()`);
+  await rest(OBJ);
+  check('undo: one format and one text again', !(await newRecord())?.spans && (await newRecord())?.text === 'Hello new text\nsecond line', JSON.stringify(await newRecord()));
+  await q(`${V(OBJ)}.annotations.redo()`);
+  await rest(OBJ);
+  check('redo: the word coloured again, and the page draws it as real text',
+    (await newRecord())?.spans?.length === 3
+      && await q(`(async () => (await (await ${V(OBJ)}.pdf.getPage(1)).getTextContent()).items.map((i) => i.str).join('').includes('new'))()`));
 
   await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(textKey)}])`);
   await q(`${V(OBJ)}.focus()`);

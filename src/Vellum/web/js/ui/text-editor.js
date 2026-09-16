@@ -12,7 +12,7 @@ import { newOverlaps } from '../editing/objects/overlap.js';
 import { reflowRefusal } from '../editing/objects/reflow.js';
 import { objectsOfKind } from '../editing/objects/page-objects.js';
 import { originKey } from '../editing/objects/copies.js';
-import { FAMILY_NAMES, LINE_SPACING, LIMITS as TEXT_LIMITS } from '../editing/objects/text-format.js';
+import { FAMILY_NAMES, LINE_SPACING, LIMITS as TEXT_LIMITS, remapSpans } from '../editing/objects/text-format.js';
 import { openMenu } from './menu.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
@@ -64,6 +64,10 @@ import { pageViewAt, toPdfPoint, toClientPoint, toClientQuad, tolerancePoints, d
 //   - new text: "Add text" (the command palette, or the page's context menu) puts a line of text in a
 //     standard PDF font in the middle of the page, selected, with the editor open on it; it is then
 //     retyped, moved, scaled, turned, copied and deleted like any text (editing/objects/inserted-text.js).
+//     Its format bar acts on the WHOLE box when it is selected, and on the characters selected in the
+//     open editor when it is being typed in — so one box can read in several formats (spans, in
+//     editing/objects/text-format.js). Formatting while typing keeps the text and the format in one
+//     record and one undo step, and the editor shows what it will be drawn as.
 //
 // Tab's itinerary is the editable text it has always been, and Enter still opens the editor on it.
 //
@@ -232,7 +236,8 @@ export class TextEditor {
   #nudge = null; // an arrow-key burst not yet written: { n, keys, base, token, transform, flush, end }
   #gesture = 0; // serial number: an async hit test whose gesture has moved on is dropped
   #clickAfterDrag = false;
-  #editor = null; // { n, key, item, el, paper, input, bar, status, done, pending }
+  #editor = null; // { n, key, item, el, paper, mirror, input, bar, status, done, format, pending }
+  #keepOpen = null; // the editor a rebuild must NOT close: the one that asked for the change (formatting)
   #arrangeBar = null; // { el, arrange, spacing, replace } - over several objects, or one picture
   #committing = null;
   #tip = null;
@@ -639,7 +644,9 @@ export class TextEditor {
     this.#hover = null;
     this.#shownAt = null; // the rebuilt pages carry the change the preview was standing in for
     this.#hideTip();
-    if (this.#editor) this.#closeEditor({ refocus: false });
+    // A rebuild replaces the pages the editor sits over, so the editor goes — unless the change is
+    // the editor's own (formatting what is selected in it), which refreshes it in place instead.
+    if (this.#editor && this.#editor !== this.#keepOpen) this.#closeEditor({ refocus: false });
   }
 
   // ---- page data and outlines -------------------------------------------------------------
@@ -1005,14 +1012,66 @@ export class TextEditor {
   // one undo step (session.formatText). Its box's right-edge handle sets the width its lines wrap to
   // (#wrapHandle). Text of the page itself isn't formatted here: changing the font of text the file
   // already draws needs the font system of docs/VELLUM_VISION.md §4.3.
+  //
+  // The same controls sit on the OPEN editor's own bar, where they act on the characters selected there
+  // rather than on the whole box: the face, size, underline, colour and opacity of those characters alone
+  // (editing/objects/text-format.js spans), with alignment and the wrapping width still the box's, as
+  // they must be. With nothing selected they act on all of it, which is what the bar then shows. Text
+  // typed but not yet kept goes into the same step, so typing a line and formatting a word in it is one
+  // record and one undo.
 
-  /** The formats of the selection when every selected object is new text that can be changed; else null. */
+  /**
+   * The formats the bar acts on: one per selected object when nothing is being typed, or — with the
+   * editor open on new text — one per stretch of the box the typing cursor covers. Null when this isn't
+   * new text that can be changed.
+   */
   #newTextFormats() {
+    if (!this.active) return null;
+    const ed = this.#editingNewText();
+    if (ed) {
+      const range = this.#editorRange(ed);
+      const formats = [];
+      let at = 0;
+      for (const run of this.#editorRuns(ed)) {
+        const start = at;
+        at += run.n;
+        if (!range || (start < range[1] && at > range[0])) formats.push(run.format);
+      }
+      return formats.length ? formats : [ed.item.run.format];
+    }
     const { page, keys } = this.#selection;
-    if (!this.active || !keys.length) return null;
+    if (!keys.length) return null;
     const objects = keys.map((key) => this.#liveObject(page, key));
     if (!objects.every((o) => o?.ref.newText && o.capabilities.editText === true && o.record.format)) return null;
     return objects.map((o) => o.record.format);
+  }
+
+  /** The open editor when it is on new text that can still be changed; else null. */
+  #editingNewText() {
+    const ed = this.#editor;
+    if (!ed?.item.run.newText || ed.pending) return null;
+    return this.#liveObject(ed.n, ed.key)?.capabilities.editText === true ? ed : null;
+  }
+
+  /** The characters the typing cursor covers in the open editor, [from, to), or null when it covers none. */
+  #editorRange(ed) {
+    const from = ed.input.selectionStart;
+    const to = ed.input.selectionEnd;
+    return Number.isInteger(from) && Number.isInteger(to) && to > from ? [from, to] : null;
+  }
+
+  /**
+   * How each stretch of the open editor's box reads, against the text as it is typed NOW: [{ n, format }].
+   * What has been typed since the record was written carries the formatting around it, exactly as the
+   * engine will carry it (editing/objects/text-format.js remapSpans, which reads only each run's length).
+   */
+  #editorRuns(ed) {
+    const text = ed.input.value;
+    const spans = ed.item.run.spans ?? [];
+    const runs = spans.map((s) => ({ n: s.end - s.start, format: s.format }));
+    if (runs.length < 2) return [{ n: text.length, format: runs[0]?.format ?? ed.item.run.format }];
+    if (text === ed.item.text) return runs;
+    return remapSpans(ed.item.text, text, runs) ?? [{ n: text.length, format: ed.item.run.format }];
   }
 
   #buildFormat(keep) {
@@ -1067,6 +1126,9 @@ export class TextEditor {
    * all have it), 'left', 'center' and 'right' align it, 'larger' and 'smaller' step its size, and an
    * object sets fields directly ({ family }, { size }, { color }, { opacity }, { width }). One undo step;
    * resolves true when something changed. The command palette and the format bar call this.
+   *
+   * With the editor open on new text it formats the characters selected there — and keeps what has been
+   * typed in the same step — so a word of a box reads differently from the rest of it.
    */
   async formatSelected(what) {
     const formats = this.#newTextFormats();
@@ -1082,16 +1144,27 @@ export class TextEditor {
     else if (what === 'larger') changes = { size: TEXT_SIZES.find((s) => s > first.size) ?? Math.min(TEXT_LIMITS.size[1], Math.round(first.size * 1.25)) };
     else if (what === 'smaller') changes = { size: TEXT_SIZES.findLast((s) => s < first.size) ?? Math.max(TEXT_LIMITS.size[0], Math.round(first.size / 1.25)) };
     else return false;
-    const { page, keys } = this.#selection;
+    const ed = this.#editingNewText();
+    const page = ed ? ed.n : this.#selection.page;
+    const keys = ed ? [ed.key] : [...this.#selection.keys];
+    const range = ed ? this.#editorRange(ed) : null;
+    const text = ed && ed.input.value !== ed.item.text ? ed.input.value : undefined;
+    const caret = ed ? [ed.input.selectionStart, ed.input.selectionEnd] : null;
     await this.#settled();
     this.#warnTagged('newText');
+    // The rebuild this asks for would close the editor: it is the editor's own change, so it stays.
+    this.#keepOpen = ed;
     try {
-      const changed = await this.#view.textEditing.formatText(page, [...keys], changes);
-      if (changed) this.#announce('Text formatted.');
+      const changed = await this.#view.textEditing.formatText(page, keys, changes, { range, text });
+      if (changed) this.#announce(range ? 'The selected text was formatted.' : 'Text formatted.');
+      if (ed && this.#editor === ed) await this.#refreshEditor(ed, caret);
       return changed;
     } catch (err) {
       this.#notify(err instanceof EditError ? err.message : `That text couldn’t be formatted: ${err.message}`);
+      if (ed && this.#editor === ed) ed.input.focus({ preventScroll: true });
       return false;
+    } finally {
+      if (this.#keepOpen === ed) this.#keepOpen = null;
     }
   }
 
@@ -1104,17 +1177,17 @@ export class TextEditor {
   #fontMenu(anchor) {
     const formats = this.#newTextFormats() ?? [];
     const current = formats.every((f) => f.family === formats[0]?.family) ? formats[0]?.family : null;
-    openMenu(FAMILY_NAMES.map((family) => ({
+    this.#keepMenu(openMenu(FAMILY_NAMES.map((family) => ({
       label: family, checked: current === family, font: STANDARD_CSS[family], action: () => this.formatSelected({ family }),
-    })), { anchor, align: 'center', className: 'font-menu' });
+    })), { anchor, align: 'center', className: 'font-menu' }));
   }
 
   #sizeMenu(anchor) {
     const formats = this.#newTextFormats() ?? [];
     const current = formats.every((f) => f.size === formats[0]?.size) ? formats[0]?.size : null;
-    openMenu(TEXT_SIZES.map((size) => ({
+    this.#keepMenu(openMenu(TEXT_SIZES.map((size) => ({
       label: `${size} pt`, checked: current === size, action: () => this.formatSelected({ size }),
-    })), { anchor, align: 'center' });
+    })), { anchor, align: 'center' }));
   }
 
   #colourMenu(anchor) {
@@ -1124,18 +1197,18 @@ export class TextEditor {
       picker.remove();
       this.formatSelected({ color: picker.value });
     });
-    openMenu([
+    this.#keepMenu(openMenu([
       ...TEXT_COLOURS.map(([color, label]) => ({ label, swatch: color, checked: current === color, action: () => this.formatSelected({ color }) })),
       '-',
       { label: 'Custom colour…', icon: 'pipette', action: () => { this.#view.container.append(picker); picker.click(); } },
-    ], { anchor, align: 'center', className: 'palette-menu' });
+    ], { anchor, align: 'center', className: 'palette-menu' }));
   }
 
   #opacityMenu(anchor) {
     const current = this.#newTextFormats()?.[0]?.opacity;
-    openMenu(TEXT_OPACITIES.map((opacity) => ({
+    this.#keepMenu(openMenu(TEXT_OPACITIES.map((opacity) => ({
       label: `${Math.round(opacity * 100)}%`, checked: current === opacity, action: () => this.formatSelected({ opacity }),
-    })), { anchor, align: 'center' });
+    })), { anchor, align: 'center' }));
   }
 
   /**
@@ -1959,7 +2032,7 @@ export class TextEditor {
   #onPointerDownAnywhere(e) {
     if (this.#tip && !this.#tip.el.contains(e.target)) this.#hideTip();
     const ed = this.#editor;
-    if (!ed || ed.pending || ed.el.contains(e.target) || ed.bar.contains(e.target)) return;
+    if (!ed || ed.pending || this.#insideEditor(ed, e.target)) return;
     // A click on the pages is handled by #onClick (which keeps the text first); elsewhere, keep it now.
     if (!e.target.closest?.('.page')) this.#commit();
   }
@@ -2070,33 +2143,152 @@ export class TextEditor {
       ? h('textarea', { class: 'vl-text-input lines', spellcheck: 'true', autocomplete: 'off', rows: '1', 'aria-label': `Edit text: ${item.text}` })
       : h('input', { class: 'vl-text-input', type: 'text', spellcheck: 'true', autocomplete: 'off', 'aria-label': `Edit text: ${item.text}` });
     input.value = item.text;
-    const el = h('div', { class: 'vl-text-editor ui' }, h('div', { class: 'vl-text-paper' }, input));
+    // New text may read in several formats: they are drawn behind the text being typed (#paintMixed).
+    const mirror = item.run.newText ? h('div', { class: 'vl-text-mirror', 'aria-hidden': 'true', hidden: true }) : null;
+    const el = h('div', { class: 'vl-text-editor ui' }, h('div', { class: 'vl-text-paper' }, mirror, input));
     const status = h('span', { class: 'vl-edit-status', role: 'status', 'aria-live': 'polite' });
     const keep = (e) => e.preventDefault(); // buttons don't take focus from the text
     const cancel = h('button', { class: 'tb-btn small', title: 'Cancel (Esc)', 'aria-label': 'Cancel', html: icon('x', 16), onMousedown: keep, onClick: () => this.#cancel() });
     const done = h('button', { class: 'btn primary small', title: 'Keep this text (Enter)', onMousedown: keep, onClick: () => this.#commit() }, 'Done');
-    const bar = h('div', { class: 'vl-pop vl-edit-bar ui', role: 'toolbar', 'aria-label': 'Text editing' },
+    // The same format controls as the bar over a selected box, acting on what is selected here.
+    const format = item.run.newText ? this.#buildFormat(keep) : null;
+    const bar = h('div', { class: `vl-pop vl-edit-bar ui${format ? ' formatting' : ''}`, role: 'toolbar', 'aria-label': 'Text editing' },
       h('span', { class: 'vl-pop-icon', html: icon('type', 15) }),
-      h('span', { class: 'vl-edit-font', text: `${prettyFont(item.run.font?.name || 'Font')} · ${Math.round(item.run.frame.size * 10) / 10} pt` }),
+      ...(format ? format.els.slice(1) : [h('span', { class: 'vl-edit-font', text: `${prettyFont(item.run.font?.name || 'Font')} · ${Math.round(item.run.frame.size * 10) / 10} pt` })]),
       h('div', { class: 'vl-sep' }), status, cancel, done);
-    const ed = { n, key, item, el, paper: el.firstChild, input, bar, status, done, pending: false };
+    const ed = {
+      n, key, item, el, paper: el.firstChild, mirror, input, bar, status, done, format,
+      menu: null, formatShown: null, perPoint: 1, ink: '', pending: false,
+    };
     this.#editor = ed;
     this.#view.container.append(el, bar);
     input.addEventListener('keydown', (e) => this.#onEditorKey(e));
-    input.addEventListener('input', () => this.#schedulePreview());
+    input.addEventListener('input', () => {
+      this.#paintMixed(ed);
+      this.#schedulePreview();
+    });
+    if (format) {
+      ed.onSelectionChange = () => {
+        if (this.#editor === ed) this.#syncEditorFormat(ed);
+      };
+      document.addEventListener('selectionchange', ed.onSelectionChange);
+    }
     // Going to anything else (a menu, the command palette, another control) keeps the text, as
     // clicking elsewhere does — so a page change made from there can't discard it. Switching to
     // another window doesn't.
     input.addEventListener('focusout', () => setTimeout(() => {
       if (this.#editor !== ed || ed.pending || !document.hasFocus()) return;
-      if (!ed.el.contains(document.activeElement) && !ed.bar.contains(document.activeElement)) this.#commit();
+      if (!this.#insideEditor(ed, document.activeElement)) this.#commit();
     }));
     this.#layout(ed);
     this.#draw(page);
     input.focus({ preventScroll: true });
     input.select();
+    this.#syncEditorFormat(ed);
     this.#preview();
     if (item.run.tagged) this.#warnTagged('text');
+  }
+
+  /**
+   * Is this where the editor is? Its box, its bar, or a menu its bar opened — a font or a colour is
+   * chosen from a menu that takes the keyboard, and choosing from it must not be leaving the text.
+   */
+  #insideEditor(ed, node) {
+    if (!(node instanceof Node)) return false;
+    return ed.el.contains(node) || ed.bar.contains(node) || Boolean(ed.menu?.isConnected && ed.menu.contains(node));
+  }
+
+  /** A menu the open editor's bar put up: while it is there, it counts as part of the editor. */
+  #keepMenu(menu) {
+    if (this.#editor) this.#editor.menu = menu;
+    return menu;
+  }
+
+  /**
+   * The open editor's own format controls, showing what the characters selected there read as. Every
+   * move of the typing cursor asks, so the bar is only touched when what it shows actually changes.
+   */
+  #syncEditorFormat(ed) {
+    if (!ed.format) return;
+    const formats = this.#newTextFormats();
+    const shown = JSON.stringify(formats);
+    if (shown === ed.formatShown) return;
+    ed.formatShown = shown;
+    this.#syncFormat(ed.format, formats, false);
+    this.#placeBar(ed);
+  }
+
+  /**
+   * The open editor after its record changed under it (formatting from its bar): the text and the
+   * formatting it now reads, with the typing cursor where it was — so formatting a word and carrying on
+   * typing is one flow.
+   */
+  async #refreshEditor(ed, caret) {
+    await this.#settled();
+    if (this.#editor !== ed) return;
+    // The rebuild cleared the pages: read this one again before asking where its objects are.
+    await this.#ensurePage(ed.n);
+    if (this.#editor !== ed) return;
+    const item = copyItemOf(this.#liveObject(ed.n, ed.key));
+    if (!item) return;
+    ed.item = item;
+    ed.formatShown = null;
+    if (ed.input.value !== item.text) ed.input.value = item.text;
+    this.#layout(ed);
+    if (caret) {
+      const end = ed.input.value.length;
+      ed.input.setSelectionRange(Math.min(caret[0], end), Math.min(caret[1], end));
+    }
+    ed.input.focus({ preventScroll: true });
+    this.#syncEditorFormat(ed);
+    const page = this.#pages.get(ed.n);
+    if (page) this.#draw(page);
+  }
+
+  /**
+   * What the box reads as, drawn behind the text being typed: one element per stretch, in its own face,
+   * size, colour, opacity and underline, over the same box as the text field — so a word formatted while
+   * the box is open is seen as it will be drawn. A box that reads alike all through has none of this: it
+   * is simply typed in its own format. Where sizes differ within a line the typing cursor is still placed
+   * by the box's own size, so it can sit a little off the glyphs it is between.
+   */
+  #paintMixed(ed) {
+    if (!ed.mirror) return;
+    const runs = this.#editorRuns(ed);
+    const mixed = runs.length > 1;
+    ed.el.classList.toggle('mixed', mixed);
+    ed.mirror.hidden = !mixed;
+    ed.mirror.textContent = '';
+    ed.paper.style.minHeight = '';
+    // Typed in its own colour, or — with the pieces drawn behind it — invisibly, leaving only the caret.
+    ed.input.style.color = mixed ? 'transparent' : ed.ink ?? '';
+    ed.input.style.caretColor = ed.ink ?? '';
+    if (!mixed) return;
+    const text = ed.input.value;
+    let at = 0;
+    for (const run of runs) {
+      const part = text.slice(at, at + run.n);
+      at += run.n;
+      if (!part) continue;
+      const f = run.format;
+      ed.mirror.append(h('span', {
+        text: part,
+        style: {
+          fontFamily: standardFamily(f.font),
+          fontSize: `${f.size * ed.perPoint}px`,
+          lineHeight: `${LINE_SPACING * f.size * ed.perPoint}px`,
+          fontWeight: f.bold ? '700' : '400',
+          fontStyle: f.italic ? 'italic' : 'normal',
+          textDecoration: f.underline ? 'underline' : 'none',
+          color: f.color,
+          opacity: String(f.opacity),
+        },
+      }));
+    }
+    if (text.endsWith('\n')) ed.mirror.append('​');
+    // A piece larger than the box's own size makes its line taller than the field it is typed in:
+    // the paper grows to it, so the editor covers everything it is showing.
+    ed.paper.style.minHeight = `${ed.mirror.getBoundingClientRect().height}px`;
   }
 
   /**
@@ -2163,6 +2355,7 @@ export class TextEditor {
     if (!ed) return;
     this.#editor = null;
     clearTimeout(this.#previewTimer);
+    if (ed.onSelectionChange) document.removeEventListener('selectionchange', ed.onSelectionChange);
     const hadFocus = ed.el.contains(document.activeElement);
     ed.el.remove();
     ed.bar.remove();
@@ -2201,7 +2394,9 @@ export class TextEditor {
       : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font);
     ed.input.style.fontFamily = family;
     if (!result.ok) this.#setStatus(result.message, 'error');
-    else if (result.mode === 'new') this.#setStatus(`New text in ${prettyFont(result.font)}, a standard PDF font. Shift+Enter starts a new line.`, '');
+    // New text says which font it is in on the bar's own controls, so the status only adds the one
+    // thing they don't: that the box takes more than one line.
+    else if (result.mode === 'new') this.#setStatus('Shift+Enter for a new line.', '');
     else if (result.mode === 'standard') this.#setStatus(`The original font doesn’t have ${quoteChars(result.missing)}, so this text will use ${prettyFont(result.font)}.`, 'warn');
     else if (result.mode === 'none') this.#setStatus('The text will be removed.', 'warn');
     else this.#setStatus('Same font as the original.', '');
@@ -2252,11 +2447,12 @@ export class TextEditor {
       height: `${height + pad * 2}px`,
     });
     const first = run.first;
+    ed.ink = cssColor(first.fill); // what it is typed in, and the caret's colour when the pieces are drawn instead
     Object.assign(ed.input.style, {
       fontSize: `${height / em}px`,
       lineHeight: `${height}px`,
       fontFamily: run.newText ? standardFamily(run.font.name) : run.loadedFont ? `"${run.loadedFont}", ${generic(run.font)}` : generic(run.font),
-      color: cssColor(first.fill),
+      color: ed.ink,
       letterSpacing: `${(first.tc ?? 0) * (first.th ?? 1) * perPoint}px`,
       paddingInline: `${pad}px`,
     });
@@ -2270,13 +2466,15 @@ export class TextEditor {
    * The editor over new text (objects/text-format.js): its lines at their spacing, in its face, colour,
    * opacity, underline and alignment, wrapping to its box's width when it has one, and growing as lines
    * are typed. Browser fonts stand in for the standard fonts, so where a line wraps here is close to,
-   * not always exactly, where it wraps on the page.
+   * not always exactly, where it wraps on the page. A box that reads in several formats is drawn by the
+   * mirror behind the text (#paintMixed), in the same box, at the same scale.
    */
   #layoutLines(ed, { width, height, angle, pad }) {
     const { run } = ed.item;
     const f = run.format;
     const perPoint = height / (run.box[3] - run.box[1] || 1);
     const fontPx = f.size * perPoint;
+    ed.perPoint = perPoint;
     // The first line's box on the page runs from the ascent to about a fifth of the size below the
     // baseline; a line of the editor is the whole line spacing, split above and below.
     const gap = Math.max(0, (LINE_SPACING * f.size - (run.box[3] + 0.21 * f.size)) / 2) * perPoint;
@@ -2286,7 +2484,7 @@ export class TextEditor {
       width: f.width === null ? '' : `${f.width * perPoint + pad * 2}px`,
       minWidth: `${width + pad * 2}px`,
     });
-    Object.assign(ed.input.style, {
+    const typography = {
       fontSize: `${fontPx}px`,
       lineHeight: `${LINE_SPACING * fontPx}px`,
       fontWeight: f.bold ? '700' : '400',
@@ -2296,7 +2494,21 @@ export class TextEditor {
       opacity: String(f.opacity),
       whiteSpace: f.width === null ? 'pre' : 'pre-wrap',
       paddingBlock: `${pad}px`,
-    });
+    };
+    Object.assign(ed.input.style, typography);
+    // The mirror sits in the same box, so it must be laid out by the same rules; its own pieces carry
+    // the face, size, colour and underline each stretch reads in.
+    if (ed.mirror) {
+      Object.assign(ed.mirror.style, typography, {
+        fontFamily: ed.input.style.fontFamily,
+        letterSpacing: ed.input.style.letterSpacing,
+        paddingInline: ed.input.style.paddingInline,
+        color: ed.input.style.color,
+        opacity: '1',
+        textDecoration: 'none',
+      });
+      this.#paintMixed(ed);
+    }
   }
 
   /** The page colour right around the text (sampled from the rendered page), so the editor hides the original. */

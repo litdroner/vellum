@@ -16,7 +16,7 @@
 import { capabilitiesFor } from './capabilities.js';
 import { keyOf as insertedKey } from './inserted-image.js';
 import { keyOf as insertedTextKey } from './inserted-text.js';
-import { formatOf, rgbOf, styleOf } from './text-format.js';
+import { formatOf, formatRuns, rgbOf, runRanges, styleOf } from './text-format.js';
 
 /**
  * Identity. Two draws of one image share a resource key ("4 0 R"), and an inline image has none, so
@@ -137,7 +137,8 @@ export function insertedObject(analysis, record, index = 0) {
  * New text put on the page in Edit mode (objects/inserted-text.js), as an object: lines of text whose own
  * outline is its box in text space, so its record's transform is where it is, and whose identity is its
  * record's. Its `record` has the fields of a run the editor and the gestures read (font, frame, first,
- * quad), and its `format` (objects/text-format.js, with its bold and italic) for the editor and the format bar —
+ * quad), its `format` (objects/text-format.js, with its bold and italic) and its `spans` (what each stretch
+ * of the box reads as, [{ start, end, format }]) for the editor and the format bar —
  * no glyphs of the page, no show, no font object: it is drawn from its record. `font.descent` is the
  * box's bottom, so ascent to descent spans every line.
  * Everything that may be done to it is the answer for editable text, unless the page can't be rewritten.
@@ -148,11 +149,18 @@ export function insertedTextObject(analysis, record, index = 0) {
   const quad = Object.freeze([x1, y1, x2, y1, x2, y2, x1, y2]);
   const box = Object.freeze([x1, y1, x2, y2]);
   const family = record.font.split('-')[0];
-  const format = Object.freeze({ ...(formatOf(record).format ?? {}), ...styleOf(record.font) });
+  const base = formatOf(record).format ?? {};
+  const format = Object.freeze({ ...base, ...styleOf(record.font) });
+  // How each stretch of the box reads (objects/text-format.js spans), for the editor and the format bar:
+  // always at least one range, over the whole text, so nothing has to ask whether the box has spans.
+  const ranges = runRanges(formatRuns(record.text, base, record.spans ?? null).runs ?? [{ n: record.text.length, format: base }]);
+  const spans = Object.freeze(ranges.map((r) => Object.freeze({
+    start: r.start, end: r.end, format: Object.freeze({ ...r.format, ...styleOf(r.format.font) }),
+  })));
   const fill = format.color && format.color !== '#000000' ? { op: 'rg', args: rgbOf(format.color) } : { op: 'g', args: [0] };
   const reasons = new Set(analysis?.tainted || analysis?.summary?.kind === 'unreadable' ? ['unreadable'] : analysis?.unbalanced ? ['structure'] : []);
   const run = Object.freeze({
-    key: ref.key, text: record.text, editable: !reasons.size, reasons, newText: true, format, tagged: false, loadedFont: null,
+    key: ref.key, text: record.text, editable: !reasons.size, reasons, newText: true, format, spans, tagged: false, loadedFont: null,
     font: Object.freeze({
       name: record.font, key: `standard:${record.font}`, standard: record.font,
       ascent: y2 / record.size, descent: y1 / record.size,
