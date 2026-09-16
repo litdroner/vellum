@@ -132,7 +132,10 @@ export function fontkitFace(font, { name, refusal = null, show = null }) {
     refusal,
     ascent: font.ascent / em,
     descent: Math.min(font.descent, 0) / em,
-    underline: { position: font.underlinePosition / em, thickness: font.underlineThickness / em },
+    // A font that doesn't say where its underline goes gets the rule a document font gets (tableFace).
+    underline: font.underlineThickness > 0
+      ? { position: font.underlinePosition / em, thickness: font.underlineThickness / em }
+      : { position: -0.1, thickness: 0.05 },
     missing: (text) => [...new Set([...text].filter((ch) => ch !== '\n' && !font.hasGlyphForCodePoint(ch.codePointAt(0))))],
     unshaped: (text) => [...new Set([...text].filter((ch) => NEEDS_SHAPING.test(ch)))],
     advance: (text) => (text ? font.layout(text, noShaping()).glyphs.reduce((sum, glyph) => sum + glyph.advanceWidth, 0) / em : 0),

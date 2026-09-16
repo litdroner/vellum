@@ -524,7 +524,7 @@ silent font substitution; a covering labelled as redaction; modifications of the
 
 Recorded so they are not decided silently. Each needs the owner.
 
-1. **Liu font file and licence** (§4.4): to be supplied by the owner before Liu is added to font selection.
+1. **Liu font file and licence** (§4.4): supplied by the owner on 2026-09-16 (SIL OFL 1.1) and added to font selection.
 2. **Redaction method** (§3.6): the requirement is settled (true removal, no covering, no silent
    rasterising); the technical design is research and needs approval before it is built.
 3. **Local engines** for Office conversions (§3.5), OCR (§3.8), digital certificate signatures (§3.7) and

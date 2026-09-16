@@ -1093,9 +1093,9 @@ export async function run(t) {
   await sleep(300);
   check('the command palette offers “Add text”', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('Add text'))`));
   await q(`(() => { const i = document.activeElement; i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  await c.type('New text in Merriweather');
+  await c.type('New text in Liu');
   await sleep(300);
-  check('and the bundled fonts, as the font menu does', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('New text in Merriweather'))`));
+  check('and the bundled fonts, as the font menu does', await q(`[...document.querySelectorAll('.palette [role="option"], .palette li')].some((el) => el.textContent.includes('New text in Liu'))`));
   await c.key('Escape');
   await sleep(300);
 
@@ -1115,35 +1115,52 @@ export async function run(t) {
     savedRun?.font === 'Helvetica-Bold' && savedRun.lines >= 2 && Math.abs(savedRun.size - 14) < 0.01 && Math.abs(Math.abs(savedRun.dir[1]) - 1) < 1e-3 && savedRun.editable === true
       && JSON.stringify(savedRun.fill?.map((v) => Math.round(v * 255))) === JSON.stringify([0x2f, 0x6f, 0xd6]), JSON.stringify(savedRun));
 
-  // New text in a bundled font, saved: the face embedded as a subset, reopened as editable text in it.
+  // New text in Liu, chosen from the font menu: bold, larger, underlined, turned and duplicated, then saved —
+  // embedded as a subset, reopened as editable text in it.
   await editMode(OBJ);
   await q(`${V(OBJ)}.objectSelection.clear()`);
   check('Add text again, for a bundled font', (await q(`${V(OBJ)}.textEditor.addText(1)`)) === true);
   await waitFor(`document.querySelector('.vl-text-input')?.value === 'New text'`, 6000);
-  await c.type('Bundled Lora');
+  await c.type('Meeting notes, draft 2 (final)!');
   await c.key('Enter');
   await rest(OBJ);
-  const loraKey = (await selection(OBJ))?.key;
-  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(loraKey)}])`);
-  await q(`${V(OBJ)}.textEditor.formatSelected({ family: 'bundled:lora' })`);
+  const liuKey = (await selection(OBJ))?.key;
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(liuKey)}])`);
+  await waitFor(`${fontButton} && !${fontButton}.hidden`, 4000);
+  await pickFont('Liu');
+  const liuRecords = () => q(`${V(OBJ)}.annotations.edits.filter((e) => e.kind === 'inserted-text' && e.text === 'Meeting notes, draft 2 (final)!').map((e) => ({ font: e.font, size: e.size, underline: e.underline, transform: e.transform }))`);
+  check('Liu from the font menu: its regular face, the bar says so',
+    (await liuRecords())[0]?.font === 'bundled:liu/regular' && (await waitFor(`${fontButton}.textContent === 'Liu'`, 3000)), JSON.stringify(await liuRecords()));
+  for (const what of ['bold', 'larger', 'underline']) {
+    await q(`${V(OBJ)}.textEditor.formatSelected(${JSON.stringify(what)})`);
+    await rest(OBJ);
+  }
+  check('bold, larger and underlined: Liu’s own bold face',
+    JSON.stringify((await liuRecords()).map((r) => [r.font, r.size, r.underline])) === JSON.stringify([['bundled:liu/bold', 14, true]]), JSON.stringify(await liuRecords()));
+  await q(`${V(OBJ)}.objectSelection.set(1, [${JSON.stringify(liuKey)}])`);
+  await q(`${V(OBJ)}.focus()`);
+  await c.key(']');
+  await sleep(900);
   await rest(OBJ);
-  await q(`${V(OBJ)}.textEditor.formatSelected('italic')`);
+  await c.key('Ctrl+D');
+  await sleep(900);
   await rest(OBJ);
-  const loraRecord = () => q(`(${V(OBJ)}.annotations.edits.find((e) => e.kind === 'inserted-text' && e.text === 'Bundled Lora') ?? null)`);
-  check('written in Lora’s own italic face', (await loraRecord())?.font === 'bundled:lora/italic', JSON.stringify(await loraRecord()));
+  const turnedLiu = await liuRecords();
+  check('turned a quarter turn and duplicated: two in Liu Bold',
+    turnedLiu.length === 2 && turnedLiu.every((r) => r.font === 'bundled:liu/bold' && Math.abs(r.transform[1]) === 1), JSON.stringify(turnedLiu));
   await q('__vellum.actions.save()');
   await waitFor(`!${V(OBJ)}.annotations.dirty`, 25000);
   await q(`__vellum.app.close(${V(OBJ)})`);
   await waitFor(`!${V(OBJ)}`);
   await q(`__vellum.actions.openRecent(${JSON.stringify(OBJ)})`);
   await rest(OBJ);
-  const loraRun = await q(`(async () => {
+  const liuRuns = await q(`(async () => {
     const { runs } = await ${V(OBJ)}.textEditing.page(1);
-    const item = runs.find((r) => r.run.text === 'Bundled Lora');
-    return item ? { font: item.run.font?.name, embedded: item.run.font?.embedded, editable: item.run.editable } : null;
+    return runs.filter((r) => r.run.text === 'Meeting notes, draft 2 (final)!').map((r) => ({ font: r.run.font?.name, embedded: r.run.font?.embedded, editable: r.run.editable, size: Math.round(r.run.frame.size * 100) / 100, dir: r.run.frame.dir }));
   })()`);
-  check('saved and reopened: editable page text in an embedded subset of Lora Italic',
-    /^Lora-Italic-\d+$/.test(loraRun?.font ?? '') && loraRun.embedded === true && loraRun.editable === true, JSON.stringify(loraRun));
+  check('saved and reopened: both editable page text in an embedded subset of Liu Bold, 14 pt, still turned',
+    liuRuns?.length === 2 && liuRuns.every((r) => /^Liu-Bold-\d+$/.test(r.font ?? '') && r.embedded === true && r.editable === true && r.size === 14 && Math.abs(Math.abs(r.dir[1]) - 1) < 1e-3),
+    JSON.stringify(liuRuns));
 
   // ---- formatting the page's own text (0.6): size, underline, colour, opacity; font refused ---------------
 

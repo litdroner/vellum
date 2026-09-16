@@ -2,7 +2,8 @@ Fonts bundled with Vellum for writing new text in PDFs
 
 Every font here is licensed under the SIL Open Font License, Version 1.1; each family's licence, with its
 copyright notice and any Reserved Font Names, is the OFL.txt in its folder. The files are the static
-instances Google Fonts distributes for these families, unchanged and under their own names. Vellum
+instances Google Fonts distributes for these families, unchanged and under their own names, except Liu
+(below). Vellum
 embeds a subset of a font's glyphs in a PDF when text written in it is saved.
 
 Inter — regular, bold, italic, bold italic
@@ -64,6 +65,13 @@ Fira Sans — regular, bold, italic, bold italic
 Barlow — regular, bold, italic, bold italic
   Copyright 2017 The Barlow Project Authors (https://github.com/jpt/barlow)
   Licence: barlow/OFL.txt   Project: https://github.com/jpt/barlow
+
+Liu — regular, bold, italic, bold italic
+  A modified version of Comic Neue: Copyright 2014-2016 Craig Rozynski, Copyright 2014 Hrant Papazian,
+  Copyright 2016 Brandon Schoech. Licence: liu/OFL.txt; attribution: liu/ATTRIBUTION.txt.
+  Supplied as a four-face TrueType family; Vellum sets each face's embedding permission (OS/2 fsType:
+  installable, as the OFL allows), weight class, and bold and italic style bits (OS/2 fsSelection, head
+  macStyle) to match the face. Outlines, metrics, character map and names are unchanged.
 
 Source Serif 4 — regular, bold, italic, bold italic
   Copyright 2014 The Source Serif 4 Project Authors (https://github.com/adobe-fonts/source-serif)
