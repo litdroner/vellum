@@ -222,7 +222,7 @@ public partial class MainWindow : Window
             const long MaxPictureBytes = 25 * 1024 * 1024;
             var dialog = new OpenFileDialog
             {
-                Title = OptionalString(request, "purpose") == "insert" ? "Insert picture" : "Replace picture with",
+                Title = OptionalString(request, "purpose") switch { "insert" => "Insert picture", "signature" => "Choose a signature picture", _ => "Replace picture with" },
                 Filter = "Pictures (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
                 InitialDirectory = LastFolder(),
             };

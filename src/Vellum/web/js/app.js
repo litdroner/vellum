@@ -528,6 +528,7 @@ document.addEventListener('contextmenu', (e) => {
     items.push(
       { label: 'Add text', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
       { label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) },
+      { label: 'Add signature…', icon: 'pen-line', action: () => view.textEditor.addSignature(pageNumber) },
       '-',
     );
   }

@@ -679,7 +679,7 @@ export class TextEditing {
    * The bytes are kept in the document's sources, as a replacement's are. Throws EditError when it
    * can't be done: an unusable file, a page whose content can't be rewritten, a PDF/A document.
    */
-  async insertImage(pageNumber, bytes, { basis, box }) {
+  async insertImage(pageNumber, bytes, { basis, box, pointsPerPixel }) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     const lib = await loadPdfLib();
@@ -691,7 +691,7 @@ export class TextEditing {
     // The page writer rewrites a page only when it can read all of it; say so now rather than at save.
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
-    const transform = defaultPlacement({ ...picture, box, basis });
+    const transform = defaultPlacement({ ...picture, box, basis, pointsPerPixel });
     if (!transform) throw new EditError('content', 'Vellum couldn’t work out where to put the picture on this page, so nothing was added.');
     const source = newId();
     const record = planInsertion({ picture: { source, ...picture }, transform, entry: entry.id });

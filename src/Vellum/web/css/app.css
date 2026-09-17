@@ -1496,6 +1496,22 @@ kbd {
 .choice-label > .field:not(.inline) { flex-basis: 100%; height: 32px; margin-top: 4px; }
 .field.inline { width: 70px; height: 28px; padding: 0 8px; }
 
+/* ---- signature (ui/signature.js) ----------------------------------------------------------- */
+
+.dialog.signature-dialog { width: min(540px, calc(100vw - 40px)); }
+.signature-modes, .signature-ink { margin-bottom: 12px; }
+.signature-ink { width: 180px; margin-top: 12px; margin-bottom: 0; }
+.signature-panel { display: flex; flex-direction: column; gap: 8px; }
+.signature-pad {
+  max-width: 100%;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  touch-action: none;
+}
+.signature-panel[data-panel="draw"] .signature-pad { cursor: crosshair; }
+.signature-row { display: flex; justify-content: flex-end; }
+
 /* ---- updates ------------------------------------------------------------------------------ */
 
 .update-pill {

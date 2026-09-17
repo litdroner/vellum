@@ -17,6 +17,7 @@ import { drawnQuadOf } from '../editing/objects/run-face.js';
 import { LINE_SPACING, LIMITS as TEXT_LIMITS, STANDARD_FAMILIES, STYLES, bundledKey, remapSpans } from '../editing/objects/text-format.js';
 import { bundledFamilies, documentKey, readBundledFont } from '../editing/objects/font-set.js';
 import { openMenu } from './menu.js';
+import { askForSignature } from './signature.js';
 import {
   quadArea, quadContains, hitTest, transformQuad, quadBox, quadCentre, handlePoints, unionBox, boxQuad, quadWithin, quadBasis,
 } from '../editing/objects/geometry.js';
@@ -403,10 +404,29 @@ export class TextEditor {
   }
 
   /**
+   * Fill & Sign: asks for a signature — typed, drawn or imported (ui/signature.js) — and puts it on page
+   * `n` as a new picture, centred and selected, to be moved, resized and turned like any other picture.
+   * One undo step; saved as page content. Resolves true when it was placed.
+   */
+  async addSignature(n = null) {
+    const page = this.#insertionPage(n, 'add a signature');
+    if (!page) return false;
+    let signature;
+    try {
+      signature = await askForSignature();
+    } catch (err) {
+      this.#notify(`That signature couldn’t be used: ${err.message}`);
+      return false;
+    }
+    if (!signature) return false;
+    return this.insertPictureWith({ ...signature, announce: 'Signature added. Drag it into place; its handles resize and turn it.' }, page);
+  }
+
+  /**
    * Puts `bytes` (a PNG or JPEG file's contents, named `name`) on page `n` as a new picture: one undo
    * step, and the new picture selected. What insertPicture() does once the file has been chosen.
    */
-  async insertPictureWith({ name, bytes }, n = null) {
+  async insertPictureWith({ name, bytes, pointsPerPixel, announce = `Picture “${name}” added.` }, n = null) {
     const page = this.#insertionPage(n);
     if (!page) return false;
     if (!(await this.commitPending())) return false;
@@ -419,8 +439,8 @@ export class TextEditor {
       return false;
     }
     try {
-      const key = await this.#view.textEditing.insertImage(page, bytes, { basis: displayBasis(pageView), box: pageView.pdfPage.view });
-      this.#announce(`Picture “${name}” added.`);
+      const key = await this.#view.textEditing.insertImage(page, bytes, { basis: displayBasis(pageView), box: pageView.pdfPage.view, pointsPerPixel });
+      this.#announce(announce);
       this.#warnTagged('inserted');
       await this.#selectWhenShown(page, [key]);
       return true;

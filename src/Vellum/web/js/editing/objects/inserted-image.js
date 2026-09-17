@@ -62,15 +62,16 @@ export function planInsertion({ picture, transform, entry, id = newId() }) {
  * Where a new picture of `width` × `height` pixels goes: centred on the page, upright as the page is
  * shown (`basis`, page-space.js displayBasis, whatever the page's or the view's rotation), at its
  * natural size (96 pixels to the inch) but no more than half the page's shown width or height, never
- * enlarged. `box` is the page's crop box in user space. A transform, or null when there is none.
+ * enlarged. `box` is the page's crop box in user space. `pointsPerPixel` makes a picture made at a
+ * higher density start smaller (a signature, ui/signature.js). A transform, or null when there is none.
  */
-export function defaultPlacement({ width, height, box, basis }) {
+export function defaultPlacement({ width, height, box, basis, pointsPerPixel = POINTS_PER_PIXEL }) {
   const back = basis ? invert(basis) : null;
   if (!back || !(width > 0 && height > 0) || !box) return null;
   const shown = [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]].map(([x, y]) => applyLinear(basis, x, y));
   const span = (axis) => Math.max(...shown.map((p) => p[axis])) - Math.min(...shown.map((p) => p[axis]));
-  const w = width * POINTS_PER_PIXEL;
-  const h = height * POINTS_PER_PIXEL;
+  const w = width * pointsPerPixel;
+  const h = height * pointsPerPixel;
   const factor = Math.min(1, (MAX_SHARE * span(0)) / w, (MAX_SHARE * span(1)) / h);
   // Upright on screen: shown space runs downwards, and an image's unit square runs up.
   const linear = multiply([w * factor, 0, 0, -h * factor, 0, 0], back);
