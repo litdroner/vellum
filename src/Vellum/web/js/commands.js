@@ -113,6 +113,11 @@ export function createCommands(app, ui, actions) {
       when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
+    'forms.addText': { group: 'Forms', icon: 'text-select', doc: true, label: 'Add text field', run: () => doc()?.annotLayer.startField('text') },
+    'forms.addCheckbox': { group: 'Forms', icon: 'check', doc: true, label: 'Add checkbox', run: () => doc()?.annotLayer.startField('checkbox') },
+    'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
+    'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
+
     'edit.text': { group: 'Edit', icon: 'type', doc: true, label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
 
     'arrange.alignLeft': { group: 'Arrange', icon: 'align-start-vertical', doc: true, label: 'Align left edges', run: () => arrange('left') },

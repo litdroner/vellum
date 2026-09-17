@@ -4,6 +4,7 @@ import { copySelection } from '../commands.js';
 import { pageViewAt, toPdfPoint, tolerancePoints } from '../page-space.js';
 import { PALETTES } from './model.js';
 import { selectionToQuads, bounds, hitTest, inkPathD, simplify, underlineSegments, NOTE_SIZE } from './geometry.js';
+import { FIELD_KINDS, MIN_FIELD_SIZE, uniqueFieldName } from '../forms/fields.js';
 
 // Vellum's own annotation layer, one per document.
 //
@@ -22,7 +23,8 @@ function svg(tag, attrs = {}) {
 }
 
 // 'edit' (changing the page's own text) is handled by ui/text-editor.js; this layer only draws its outlines.
-export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink', 'edit'];
+// 'field' places a new form field of kind `fieldKind` (forms/fields.js) where the page is clicked.
+export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink', 'edit', 'field'];
 
 /** Tool colours and pen width: shared by every document and remembered between sessions. */
 export const toolPrefs = (() => {
@@ -44,6 +46,7 @@ const noteDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeS
 export class AnnotationLayer extends EventTarget {
   tool = 'select';
   selectedId = null;
+  fieldKind = 'text';
 
   #pages = new Map(); // page number → { div, hl, marks, hlGroup, marksGroup, decorGroup, uiGroup, shapes, ready }
   #decor = new Map(); // page number → shapes other tools asked to draw (see decorate)
@@ -55,6 +58,8 @@ export class AnnotationLayer extends EventTarget {
   #lastInk = null;
   #hoverQueued = false;
   #suppressClick = false;
+  #liveField = null; // { id, rect } while a created field is dragged or resized
+  #lastRadio = null; // the group the next radio button joins
 
   constructor(view, store) {
     super();
@@ -192,6 +197,46 @@ export class AnnotationLayer extends EventTarget {
     this.#openEditor(note, true);
   }
 
+  /** Picks the field tool for one kind of field: the next click on a page places it. */
+  startField(kind) {
+    if (!FIELD_KINDS[kind]) return;
+    this.fieldKind = kind;
+    this.setTool('field');
+  }
+
+  /**
+   * Places a new form field of `kind` with its top-left corner at a screen point and selects it. It
+   * becomes a real field of the file when the file is saved (forms/fields.js writeNewFields).
+   */
+  addFieldAt(clientX, clientY, kind = this.fieldKind) {
+    if (this.view.rebuilding || !FIELD_KINDS[kind]) return null;
+    const at = this.#pageAt(document.elementFromPoint(clientX, clientY));
+    if (!at) return null;
+    if (!this.view.canEditPages) {
+      this.view.notify?.('This PDF is protected, so Vellum can’t add form fields to it.');
+      return null;
+    }
+    const { width, height, base } = FIELD_KINDS[kind];
+    const [x, y] = this.#toPdf(at.pageView, clientX, clientY);
+    const fields = this.store.all.filter((a) => a.type === 'field');
+    const taken = new Set([...(this.view.fieldNames ?? []), ...fields.map((a) => a.name)]);
+    const data = { type: 'field', kind, page: at.n, rect: [x, y - height, x + width, y] };
+    if (kind === 'radio') {
+      const group = this.#lastRadio && fields.some((a) => a.kind === 'radio' && a.name === this.#lastRadio) ? this.#lastRadio : uniqueFieldName(base, taken);
+      const values = new Set(fields.filter((a) => a.kind === 'radio' && a.name === group).map((a) => a.value));
+      Object.assign(data, { name: group, value: uniqueFieldName('Option', values) });
+      this.#lastRadio = group;
+    } else {
+      data.name = uniqueFieldName(base, taken);
+      if (kind === 'dropdown') data.options = ['Option 1', 'Option 2'];
+    }
+    const field = this.store.create(data);
+    this.store.add(field);
+    if (this.tool === 'field') this.setTool('select');
+    this.select(field.id);
+    return field;
+  }
+
   editNote(id) {
     const a = this.store.get(id);
     if (a?.type === 'note') this.#openEditor(a, false);
@@ -250,7 +295,8 @@ export class AnnotationLayer extends EventTarget {
     const layer = this.#pages.get(n);
     if (!layer) return;
     const seen = new Set();
-    for (const a of this.store.forPage(n)) {
+    for (const stored of this.store.forPage(n)) {
+      const a = this.#liveField?.id === stored.id ? { ...stored, rect: this.#liveField.rect } : stored;
       seen.add(a.id);
       const entry = layer.shapes.get(a.id);
       if (entry?.a === a) continue;
@@ -271,8 +317,10 @@ export class AnnotationLayer extends EventTarget {
     }
     const ui = [];
     if (this.#pendingNote?.page === n) ui.push(this.#shape(this.#pendingNote));
-    const selected = this.selectedId && this.store.get(this.selectedId);
+    let selected = this.selectedId && this.store.get(this.selectedId);
+    if (selected && this.#liveField?.id === selected.id) selected = { ...selected, rect: this.#liveField.rect };
     if (selected?.page === n) ui.push(this.#outline(selected));
+    if (selected?.page === n && selected.type === 'field') ui.push(this.#fieldHandle(selected));
     if (this.#stroke?.page === n) ui.push(this.#stroke.el);
     layer.uiGroup.replaceChildren(...ui);
   }
@@ -298,6 +346,9 @@ export class AnnotationLayer extends EventTarget {
           'stroke-width': a.width, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
         });
         break;
+      case 'field':
+        el = this.#fieldShape(a);
+        break;
       default:
         el = this.#noteShape(a);
     }
@@ -319,6 +370,38 @@ export class AnnotationLayer extends EventTarget {
       g.append(title);
     }
     return g;
+  }
+
+  /** A created form field: its box, and its name (or a tick, a dot) drawn upright inside it. */
+  #fieldShape(a) {
+    const [x1, y1, x2, y2] = a.rect;
+    const w = x2 - x1;
+    const hgt = y2 - y1;
+    const g = svg('g', { class: `vl-field vl-field-${a.kind}` });
+    const round = a.kind === 'radio' ? Math.min(w, hgt) / 2 : 1.5;
+    g.append(svg('rect', { class: 'vl-field-box', x: x1, y: y1, width: w, height: hgt, rx: round }));
+    const label = svg('g', { transform: `translate(${x1} ${y2}) scale(1 -1)` });
+    if (a.kind === 'checkbox') {
+      label.append(svg('path', { class: 'vl-field-mark', d: `M${w * 0.22} ${hgt * 0.52}L${w * 0.42} ${hgt * 0.72}L${w * 0.78} ${hgt * 0.3}` }));
+    } else if (a.kind === 'radio') {
+      label.append(svg('circle', { class: 'vl-field-dot', cx: w / 2, cy: hgt / 2, r: Math.min(w, hgt) * 0.22 }));
+    } else {
+      const size = Math.max(4, Math.min(10, hgt * 0.55));
+      const text = svg('text', { class: 'vl-field-label', x: 3, y: hgt / 2 + size * 0.36, 'font-size': size });
+      text.textContent = a.kind === 'dropdown' ? `${a.name} ▾` : a.name;
+      label.append(text);
+    }
+    g.append(label);
+    const title = svg('title');
+    title.textContent = a.kind === 'radio' ? `${FIELD_KINDS.radio.label}: ${a.name} = ${a.value}` : `${FIELD_KINDS[a.kind].label}: ${a.name}`;
+    g.append(title);
+    return g;
+  }
+
+  /** The corner a selected field is resized from (its bottom-right on an unrotated page). */
+  #fieldHandle(a) {
+    const size = 7;
+    return svg('rect', { class: 'vl-field-handle', 'data-id': a.id, x: a.rect[2] - size / 2, y: a.rect[1] - size / 2, width: size, height: size });
   }
 
   #outline(a) {
@@ -367,11 +450,14 @@ export class AnnotationLayer extends EventTarget {
     else if (this.tool === 'select') {
       const note = e.target.closest?.('.vl-note[data-id]');
       if (note) this.#startNoteDrag(e, note);
+      const handle = e.target.closest?.('.vl-field-handle[data-id]');
+      const field = handle ?? e.target.closest?.('.vl-field[data-id]');
+      if (field) this.#startFieldDrag(e, field.dataset.id, handle ? 'resize' : 'move');
     }
   }
 
   #onPointerUp(e) {
-    if (e.button !== 0 || this.tool === 'ink' || this.tool === 'note' || this.tool === 'edit') return;
+    if (e.button !== 0 || this.tool === 'ink' || this.tool === 'note' || this.tool === 'edit' || this.tool === 'field') return;
     // Let the browser settle the selection first.
     setTimeout(() => {
       const selection = getSelection();
@@ -390,6 +476,10 @@ export class AnnotationLayer extends EventTarget {
     const at = this.#pageAt(e.target);
     if (this.tool === 'note') {
       if (at) this.addNoteAt(e.clientX, e.clientY);
+      return;
+    }
+    if (this.tool === 'field') {
+      if (at) this.addFieldAt(e.clientX, e.clientY);
       return;
     }
     if (this.tool !== 'select' || e.target.closest?.('.annotationLayer a')) return;
@@ -520,6 +610,42 @@ export class AnnotationLayer extends EventTarget {
     window.addEventListener('pointerup', up);
   }
 
+  /** Moves a created field with the pointer, or resizes it from its handle: one undo step when dropped. */
+  #startFieldDrag(e, id, mode) {
+    const a = this.store.get(id);
+    const at = this.#pageAt(e.target);
+    if (!a || !at) return;
+    e.preventDefault();
+    const origin = this.#toPdf(at.pageView, e.clientX, e.clientY);
+    const start = [e.clientX, e.clientY];
+    const [x1, y1, x2, y2] = a.rect;
+    let moved = false;
+    const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - start[0], ev.clientY - start[1]) < 4) return;
+      moved = true;
+      const [px, py] = this.#toPdf(at.pageView, ev.clientX, ev.clientY);
+      const rect = mode === 'move'
+        ? [x1 + px - origin[0], y1 + py - origin[1], x2 + px - origin[0], y2 + py - origin[1]]
+        : [x1, Math.min(py, y2 - MIN_FIELD_SIZE), Math.max(px, x1 + MIN_FIELD_SIZE), y2];
+      this.#liveField = { id, rect };
+      this.#closePopover();
+      this.#render(a.page);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      const live = this.#liveField;
+      this.#liveField = null;
+      if (!moved || !live) return;
+      this.#suppressClick = true;
+      setTimeout(() => { this.#suppressClick = false; });
+      this.store.update(id, { rect: live.rect.map((v) => Math.round(v * 100) / 100) });
+      this.select(id);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
   // ---- popovers ------------------------------------------------------------------
 
   #swatch(color, pressed, onPick, size = 22) {
@@ -560,8 +686,53 @@ export class AnnotationLayer extends EventTarget {
     this.#openPopover(el, () => top, 'selection');
   }
 
+  /** Bar for a selected created field: its name (a radio button's group and value), a dropdown's options, delete. */
+  #showFieldBar(a) {
+    // Radio buttons share their group's name; every other field's name is its own.
+    const taken = () => new Set([...(this.view.fieldNames ?? []), ...this.store.all
+      .filter((f) => f.type === 'field' && f.id !== a.id && !(a.kind === 'radio' && f.kind === 'radio')).map((f) => f.name)]);
+    const input = (label, value, width, apply) => {
+      const el = h('input', { class: 'field vl-field-input', type: 'text', 'aria-label': label, title: label, placeholder: label, spellcheck: 'false', style: `width:${width}px` });
+      el.value = value;
+      el.addEventListener('change', () => el.toggleAttribute('aria-invalid', !apply(el.value.trim())));
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') el.dispatchEvent(new Event('change'));
+      });
+      return el;
+    };
+    const parts = [h('span', { class: 'vl-field-kind', text: FIELD_KINDS[a.kind].label })];
+    parts.push(input(a.kind === 'radio' ? 'Group name' : 'Field name', a.name, 110, (name) => {
+      if (!name || name.includes('.') || taken().has(name)) return false;
+      if (a.kind === 'radio') this.#lastRadio = name;
+      if (name !== a.name) this.store.update(a.id, { name });
+      return true;
+    }));
+    if (a.kind === 'radio') {
+      parts.push(input('Value when chosen', a.value, 80, (value) => {
+        if (!value) return false;
+        if (value !== a.value) this.store.update(a.id, { value });
+        return true;
+      }));
+    }
+    if (a.kind === 'dropdown') {
+      parts.push(input('Options, separated by commas', a.options.join(', '), 170, (text) => {
+        const options = [...new Set(text.split(',').map((o) => o.trim()).filter(Boolean))];
+        if (!options.length) return false;
+        if (options.join('\n') !== a.options.join('\n')) this.store.update(a.id, { options });
+        return true;
+      }));
+    }
+    parts.push(h('div', { class: 'vl-sep' }), this.#popButton('trash-2', 'Delete (Del)', () => this.deleteSelected()));
+    const el = h('div', { class: 'vl-pop ui', role: 'toolbar', 'aria-label': 'Form field' }, ...parts);
+    this.#openPopover(el, () => this.#clientRect(this.store.get(a.id) ?? a), 'annotation');
+  }
+
   /** Bar for a selected annotation: colour and delete. */
   #showAnnotationBar(a) {
+    if (a.type === 'field') {
+      this.#showFieldBar(a);
+      return;
+    }
     const el = h('div', { class: 'vl-pop ui', role: 'toolbar', 'aria-label': 'Annotation' },
       ...PALETTES[a.type].map((color) => this.#swatch(color, color.toLowerCase() === a.color.toLowerCase(), () => {
         toolPrefs[a.type] = color;

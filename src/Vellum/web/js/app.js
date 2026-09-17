@@ -519,9 +519,17 @@ document.addEventListener('contextmenu', (e) => {
   if (hit) {
     layer.select(hit.id, { popover: false });
     if (hit.type === 'note') items.push({ label: 'Edit note', icon: 'sticky-note', action: () => layer.editNote(hit.id) });
-    items.push({ label: 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
+    items.push({ label: hit.type === 'field' ? 'Delete form field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
   } else if (!selected && onPage) {
     items.push({ label: 'Add note here', icon: 'sticky-note', action: () => layer.addNoteAt(e.clientX, e.clientY) }, '-');
+    if (view.canEditPages) {
+      items.push(
+        { label: 'Add text field here', icon: 'text-select', action: () => layer.addFieldAt(e.clientX, e.clientY, 'text') },
+        { label: 'Add checkbox here', icon: 'check', action: () => layer.addFieldAt(e.clientX, e.clientY, 'checkbox') },
+        { label: 'Add radio button here', icon: 'list-checks', action: () => layer.addFieldAt(e.clientX, e.clientY, 'radio') },
+        { label: 'Add dropdown here', icon: 'chevron-down', action: () => layer.addFieldAt(e.clientX, e.clientY, 'dropdown') },
+        '-');
+    }
   }
   const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;
   if (pageNumber && view.textEditor?.active) {

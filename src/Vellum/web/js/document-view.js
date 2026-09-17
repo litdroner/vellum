@@ -156,6 +156,12 @@ export class DocumentView extends EventTarget {
     };
   }
 
+  /** Names of the PDF's own form fields on screen (a created field must not reuse one). */
+  get fieldNames() { return new Set([...this.#fields.values()].map((f) => f.name)); }
+
+  /** Shows a message about this document (as its own notices are shown). */
+  notify(message) { this.#notice(message); }
+
   /** Pages can be rearranged unless the file is protected (it can't be rewritten). */
   get canEditPages() { return this.status === 'ready' && !this.encrypted; }
 

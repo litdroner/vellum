@@ -4,10 +4,11 @@
 //
 // An annotation is plain data. Geometry is in PDF user space (points, y pointing up), so it's
 // independent of zoom and rotation and can be written straight into the file.
-//   { id, type: 'highlight' | 'underline' | 'ink' | 'note', page, color,
+//   { id, type: 'highlight' | 'underline' | 'ink' | 'note' | 'field', page, color,
 //     quads?: [[ulx,uly, urx,ury, llx,lly, lrx,lry], ...]   highlight / underline
 //     paths?: [[x,y, x,y, ...], ...], width?                ink
 //     point?: [x, y]                                        note (icon's top-left corner)
+//     kind?, rect?: [x1, y1, x2, y2], name, value?, options? field: a form field to create (forms/fields.js)
 //     contents, author, created, modified }
 
 export const PALETTES = {
