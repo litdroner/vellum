@@ -5,7 +5,7 @@
 // Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection, manipulation,
 // multi-select, page-changes, copy-paste, page-text-font, forms, signature, redaction, page-stamps, find-replace, compare, history, structure, semantic-search by default;
 // ocr, performance and updates only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed;
-// updates needs Inno Setup 6). A suite may export prepare({ dir }) returning extra environment for the app, and cleanup().
+// updates needs Inno Setup 6). A suite may export prepare({ dir }) returning { env, exe } (extra environment, another build to start), and cleanup().
 //
 // Safety: stops if Vellum is already running (it's single-instance, so a test would talk to that
 // copy). The app runs with a throwaway data folder (VELLUM_DATA_DIR, honoured by Debug builds only),
@@ -69,15 +69,18 @@ for (const name of suites) {
   console.log(`\n=== ${name}${Object.values(suite.external ?? {}).some((v) => process.env[v]) ? ' (with a document from the environment)' : ''}`);
   const results = [];
   let extraEnv = {};
+  let exe = EXE;
   try {
-    extraEnv = (await suite.prepare?.({ dir })) ?? {};
+    const prepared = (await suite.prepare?.({ dir })) ?? {};
+    extraEnv = prepared.env ?? {};
+    exe = prepared.exe ?? EXE;
   } catch (err) {
     results.push({ area: null, ok: false, label: 'the suite was prepared', detail: String(err?.message ?? err).slice(0, 800) });
     console.log(`FAIL  the suite couldn’t be prepared: ${err?.message ?? err}`);
     report.push({ suite: name, passed: 0, failed: 1, results });
     continue;
   }
-  const app = spawn(EXE, Object.values(files), {
+  const app = spawn(exe, Object.values(files), {
     stdio: 'ignore',
     env: { ...process.env, ...extraEnv, VELLUM_DATA_DIR: dataDir, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9222' },
   });
