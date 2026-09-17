@@ -545,30 +545,21 @@ document.addEventListener('contextmenu', (e) => {
     // A form field is named as one, so it is never taken for text on the page (a Text Box).
     if (hit.type === 'field') items.push({ heading: `Form Field · ${FIELD_KINDS[hit.kind]?.label ?? 'Field'}` });
     items.push({ label: hit.type === 'field' ? 'Delete Form Field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
-  } else if (!selected && onPage) {
-    items.push({ label: 'Add note here', icon: 'sticky-note', action: () => layer.addNoteAt(e.clientX, e.clientY) }, '-');
-    if (view.canEditPages) {
-      // Form fields (AcroForm) are their own section, apart from Text Box: a Text Field is a box to fill
-      // in, not text written on the page.
-      items.push(
-        { heading: 'Form Fields' },
-        { label: 'Add Text Field here', icon: 'text-cursor-input', action: () => layer.addFieldAt(e.clientX, e.clientY, 'text') },
-        { label: 'Add Checkbox here', icon: 'check', action: () => layer.addFieldAt(e.clientX, e.clientY, 'checkbox') },
-        { label: 'Add Radio Button here', icon: 'list-checks', action: () => layer.addFieldAt(e.clientX, e.clientY, 'radio') },
-        { label: 'Add Dropdown here', icon: 'chevron-down', action: () => layer.addFieldAt(e.clientX, e.clientY, 'dropdown') },
-        '-');
-    }
   }
+  // Sections, most common first: Page Content (editing what is on the page), Page Tools, then Form Fields
+  // last and apart, so a Form Text Field is never taken for a Text Box.
   const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;
+  const addHere = !hit && !selected && onPage;
+  items.push({ heading: 'Page Content' });
   if (pageNumber && view.textEditor?.active) {
     items.push(
-      { heading: 'Page Content' },
       { label: 'Add Text Box', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
       { label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) },
       { label: 'Add signature…', icon: 'pen-line', action: () => view.textEditor.addSignature(pageNumber) },
-      '-',
     );
   }
+  if (addHere) items.push({ label: 'Add note here', icon: 'sticky-note', action: () => layer.addNoteAt(e.clientX, e.clientY) });
+  items.push(menuItem('edit.selectAll', 'text-select'), menuItem('find.open', 'search'), '-');
   if (link && /^(https?|mailto):/i.test(link.href)) {
     items.push({ label: 'Open link', icon: 'external-link', action: () => window.open(link.href, '_blank') });
     items.push({ label: 'Copy link address', icon: 'copy', action: () => copyText(link.href) }, '-');
@@ -577,6 +568,7 @@ document.addEventListener('contextmenu', (e) => {
   if (s.canUndo || s.canRedo) {
     items.push(menuItem('edit.undo', 'undo-2', { disabled: !s.canUndo }), menuItem('edit.redo', 'redo-2', { disabled: !s.canRedo }), '-');
   }
+  items.push({ heading: 'Page Tools' });
   const pageEl = e.target.closest('.page');
   const pageId = pageEl && view.shownPlan?.[Number(pageEl.dataset.pageNumber) - 1]?.id;
   if (pageId && s.canEditPages) {
@@ -584,7 +576,7 @@ document.addEventListener('contextmenu', (e) => {
       { label: 'Rotate page right', icon: 'rotate-cw', action: () => actions.pages.rotate(view, [pageId], 90) },
       { label: 'Rotate page left', icon: 'rotate-ccw', action: () => actions.pages.rotate(view, [pageId], -90) },
       { label: 'Delete page', icon: 'trash-2', action: () => actions.pages.remove(view, [pageId]) },
-      '-');
+    );
   }
   items.push(
     menuItem('page.prev', 'chevron-up', { disabled: s.pageNumber <= 1, shortcut: null }),
@@ -597,11 +589,19 @@ document.addEventListener('contextmenu', (e) => {
     '-',
     menuItem('view.rotateCw', 'rotate-cw'),
     menuItem('view.rotateCcw', 'rotate-ccw'),
-    '-',
-    menuItem('edit.selectAll', 'text-select'),
-    menuItem('find.open', 'search'),
     menuItem('file.print', 'printer'),
   );
+  if (addHere && view.canEditPages) {
+    // Form fields (AcroForm): a Text Field is a box to fill in, not text written on the page.
+    items.push(
+      '-',
+      { heading: 'Form Fields' },
+      { label: 'Add Text Field here', icon: 'text-cursor-input', action: () => layer.addFieldAt(e.clientX, e.clientY, 'text') },
+      { label: 'Add Checkbox here', icon: 'check', action: () => layer.addFieldAt(e.clientX, e.clientY, 'checkbox') },
+      { label: 'Add Radio Button here', icon: 'list-checks', action: () => layer.addFieldAt(e.clientX, e.clientY, 'radio') },
+      { label: 'Add Dropdown here', icon: 'chevron-down', action: () => layer.addFieldAt(e.clientX, e.clientY, 'dropdown') },
+    );
+  }
   openMenu(items, { x: e.clientX, y: e.clientY });
 });
 

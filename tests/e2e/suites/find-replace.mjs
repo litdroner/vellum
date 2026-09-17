@@ -159,6 +159,11 @@ export async function run(t) {
   let items = await menu();
   check('the page menu has a “Form Fields” section with “Add Text Field here”', items.includes('# Form Fields') && items.includes('Add Text Field here'), JSON.stringify(items));
   check('…and outside Edit mode no Text Box command, so nothing reads as two kinds of “text”', !items.some((s) => /Text Box/.test(s)), JSON.stringify(items));
+  check('sections run Page Content, Page Tools, then Form Fields last', items[0] === '# Page Content'
+    && items.indexOf('# Page Content') < items.indexOf('# Page Tools') && items.indexOf('# Page Tools') < items.indexOf('# Form Fields')
+    && ['Add note here', 'Select all', 'Find'].every((l) => { const i = items.findIndex((s) => s.startsWith(l)); return i > 0 && i < items.indexOf('# Page Tools'); }), JSON.stringify(items));
+  check('every Form Field action stays, in the last section', ['Add Text Field here', 'Add Checkbox here', 'Add Radio Button here', 'Add Dropdown here']
+    .every((l) => items.indexOf(l) > items.indexOf('# Form Fields')) && items.at(-1) === 'Add Dropdown here', JSON.stringify(items));
   await closeMenu();
 
   await q(`${V(PARA)}.setTool('edit')`);
@@ -175,8 +180,9 @@ export async function run(t) {
   await waitFor(`document.querySelector('.menu')`, 3000);
   items = await menu();
   check('a selected text box is named “Text Box” with its own actions, first', items[0] === '# Text Box' && items.includes('Copy Text Box'), JSON.stringify({ items, at, under: await q(`document.elementFromPoint(${at.x}, ${at.y})?.className?.baseVal ?? document.elementFromPoint(${at.x}, ${at.y})?.className`), selection: await q(`JSON.stringify(${V(PARA)}.objectSelection.current)`) }));
-  check('“Add Text Box” sits in its own section, apart from “Form Fields”', items.includes('# Page Content') && items.includes('Add Text Box')
-    && items.indexOf('Add Text Box') > items.indexOf('# Page Content') && !items.slice(items.indexOf('# Form Fields'), items.indexOf('# Page Content')).includes('Add Text Box'), JSON.stringify(items));
+  check('“Add Text Box” sits in Page Content, above the Page Tools and any Form Fields', items.includes('# Page Content') && items.includes('Add Text Box')
+    && items.indexOf('Add Text Box') > items.indexOf('# Page Content') && items.indexOf('Add Text Box') < items.indexOf('# Page Tools')
+    && (!items.includes('# Form Fields') || items.indexOf('Add Text Box') < items.indexOf('# Form Fields')), JSON.stringify(items));
   check('the two “add” commands have different icons', await q(`(() => { const icon = (label) => [...document.querySelectorAll('.menu-item')].find((b) => b.querySelector('.menu-label')?.textContent === label)?.querySelector('.menu-icon').innerHTML; return Boolean(icon('Add Text Box')) && icon('Add Text Box') !== icon('Add Text Field here'); })()`));
   await shot('menu-text-box');
   await closeMenu();
