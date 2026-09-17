@@ -34,6 +34,8 @@ export function installShortcuts(commands) {
   }
 
   window.addEventListener('keydown', (e) => {
+    // A window with keys of its own (Compare) is open over the documents: they aren't the target.
+    if (document.querySelector('[data-own-keys]')) return;
     const editing = isEditable(e.target);
     const command = byCombo.get(comboFromEvent(e))
       ?.find((c) => (!editing || c.global) && (!c.when || c.when(e)));

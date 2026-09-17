@@ -5,7 +5,7 @@ import fs from 'node:fs';
 const VK = {
   Enter: 13, Escape: 27, Tab: 9, Space: 32, Backspace: 8, Delete: 46,
   PageUp: 33, PageDown: 34, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
-  F1: 112, F2: 113, F3: 114, F4: 115, F5: 116, F11: 122, F12: 123, '=': 187, '-': 189,
+  F1: 112, F2: 113, F3: 114, F4: 115, F5: 116, F7: 118, F11: 122, F12: 123, '=': 187, '-': 189,
   // Punctuation needs its real virtual-key code and physical code, or Chromium drops the event.
   '[': 219, ']': 221, ',': 188, '.': 190, '/': 191, ';': 186, "'": 222, '`': 192,
 };

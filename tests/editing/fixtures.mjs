@@ -801,6 +801,24 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     ]));
   });
 
+  // PDF Compare: B is A with text removed, changed and added on page 1, pages 2 and 3 swapped, page 4
+  // removed and a new page at the end.
+  const lines = (...rows) => rows.map(([size, y, s]) => text('F1', size, 72, y, s));
+  await build('compare-a', async (b) => {
+    const res = { Font: { F1: b.std(StandardFonts.Helvetica) } };
+    b.page(PageSizes.Letter, lines([24, 700, 'Quarterly report'], [12, 660, 'Prepared for the finance team'], [12, 640, 'Revenue grew by ten percent this year']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Appendix A: methods'], [12, 660, 'Samples were collected weekly from each site']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Appendix B: data'], [12, 660, 'Tables of results follow in order of collection']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Contact details'], [12, 660, 'Write to the office in Oslo for copies']), res);
+  });
+  await build('compare-b', async (b) => {
+    const res = { Font: { F1: b.std(StandardFonts.Helvetica) } };
+    b.page(PageSizes.Letter, lines([24, 700, 'Quarterly report'], [12, 660, 'Revenue grew by twelve percent this year'], [12, 640, 'Costs stayed flat']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Appendix B: data'], [12, 660, 'Tables of results follow in order of collection']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Appendix A: methods'], [12, 660, 'Samples were collected weekly from each site']), res);
+    b.page(PageSizes.Letter, lines([20, 700, 'Glossary'], [12, 660, 'Terms used throughout this report are defined here']), res);
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');
