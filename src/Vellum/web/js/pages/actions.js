@@ -50,8 +50,43 @@ export function createPageActions({ onOpenFile }) {
   const allowed = async (view) => usable(view) && view.confirmChanges();
   const undo = (view) => ({ label: 'Undo', run: () => view.annotations.undo() });
   const numbersOf = (view, ids) => ids.map((id) => view.annotations.plan.findIndex((e) => e.id === id) + 1).filter((n) => n > 0);
+  // Pages copied with Ctrl+C in the organiser: plan entry ids of one document, pasted into that document.
+  let copied = null;
 
   const actions = {
+    copy(view, ids) {
+      if (!usable(view) || !ids.length) return;
+      copied = { view, ids };
+      toast(`Copied ${plural(ids.length, 'page')}`);
+    },
+
+    /** Pastes the copied pages at insertion point `index`. */
+    async paste(view, index) {
+      if (!copied) return;
+      if (copied.view !== view) {
+        toast('Pages are pasted into the document they were copied from. To add pages from another PDF, use Insert pages from file.');
+        return;
+      }
+      const ids = copied.ids.filter((id) => view.annotations.plan.some((e) => e.id === id));
+      if (!ids.length) {
+        toast('The copied pages are no longer in this document.', { kind: 'error' });
+        return;
+      }
+      if (!(await allowed(view))) return;
+      if (view.copyPages(ids, index)) toast(`Pasted ${plural(ids.length, 'page')}`, { action: undo(view) });
+    },
+
+    get canPaste() { return Boolean(copied); },
+
+    /** Moves pages one place up (-1) or down (1), keeping them together. */
+    async moveBy(view, ids, step) {
+      const numbers = numbersOf(view, ids);
+      if (!numbers.length) return;
+      const index = step < 0 ? Math.min(...numbers) - 2 : Math.max(...numbers) + 1;
+      if (index < 0 || index > view.annotations.plan.length) return;
+      await actions.move(view, ids, index);
+    },
+
     async rotate(view, ids, delta) {
       if (await allowed(view)) view.rotatePages(ids, delta);
     },
@@ -141,7 +176,9 @@ export function createPageActions({ onOpenFile }) {
       openMenu([
         { label: `Rotate ${which} right`, icon: 'rotate-cw', disabled: off, action: () => actions.rotate(view, ids, 90) },
         { label: `Rotate ${which} left`, icon: 'rotate-ccw', disabled: off, action: () => actions.rotate(view, ids, -90) },
-        { label: `Duplicate ${which}`, icon: 'copy-plus', disabled: off, action: () => actions.duplicate(view, ids) },
+        { label: `Duplicate ${which}`, icon: 'copy-plus', shortcut: 'Ctrl+D', disabled: off, action: () => actions.duplicate(view, ids) },
+        { label: `Copy ${which}`, icon: 'copy', shortcut: 'Ctrl+C', disabled: off, action: () => actions.copy(view, ids) },
+        { label: 'Paste pages after', icon: 'files', shortcut: 'Ctrl+V', disabled: off || !copied, action: () => actions.paste(view, index) },
         '-',
         { label: 'Insert blank page after', icon: 'file-plus', disabled: off, action: () => actions.insertBlank(view, index) },
         { label: 'Insert pages from file…', icon: 'files', disabled: off, action: () => actions.insertFromFile(view, index) },

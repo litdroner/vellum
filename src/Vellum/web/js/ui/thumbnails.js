@@ -6,6 +6,7 @@ import { icon } from '../icons.js';
 //   Ctrl/Shift+click select several pages (Esc clears, Ctrl+A selects all)
 //   drag             move the page (or all selected pages) to a new position
 //   right-click      page actions; with pages selected, a bar at the bottom offers them too
+//   Ctrl+C / Ctrl+V  copy pages, paste copies after them; Ctrl+D duplicate; Alt+Up/Down move; Delete (commands.js)
 // Thumbnails are keyed by page-plan entry id, so after pages are rearranged the ones already
 // drawn are reused instead of redrawn.
 

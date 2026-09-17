@@ -55,6 +55,17 @@ export function duplicateEntries(plan, ids) {
   return { plan: next, copies };
 }
 
+/** Inserts a copy of each entry in `ids` (in plan order) at insertion point `index`. Same result shape as duplicateEntries. */
+export function copyEntries(plan, ids, index) {
+  const copies = [];
+  const entries = plan.filter((e) => ids.has(e.id)).map((e) => {
+    const copy = { ...e, id: newId() };
+    copies.push([e.id, copy.id]);
+    return copy;
+  });
+  return { plan: insertEntries(plan, index, entries), copies };
+}
+
 /**
  * Annotation changes that keep annotations on their pages when the plan changes: moved pages take
  * their annotations along, deleted pages take theirs away, duplicated pages get copies.

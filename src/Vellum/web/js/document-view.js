@@ -9,7 +9,7 @@ import { inspectDocument, mayBeSigned } from './editing/source.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
 import { newId } from './annotations/model.js';
 import {
-  identityPlan, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, followPages,
+  identityPlan, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, copyEntries, followPages,
 } from './pages/plan.js';
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
@@ -600,6 +600,11 @@ export class DocumentView extends EventTarget {
 
   duplicatePages(ids) {
     return this.#editPlan((plan) => duplicateEntries(plan, new Set(ids)));
+  }
+
+  /** Puts copies of pages at insertion point `toIndex`, with their annotations and edits. */
+  copyPages(ids, toIndex) {
+    return this.#editPlan((plan) => copyEntries(plan, new Set(ids), toIndex));
   }
 
   /** Moves pages to insertion point `toIndex` (0 = before the first page). */

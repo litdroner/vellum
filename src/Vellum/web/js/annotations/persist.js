@@ -60,7 +60,8 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
 
   let pages = basePages;
   let dropped = null;
-  if (!isIdentity(plan, basePages.length)) ({ pages, dropped } = await arrangePages(doc, lib, basePages, plan, sources));
+  let removedFields = new Set();
+  if (!isIdentity(plan, basePages.length)) ({ pages, dropped, removedFields } = await arrangePages(doc, lib, basePages, plan, sources));
 
   // Text edits rewrite only their own pages' content streams.
   const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources, originals: basePages }) : { changed: 0 };
@@ -70,7 +71,8 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
   }
   try {
-    await writeFormValues(lib, doc, forms);
+    // Values of fields whose every widget was on a deleted page have nowhere to go.
+    await writeFormValues(lib, doc, forms.filter((f) => !removedFields.has(f.name)));
   } catch (err) {
     throw new AnnotationSaveError(err.message);
   }
@@ -172,7 +174,104 @@ async function arrangePages(doc, lib, basePages, plan, sources) {
   doc.catalog.set(PDFName.of('Pages'), treeRef);
 
   const used = new Set(pages.map((p) => p.ref.toString()));
-  return { pages, dropped: basePages.filter((p) => !used.has(p.ref.toString())).map((p) => p.ref) };
+  const droppedPages = basePages.filter((p) => !used.has(p.ref.toString()));
+  const removedFields = followFormFields(doc, lib, basePages, pages, plan, droppedPages);
+  return { pages, dropped: droppedPages.map((p) => p.ref), removedFields };
+}
+
+// Form field keys, as opposed to a widget's own (a field and its only widget may be one dictionary).
+const FIELD_KEYS = ['FT', 'T', 'TU', 'TM', 'Ff', 'V', 'DV', 'Opt', 'TI', 'I', 'MaxLen', 'DA', 'Q', 'DS', 'RV'];
+
+/**
+ * Keeps the file's own form fields true to the page plan. A repeat of a page of the opened file
+ * shows the same fields (its widgets become more widgets of them, so they share one value), not
+ * copies outside the form; the widgets of deleted pages leave their fields, and a field left with
+ * none leaves the form. Returns the full names of the fields removed.
+ */
+function followFormFields(doc, lib, basePages, pages, plan, droppedPages) {
+  const { PDFName, PDFDict, PDFArray, PDFRef } = lib;
+  const ctx = doc.context;
+  const acroForm = doc.catalog.lookup(PDFName.of('AcroForm'));
+  const topFields = acroForm instanceof PDFDict ? acroForm.lookup(PDFName.of('Fields')) : null;
+  if (!(topFields instanceof PDFArray)) return new Set();
+  const PARENT = PDFName.of('Parent');
+  const KIDS = PDFName.of('Kids');
+  const widgetsOf = (page) => {
+    const annots = page.node.Annots();
+    return annots ? annots.asArray().map((ref) => [ref, ctx.lookup(ref)]) : [];
+  };
+  const isWidget = (dict) => dict instanceof PDFDict && dict.get(PDFName.of('Subtype'))?.toString() === '/Widget';
+  // The array a field is listed in: its parent's Kids, or the form's Fields.
+  const siblingsOf = (dict) => {
+    const parent = dict.lookup(PARENT);
+    return parent instanceof PDFDict ? parent.lookup(KIDS) : topFields;
+  };
+  const indexIn = (array, ref) => array.asArray().findIndex((r) => r instanceof PDFRef && r.toString() === ref.toString());
+
+  plan.forEach((e, i) => {
+    if (e.src !== 'base' || pages[i] === basePages[e.index]) return;
+    const originals = widgetsOf(basePages[e.index]);
+    const copies = widgetsOf(pages[i]);
+    originals.forEach(([ref, dict], k) => {
+      const [copyRef, copy] = copies[k] ?? [];
+      if (!isWidget(dict) || !(ref instanceof PDFRef) || !(copyRef instanceof PDFRef) || !isWidget(copy)) return;
+      if (dict.has(PDFName.of('T'))) {
+        // A field that is its own widget: split it into a field with this widget as its first kid.
+        const siblings = siblingsOf(dict);
+        const at = siblings instanceof PDFArray ? indexIn(siblings, ref) : -1;
+        if (at < 0) return; // not a field of this form
+        const field = ctx.obj({});
+        for (const key of FIELD_KEYS) {
+          const value = dict.get(PDFName.of(key));
+          if (value !== undefined) field.set(PDFName.of(key), value);
+          dict.delete(PDFName.of(key));
+        }
+        if (dict.get(PARENT)) field.set(PARENT, dict.get(PARENT));
+        field.set(KIDS, ctx.obj([ref]));
+        const fieldRef = ctx.register(field);
+        siblings.set(at, fieldRef);
+        dict.set(PARENT, fieldRef);
+      }
+      const parentRef = dict.get(PARENT);
+      const parent = dict.lookup(PARENT);
+      if (!(parentRef instanceof PDFRef) || !(parent instanceof PDFDict)) return;
+      for (const key of FIELD_KEYS) copy.delete(PDFName.of(key));
+      copy.set(PARENT, parentRef);
+      if (copy.has(PDFName.of('P'))) copy.set(PDFName.of('P'), pages[i].ref);
+      parent.lookup(KIDS)?.push(copyRef);
+    });
+  });
+
+  const removed = new Set();
+  const nameOf = (dict) => {
+    const parts = [];
+    for (let d = dict; d instanceof PDFDict; d = d.lookup(PARENT)) {
+      const t = d.lookup(PDFName.of('T'));
+      if (t?.decodeText) parts.unshift(t.decodeText());
+    }
+    return parts.join('.');
+  };
+  // Takes a field or widget out of the array it is listed in; a parent left empty goes too.
+  const detach = (ref, dict) => {
+    const siblings = siblingsOf(dict);
+    const at = siblings instanceof PDFArray ? indexIn(siblings, ref) : -1;
+    if (at < 0) return;
+    siblings.remove(at);
+    const parentRef = dict.get(PARENT);
+    const parent = dict.lookup(PARENT);
+    if (siblings !== topFields && siblings.size() === 0 && parentRef instanceof PDFRef) {
+      if (parent.has(PDFName.of('T'))) removed.add(nameOf(parent));
+      detach(parentRef, parent);
+    }
+  };
+  for (const page of droppedPages) {
+    for (const [ref, dict] of widgetsOf(page)) {
+      if (!isWidget(dict) || !(ref instanceof PDFRef)) continue;
+      if (dict.has(PDFName.of('T'))) removed.add(nameOf(dict));
+      detach(ref, dict);
+    }
+  }
+  return removed;
 }
 
 /**

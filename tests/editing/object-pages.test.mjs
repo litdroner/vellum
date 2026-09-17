@@ -24,7 +24,7 @@ const { apply, translate } = await engine('matrix.js');
 const { scaleAbout, quarterTurn } = await engine('objects/transform.js');
 const { composeDocument } = await webModule('annotations/persist.js');
 const { AnnotationStore } = await webModule('annotations/model.js');
-const { identityPlan, duplicateEntries, moveEntries, removeEntries, rotateEntries } = await webModule('pages/plan.js');
+const { identityPlan, duplicateEntries, copyEntries, moveEntries, removeEntries, rotateEntries } = await webModule('pages/plan.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
@@ -171,6 +171,30 @@ test('a duplicated page carries its object records, and each copy can then be ch
   assert.ok(pages[1].run('Picture one'), 'and the copy keeps its caption');
   d.store.undo();
   assert.deepEqual(await drawsPerPage(await compose(d)), [1, 1, 1, 1], 'undo puts the picture back on the copy');
+});
+
+test('pages copied and pasted elsewhere carry their records, keep their order, and undo and redo as one step', async () => {
+  const d = await open('gallery');
+  const scale = scaleAbout([72, 560], 0.5);
+  d.store.applyEdit(null, movePicture(d, 0, scale));
+  const ids = [entryOf(d, 1), entryOf(d, 0)];
+  const { plan: next, copies } = copyEntries(d.store.plan, new Set(ids), 3);
+  assert.deepEqual(next.map((e) => e.index), [0, 1, 2, 0, 1], 'copies pasted after page 3, in page order');
+  assert.deepEqual(copies.map(([from]) => from), [entryOf(d, 0), entryOf(d, 1)]);
+  changePlan(d, next, copies);
+  assert.equal(d.store.edits.length, 2, 'the pasted copy of page 1 has a record of its own');
+  const saved = await compose(d);
+  await assertIntact(saved, 'pasted');
+  const pages = await reread(saved);
+  assert.equal(pages.length, 5);
+  assert.ok(cornersNear(pages[3].pictures[0], cornersAfter(d, 0, scale)), 'the pasted copy is scaled like its page');
+  assert.ok(pages[4].run('Picture two'), 'and page 2 follows it');
+  d.store.undo();
+  assert.equal(d.store.plan.length, 3);
+  assert.equal(d.store.edits.length, 1, 'undo takes the copies and their records away');
+  d.store.redo();
+  assert.equal(d.store.plan.length, 5);
+  assert.equal(d.store.edits.length, 2, 'redo brings them back');
 });
 
 test('a turned page keeps its objects exactly where they were put, in its own user space', async () => {

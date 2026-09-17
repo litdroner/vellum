@@ -10,6 +10,7 @@ import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { composeDocument } = await webModule('annotations/persist.js');
 const { readFields } = await webModule('forms/fields.js');
+const { identityPlan, duplicateEntries, copyEntries, rotateEntries } = await webModule('pages/plan.js');
 
 let bytes;
 before(async () => { bytes = new Uint8Array(fs.readFileSync((await makeFixtures(FIXTURE_DIR)).form)); });
@@ -75,4 +76,30 @@ test('characters the standard font lacks are kept, and readers are asked to draw
 
 test('a field that is not in the file is refused with its name', async () => {
   await assert.rejects(composeDocument({ base: bytes, forms: [{ name: 'missing', type: 'text', value: 'x' }] }), /“missing”/);
+});
+
+test('a duplicated or pasted page shows the same fields, and a deleted page takes its fields out of the form', async () => {
+  const forms = [{ name: 'name', type: 'text', value: 'Ada' }, { name: 'size', type: 'radiobutton', value: 'Large' }];
+  const [page] = identityPlan(1);
+  let plan = duplicateEntries([page], new Set([page.id])).plan;
+  plan = rotateEntries(copyEntries(plan, new Set([page.id]), 0).plan, new Set([plan[1].id]), 90);
+  const saved = await composeDocument({ base: bytes, plan, forms });
+  const js = await openWithPdfjs(saved);
+  const objects = await js.doc.getFieldObjects();
+  js.close();
+  const on = (name) => objects.get(name).filter((o) => o.type).map((o) => `${o.value}@${o.page}`);
+  assert.deepEqual(on('name'), ['Ada@0', 'Ada@1', 'Ada@2'], 'one field, a widget on each page, one value');
+  assert.deepEqual(on('size'), ['Large@0', 'Large@0', 'Large@1', 'Large@1', 'Large@2', 'Large@2']);
+
+  const { PDFDocument } = await loadPdfLib();
+  const doc = await PDFDocument.load(saved);
+  assert.deepEqual(doc.getForm().getFields().map((f) => [f.getName(), f.acroField.getWidgets().length]).sort(),
+    [['agree', 3], ['country', 3], ['name', 3], ['size', 6]], 'the same four fields, no copies outside the form');
+  const refilled = await composeDocument({ base: saved, forms: [{ name: 'name', type: 'text', value: 'Bob' }] });
+  assert.deepEqual((await fieldValues(refilled)).name, 'Bob', 'filled again after reopening');
+
+  // Only a blank page left: the fields go with the page, and their values aren't refused.
+  const blank = [{ id: 'blank', src: 'blank', width: 612, height: 792, rotate: 0 }];
+  const emptied = await PDFDocument.load(await composeDocument({ base: bytes, plan: blank, forms }));
+  assert.equal(emptied.getForm().getFields().length, 0);
 });

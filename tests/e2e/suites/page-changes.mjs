@@ -109,6 +109,41 @@ export async function run(t) {
   check('and moved to the front', now[0].id === copyId && now[2].id === originalId, JSON.stringify(now));
   await shot('page-changes');
 
+  area('organiser keys');
+  // In the thumbnails: Ctrl+C / Ctrl+V pastes a copy after the page, Alt+Up moves it, Ctrl+Z / Ctrl+Y.
+  await q(`(() => { __vellum.ui.sidebar.showPages(); })()`);
+  await sleep(600);
+  await q(`${V(DOC)}.goToPage(1)`);
+  await sleep(400);
+  await q(`document.querySelector('.thumbs').focus()`);
+  const ids = () => q(`${V(DOC)}.annotations.plan.map((e) => e.id)`);
+  const before = await ids();
+  await c.key('Ctrl+C');
+  await c.key('Ctrl+V');
+  await rest();
+  let order = await ids();
+  check('Ctrl+V pasted a copy of page 1 after it', order.length === 5 && order[0] === before[0] && !before.includes(order[1]), JSON.stringify(order));
+  check('the pasted copy has records of its own', await q(`${V(DOC)}.annotations.edits.length`) === 6);
+  const pasted = order[1];
+  await q(`${V(DOC)}.goToPage(2)`);
+  await sleep(400);
+  await q(`document.querySelector('.thumbs').focus()`);
+  await c.key('Alt+ArrowUp');
+  await rest();
+  order = await ids();
+  check('Alt+Up moved it to the front', order[0] === pasted && order[1] === before[0], JSON.stringify(order));
+  await c.key('Ctrl+Z');
+  await rest();
+  await c.key('Ctrl+Z');
+  await rest();
+  check('two undos give back the four pages', JSON.stringify(await ids()) === JSON.stringify(before));
+  await c.key('Ctrl+Y');
+  await rest();
+  check('redo pastes it again', (await ids()).length === 5);
+  await c.key('Ctrl+Z');
+  await rest();
+  check('and undo takes it away', JSON.stringify(await ids()) === JSON.stringify(before) && await q(`${V(DOC)}.annotations.edits.length`) === 4);
+
   area('save and reopen');
   await q('__vellum.actions.save()');
   check('saved', await waitFor(`!${V(DOC)}.annotations.dirty`, 25000));
