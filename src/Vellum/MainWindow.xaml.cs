@@ -414,6 +414,7 @@ public partial class MainWindow : Window
             _history.Delete(HistoryDocument(request), RequiredString(request, "id"));
             return Done();
         });
+        bridge.Register("history.clear", request => Done(new { removed = _history.Clear(HistoryDocument(request)) }));
 
         // The page has dealt with unsaved annotations; really close now.
         bridge.Register("window.closeConfirmed", _ =>

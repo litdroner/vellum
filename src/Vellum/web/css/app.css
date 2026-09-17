@@ -2001,6 +2001,8 @@ kbd {
 .hist-when { color: var(--ink-3); font-size: 11.5px; }
 .hist-item .btn.small { padding: 0 10px; }
 .hist-empty { margin: 4px 0; color: var(--ink-3); }
+.hist-storage { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.hist-total { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Theme changes grow the new colours out of the control that was used (see themes.js). */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }

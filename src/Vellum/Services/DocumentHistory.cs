@@ -35,7 +35,18 @@ public sealed class DocumentHistory
 
     public IReadOnlyList<Snapshot> List(string documentPath)
     {
-        lock (_gate) return Load(FolderFor(documentPath)).OrderByDescending(s => s.CreatedAt).ToList();
+        lock (_gate)
+        {
+            var folder = FolderFor(documentPath);
+            var list = Load(folder);
+            // The size on disk is what the snapshot takes up; the size kept in the index stands in if the file is gone.
+            foreach (var snapshot in list)
+            {
+                var file = new FileInfo(Path.Combine(folder, snapshot.Id + ".pdf"));
+                if (file.Exists) snapshot.Size = file.Length;
+            }
+            return list.OrderByDescending(s => s.CreatedAt).ToList();
+        }
     }
 
     /// <summary>Copies the document as it is on disk into a new snapshot.</summary>
@@ -105,6 +116,24 @@ public sealed class DocumentHistory
             var file = Path.Combine(folder, id + ".pdf");
             if (File.Exists(file)) File.Delete(file);
             if (list.Count == 0) Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Removes every snapshot of the document: its history folder in Vellum's data folder goes, nothing else.
+    /// The document itself is never touched. Returns how many snapshots were removed.
+    /// </summary>
+    public int Clear(string documentPath)
+    {
+        lock (_gate)
+        {
+            var folder = Path.GetFullPath(FolderFor(documentPath));
+            if (!folder.StartsWith(Path.GetFullPath(_root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("That isn’t a history folder.");
+            if (!Directory.Exists(folder)) return 0;
+            var count = Load(folder).Count;
+            Directory.Delete(folder, recursive: true);
+            return count;
         }
     }
 

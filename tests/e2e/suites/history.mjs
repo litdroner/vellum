@@ -1,7 +1,8 @@
 // Document history in the real app: the palette opens the history dialog; a named snapshot is taken; the
 // file then changes on disk (as another save would); Compare shows the snapshot against it; the snapshot
 // opens read-only (its file refuses writes); Restore keeps the current version as a new snapshot and saves
-// the snapshot's content into the document; the snapshot restored is byte for byte unchanged; Delete removes one.
+// the snapshot's content into the document; the snapshot restored is byte for byte unchanged; Delete removes one;
+// each snapshot shows its size and the dialog the history's total, which follows deletes; Clear history removes every snapshot and leaves the document as it was.
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -41,6 +42,10 @@ export async function run(t) {
   await c.key('Enter');
   check('Enter in the name field takes a snapshot', await waitFor(`document.querySelectorAll('.history-dialog .hist-item').length === 1`, 5000));
   check('it is listed by name, with when it was taken', await q(`document.querySelector('.history-dialog .hist-name').textContent === 'Original' && /\\d/.test(document.querySelector('.history-dialog .hist-when').textContent)`));
+  const size = fs.statSync(DOC).size;
+  const sizeText = await q(`import('./js/history/model.js').then((m) => m.formatSize(${size}))`);
+  check('its size is shown', (await q(`document.querySelector('.history-dialog .hist-when').textContent`)).endsWith(`· ${sizeText}`), await q(`document.querySelector('.history-dialog .hist-when').textContent`));
+  check('the history’s total storage is shown', (await q(`document.querySelector('.history-dialog .hist-total').textContent`)) === `1 snapshot · ${sizeText} on this PC`, await q(`document.querySelector('.history-dialog .hist-total').textContent`));
   await shot('history-dialog');
   const [first] = await snapshots();
   const firstPath = await snapshotPath(first.id);
@@ -97,7 +102,26 @@ export async function run(t) {
   check('the snapshot leaves the list', await waitFor(`document.querySelectorAll('.history-dialog .hist-item').length === 1`, 4000));
   check('…and its file is removed', !fs.existsSync(beforePath));
   check('the other snapshot stays', hash(firstPath) === original && (await snapshots()).length === 1);
+  check('the total storage updates at once', (await q(`document.querySelector('.history-dialog .hist-total').textContent`)).startsWith('1 snapshot · '), await q(`document.querySelector('.history-dialog .hist-total').textContent`));
   await shot('history-after');
+
+  area('clear');
+  const docBefore = hash(DOC);
+  const historyFolder = firstPath.slice(0, firstPath.lastIndexOf('\\'));
+  await q(`document.querySelector('.history-dialog [data-act="clear"]').click()`);
+  check('Clear history asks first', await waitFor(`${top}.querySelector('.dialog-title')?.textContent === 'Clear this document’s history?'`, 3000));
+  await q(`${button('Cancel')}.click()`);
+  await sleep(300);
+  check('Cancel keeps the history', (await snapshots()).length === 1 && fs.existsSync(firstPath));
+  await q(`document.querySelector('.history-dialog [data-act="clear"]').click()`);
+  await waitFor(`${top}.querySelector('.dialog-title')?.textContent === 'Clear this document’s history?'`, 3000);
+  await q(`${button('Clear history')}.click()`);
+  check('the list empties', await waitFor(`Boolean(document.querySelector('.history-dialog .hist-empty'))`, 4000));
+  check('the total reads zero and Clear is disabled', await q(`document.querySelector('.history-dialog .hist-total').textContent === '0 snapshots · 0 B on this PC' && document.querySelector('.history-dialog [data-act="clear"]').disabled`));
+  check('the snapshot files and history folder are removed', !fs.existsSync(firstPath) && !fs.existsSync(historyFolder));
+  check('no history is left for the document', (await snapshots()).length === 0);
+  check('the document on disk is unchanged', fs.existsSync(DOC) && hash(DOC) === docBefore);
+  check('the document stays open and ready', await q(`${V(DOC)}?.status === 'ready' && !${V(DOC)}.annotations.dirty`));
   await c.key('Escape');
   await sleep(300);
 

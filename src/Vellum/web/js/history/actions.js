@@ -2,7 +2,7 @@ import { bridge } from '../bridge.js';
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { showDialog, toast } from '../ui/dialogs.js';
-import { beforeRestoreName, formatWhen, snapshotLabel, sortSnapshots } from './model.js';
+import { beforeRestoreName, formatSize, formatWhen, historySummary, snapshotLabel, sortSnapshots, totalSize, withoutSnapshot } from './model.js';
 
 // Document history: snapshots a person takes of a document, kept on this PC (see Services/DocumentHistory.cs).
 // Only a manual feature: nothing is snapshotted unless asked, except the current version just before a restore.
@@ -95,6 +95,11 @@ export function createHistoryActions({ app, compare, save }) {
       await bridge.request('history.delete', { path: view.file.path, id: snapshot.id });
     },
 
+    /** Removes every snapshot of the document from this PC. The document itself doesn't change. */
+    async clear(view) {
+      return (await bridge.request('history.clear', { path: view.file.path })).removed ?? 0;
+    },
+
     /** The history dialog: take a snapshot, and open, compare, restore or delete the ones kept. */
     async show(view = app.active) {
       if (!actions.canUse(view)) {
@@ -110,14 +115,36 @@ export function createHistoryActions({ app, compare, save }) {
       }
       const nameInput = h('input', { class: 'field', type: 'text', maxlength: '80', spellcheck: 'false', placeholder: 'Snapshot name (optional)', 'aria-label': 'Snapshot name' });
       const listEl = h('div', { class: 'hist-list', role: 'list' });
+      const totalEl = h('span', { class: 'hist-total', 'aria-live': 'polite' });
+      const clearBtn = h('button', {
+        class: 'btn small', 'data-act': 'clear',
+        onClick: async () => {
+          const sure = await showDialog({
+            title: 'Clear this document’s history?',
+            message: `${snapshots.length === 1 ? 'Its snapshot' : `All ${snapshots.length} snapshots`} of “${view.file.name}” (${formatSize(totalSize(snapshots))}) will be removed from this PC. The document itself doesn’t change.`,
+            iconName: 'trash-2',
+            buttons: [{ id: 'cancel', label: 'Cancel', primary: true }, { id: 'clear', label: 'Clear history' }],
+          });
+          if (sure !== 'clear') return;
+          try {
+            await actions.clear(view);
+            snapshots = [];
+            render();
+          } catch (err) {
+            toast(err.message, { kind: 'error' });
+          }
+        },
+      }, 'Clear history');
       let finish = () => {};
       let next = null; // what to do once the dialog has closed
 
       const render = () => {
+        totalEl.textContent = historySummary(snapshots);
+        clearBtn.disabled = snapshots.length === 0;
         listEl.replaceChildren(...(snapshots.length ? snapshots.map((s) => h('div', { class: 'hist-item', role: 'listitem', 'data-id': s.id },
           h('span', { class: 'hist-text' },
             h('span', { class: 'hist-name', text: snapshotLabel(s) }),
-            h('span', { class: 'hist-when', text: s.name ? formatWhen(s.createdAt) : 'No name' })),
+            h('span', { class: 'hist-when', text: `${s.name ? formatWhen(s.createdAt) : 'No name'} · ${formatSize(s.size)}` })),
           h('button', { class: 'btn small', 'data-act': 'open', onClick: () => { next = () => actions.open(view, s); finish('close'); } }, 'Open'),
           h('button', { class: 'btn small', 'data-act': 'compare', onClick: () => { next = () => actions.compare(view, s); finish('close'); } }, 'Compare'),
           h('button', { class: 'btn small', 'data-act': 'restore', onClick: () => { next = () => actions.restore(view, s); finish('close'); } }, 'Restore'),
@@ -133,7 +160,7 @@ export function createHistoryActions({ app, compare, save }) {
               if (sure !== 'delete') return;
               try {
                 await actions.remove(view, s);
-                snapshots = snapshots.filter((x) => x.id !== s.id);
+                snapshots = withoutSnapshot(snapshots, s.id);
                 render();
               } catch (err) {
                 toast(err.message, { kind: 'error' });
@@ -167,7 +194,7 @@ export function createHistoryActions({ app, compare, save }) {
         message: `Snapshots of “${view.file.name}”, kept on this PC only.`,
         iconName: 'clock',
         className: 'history-dialog',
-        content: [h('div', { class: 'hist-create' }, nameInput, createBtn), listEl],
+        content: [h('div', { class: 'hist-create' }, nameInput, createBtn), listEl, h('div', { class: 'hist-storage' }, totalEl, clearBtn)],
         buttons: [{ id: 'close', label: 'Close', primary: true }],
         onOpen: () => nameInput,
         bind: (dialog) => { finish = dialog.finish; },
