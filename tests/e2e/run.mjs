@@ -4,7 +4,8 @@
 //
 // Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection, manipulation,
 // multi-select, page-changes, copy-paste, page-text-font, forms, signature, redaction, page-stamps, find-replace, compare, history, structure, semantic-search by default;
-// ocr and performance only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed).
+// ocr, performance and updates only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed;
+// updates needs Inno Setup 6). A suite may export prepare({ dir }) returning extra environment for the app, and cleanup().
 //
 // Safety: stops if Vellum is already running (it's single-instance, so a test would talk to that
 // copy). The app runs with a throwaway data folder (VELLUM_DATA_DIR, honoured by Debug builds only),
@@ -67,9 +68,18 @@ for (const name of suites) {
   }
   console.log(`\n=== ${name}${Object.values(suite.external ?? {}).some((v) => process.env[v]) ? ' (with a document from the environment)' : ''}`);
   const results = [];
+  let extraEnv = {};
+  try {
+    extraEnv = (await suite.prepare?.({ dir })) ?? {};
+  } catch (err) {
+    results.push({ area: null, ok: false, label: 'the suite was prepared', detail: String(err?.message ?? err).slice(0, 800) });
+    console.log(`FAIL  the suite couldn’t be prepared: ${err?.message ?? err}`);
+    report.push({ suite: name, passed: 0, failed: 1, results });
+    continue;
+  }
   const app = spawn(EXE, Object.values(files), {
     stdio: 'ignore',
-    env: { ...process.env, VELLUM_DATA_DIR: dataDir, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9222' },
+    env: { ...process.env, ...extraEnv, VELLUM_DATA_DIR: dataDir, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--remote-debugging-port=9222' },
   });
   const exited = new Promise((resolve) => app.once('exit', resolve));
   try {
@@ -85,6 +95,7 @@ for (const name of suites) {
     // Only this test's own copy of the app (and its WebView2 processes) is stopped.
     spawnSync('taskkill', ['/PID', String(app.pid), '/T', '/F'], { stdio: 'ignore' });
     await Promise.race([exited, sleep(10000)]);
+    await suite.cleanup?.();
     await sleep(1500);
   }
   const failed = results.filter((r) => !r.ok).length;

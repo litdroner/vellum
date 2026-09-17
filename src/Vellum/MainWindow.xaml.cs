@@ -32,6 +32,8 @@ public partial class MainWindow : Window
     }
 
     private readonly List<string> _pendingFiles;
+    /// <summary>The version an in-app update failed to install, reported once the page is ready.</summary>
+    private string? _updateFailed;
     private readonly RecentFiles _recent = new(DataFolder);
     private readonly DocumentHistory _history = new(DataFolder);
     private readonly AppSettings _settings = AppSettings.Load(DataFolder);
@@ -44,8 +46,10 @@ public partial class MainWindow : Window
     public MainWindow(string[] startupFiles)
     {
         InitializeComponent();
-        // After an in-app update, the documents that were open come back.
-        _pendingFiles = [.. startupFiles, .. Updater.TakeRelaunchFiles(DataFolder).Except(startupFiles, StringComparer.OrdinalIgnoreCase)];
+        // After an in-app update (installed or not), the documents that were open come back.
+        var relaunch = Updater.TakeRelaunch(DataFolder);
+        _updateFailed = relaunch.FailedVersion;
+        _pendingFiles = [.. startupFiles, .. relaunch.Files.Except(startupFiles, StringComparer.OrdinalIgnoreCase)];
         _ = Task.Run(_updater.CleanUp);
         RestorePlacement();
         ApplyThemeColors();
@@ -198,7 +202,10 @@ public partial class MainWindow : Window
                 _settings.Save();
             }
             // The Windows user name signs annotations (the PDF "author" field).
-            return Done(new { files, theme = _settings.Theme, user = Environment.UserName, name = GreetingName(), version, updatedFrom });
+            // Said once, when Setup couldn't install an update and started this version again.
+            var updateFailed = _updateFailed;
+            _updateFailed = null;
+            return Done(new { files, theme = _settings.Theme, user = Environment.UserName, name = GreetingName(), version, updatedFrom, updateFailed });
         });
 
         // ---- files --------------------------------------------------------

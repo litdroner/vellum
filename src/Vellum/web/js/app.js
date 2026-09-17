@@ -606,7 +606,7 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 try {
-  const { files, user, name, version, updatedFrom } = await bridge.request('ready');
+  const { files, user, name, version, updatedFrom, updateFailed } = await bridge.request('ready');
   session.user = user ?? '';
   session.version = version ?? '';
   setAppearance(); // tells the host the saved appearance (window frame, Chromium controls)
@@ -614,6 +614,7 @@ try {
   if (updatedFrom) ui.updates.announce(version);
   if (files.length) await openAll(files);
   else ui.start.refresh();
+  if (updateFailed) ui.updates.failed(updateFailed, version);
   // The daily update check waits until startup has settled.
   setTimeout(() => ui.updates.checkQuietly(), 6000);
 } catch (err) {

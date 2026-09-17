@@ -15,8 +15,10 @@ public sealed class UpdateException(string message) : Exception(message);
 /// <summary>
 /// In-app updates. New versions are published as GitHub releases of litdroner/vellum; a release is an
 /// update when its tag (v1.2.3) is newer than this build. Its Vellum-Setup.exe is downloaded into
-/// %LOCALAPPDATA%\Vellum\updates, checked against the SHA-256 GitHub records for the file, and run
-/// silently: Setup waits for Vellum to close, installs over it and starts it again.
+/// %LOCALAPPDATA%\Vellum\updates, checked against the SHA-256 GitHub records for the file, and run with no
+/// Setup window at all (Vellum's own dialog shows the progress): Setup waits for Vellum to close, installs
+/// over it and starts it again. If Setup fails it rolls back and starts the version that was installed
+/// before, which then says the update didn't install (see <see cref="TakeRelaunch"/>).
 /// </summary>
 public sealed partial class Updater
 {
@@ -60,16 +62,20 @@ public sealed partial class Updater
     }
 
     /// <summary>Downloads and verifies a release's installer; returns its path. Reuses an earlier, verified download.</summary>
-    public async Task<string> DownloadAsync(Release release, IProgress<(long Received, long Total)> progress, CancellationToken ct)
+    public async Task<string> DownloadAsync(Release release, IProgress<(long Received, long Total)> progress, CancellationToken ct, Action? verifying = null)
     {
         if (release.Sha256 is null)
             throw new UpdateException("This update has no published checksum, so Vellum can’t verify it and won’t install it. You can download it from the release page instead.");
         Directory.CreateDirectory(_folder);
         var target = Path.Combine(_folder, $"Vellum-Setup-{release.Version.ToString(3)}.exe");
-        if (File.Exists(target) && await HashAsync(target, ct).ConfigureAwait(false) == release.Sha256)
+        if (File.Exists(target))
         {
-            progress.Report((release.Size, release.Size));
-            return target;
+            verifying?.Invoke();
+            if (await HashAsync(target, ct).ConfigureAwait(false) == release.Sha256)
+            {
+                progress.Report((release.Size, release.Size));
+                return target;
+            }
         }
         CleanUp();
 
@@ -96,6 +102,7 @@ public sealed partial class Updater
                     progress.Report((received, total));
                 }
             }
+            verifying?.Invoke();
             if (await HashAsync(part, ct).ConfigureAwait(false) != release.Sha256)
                 throw new UpdateException("The downloaded update didn’t match its published checksum, so it was thrown away. Try again later.");
             File.Move(part, target, overwrite: true);
@@ -116,8 +123,16 @@ public sealed partial class Updater
     }
 
     /// <summary>
-    /// Runs a downloaded installer silently. It waits for Vellum to exit (see SingleInstance), installs,
-    /// then starts Vellum again (the installer's "relaunch" option).
+    /// Setup's command line for an in-app update. /VERYSILENT shows no Setup window at all (/SILENT still
+    /// shows its progress window); /SUPPRESSMSGBOXES takes each question's safe default, so a failure aborts
+    /// and rolls back; /relaunch=1 starts Vellum again afterwards, updated or not (see Vellum.iss).
+    /// </summary>
+    public static string InstallerArguments(string log) =>
+        $"/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /relaunch=1 \"/LOG={log}\"";
+
+    /// <summary>
+    /// Runs a downloaded installer with no UI of its own. It waits for Vellum to exit (see SingleInstance),
+    /// installs, then starts Vellum again (the installer's "relaunch" option).
     /// </summary>
     public async Task StartInstallerAsync(string installer, string sha256)
     {
@@ -125,12 +140,25 @@ public sealed partial class Updater
         if (await HashAsync(installer, CancellationToken.None).ConfigureAwait(false) != sha256)
             throw new UpdateException("The downloaded update changed on disk, so it won’t be run. Download it again.");
         var log = Path.Combine(_folder, "install.log");
-        Process.Start(new ProcessStartInfo(installer)
+        Process? setup;
+        try
         {
-            UseShellExecute = false,
-            WorkingDirectory = _folder,
-            Arguments = $"/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /relaunch=1 \"/LOG={log}\"",
-        });
+            setup = Process.Start(new ProcessStartInfo(installer)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = _folder,
+                Arguments = InstallerArguments(log),
+            });
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            setup = null;
+        }
+        if (setup is null)
+            throw new UpdateException("The update couldn’t be started, so nothing was changed. Try again later.");
+        // Setup waits for Vellum to close; one that has already ended failed before changing anything.
+        if (await Task.Run(() => setup.WaitForExit(800)).ConfigureAwait(false))
+            throw new UpdateException($"The update couldn’t be started (Setup ended with code {setup.ExitCode}), so nothing was changed. Try again later.");
     }
 
     /// <summary>Deletes old downloads (the install log is kept a while, for troubleshooting).</summary>
@@ -151,40 +179,52 @@ public sealed partial class Updater
 
     // ---- reopening documents after an update -------------------------------------------------
 
-    /// <summary>Remembers which documents were open, so the updated Vellum reopens them.</summary>
-    public static void SaveRelaunchFiles(string dataFolder, IEnumerable<string> files)
+    /// <summary>Remembers which documents were open and which version is being installed, for the Vellum that starts next.</summary>
+    public static void SaveRelaunchFiles(string dataFolder, IEnumerable<string> files, Version installing)
     {
         try
         {
             Directory.CreateDirectory(dataFolder);
             File.WriteAllText(Path.Combine(dataFolder, RelaunchFileName),
-                JsonSerializer.Serialize(new RelaunchState(files.Where(File.Exists).ToArray(), DateTimeOffset.Now)));
+                JsonSerializer.Serialize(new RelaunchState(files.Where(File.Exists).ToArray(), DateTimeOffset.Now, installing.ToString(3))));
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
 
-    /// <summary>The documents to reopen after an update (read once, then forgotten).</summary>
-    public static string[] TakeRelaunchFiles(string dataFolder)
+    /// <summary>What the Vellum starting after an update needs: the documents to reopen, and the version that didn't install, if any.</summary>
+    public sealed record Relaunch(string[] Files, string? FailedVersion);
+
+    /// <summary>The state an update left for the next start (read once, then forgotten).</summary>
+    public static Relaunch TakeRelaunch(string dataFolder)
     {
+        var none = new Relaunch([], null);
         var path = Path.Combine(dataFolder, RelaunchFileName);
         try
         {
-            if (!File.Exists(path)) return [];
+            if (!File.Exists(path)) return none;
             var state = JsonSerializer.Deserialize<RelaunchState>(File.ReadAllText(path));
             File.Delete(path);
             // A leftover from an update that never finished shouldn't reopen files days later.
-            if (state?.Files is null || state.At < DateTimeOffset.Now.AddMinutes(-30)) return [];
-            return state.Files.Where(File.Exists).Select(Path.GetFullPath).ToArray();
+            if (state?.Files is null || state.At < DateTimeOffset.Now.AddMinutes(-30)) return none;
+            return new Relaunch(state.Files.Where(File.Exists).Select(Path.GetFullPath).ToArray(), FailedVersion(state.Version, Current));
         }
         catch (Exception)
         {
             TryDelete(path);
-            return [];
+            return none;
         }
     }
 
-    private sealed record RelaunchState(string[] Files, DateTimeOffset At);
+    /// <summary>
+    /// The version being installed, if the Vellum now starting is still older than it: Setup failed, rolled
+    /// back and started the version that was already installed.
+    /// </summary>
+    public static string? FailedVersion(string? installing, Version running) =>
+        TryParseVersion(installing, out var version) && running < version ? version.ToString(3) : null;
+
+    /// <summary>Version is null in state written by Vellum 0.12.1 and earlier.</summary>
+    private sealed record RelaunchState(string[] Files, DateTimeOffset At, string? Version = null);
 
     // ---- helpers -----------------------------------------------------------------------------
 

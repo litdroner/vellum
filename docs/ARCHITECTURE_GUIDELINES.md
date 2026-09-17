@@ -143,4 +143,6 @@ person's settings, recent files and WebView2 profile are never touched. Everythi
 folder, printed as the run starts.
 
 Updates are tested with a loopback release feed (`VELLUM_UPDATE_FEED`) and a test installer with its
-own AppId, never against a real install.
+own AppId, never against a real install: `node tests/e2e/run.mjs updates` (needs Inno Setup 6) builds one
+that shares `installer/InAppUpdate.iss` with Vellum.iss and fails on purpose, so the no-window install,
+the automatic restart and the failed-update message are all exercised.

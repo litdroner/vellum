@@ -108,7 +108,8 @@ public partial class MainWindow
         });
         try
         {
-            _downloaded = await _updater.DownloadAsync(release, progress, cts.Token);
+            _downloaded = await _updater.DownloadAsync(release, progress, cts.Token,
+                () => Dispatcher.BeginInvoke(() => _bridge?.Emit("update-stage", new { stage = "verifying" })));
             return new { done = true, version = release.Version.ToString(3) };
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -121,16 +122,28 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Starts Setup and closes Vellum. The page has already dealt with unsaved changes.</summary>
+    /// <summary>
+    /// Starts Setup (no window of its own) and closes Vellum, which Setup restarts once it's done. The page
+    /// has already dealt with unsaved changes and shows "Installing…", then "Restarting…".
+    /// </summary>
     private async Task<object?> InstallUpdateAsync(BridgeRequest request)
     {
         if (_latest?.Sha256 is not { } sha256 || _downloaded is null || !File.Exists(_downloaded))
             throw new InvalidOperationException("Download the update first.");
-        await _updater.StartInstallerAsync(_downloaded, sha256);
-        // Setup waits for this process to exit, installs, then starts the new version, which reopens these.
-        Updater.SaveRelaunchFiles(DataFolder, StringArray(request, "files"));
+        // Written first, so Setup never finds Vellum closed without it.
+        Updater.SaveRelaunchFiles(DataFolder, StringArray(request, "files"), _latest.Version);
+        try
+        {
+            await _updater.StartInstallerAsync(_downloaded, sha256);
+        }
+        catch
+        {
+            Updater.TakeRelaunch(DataFolder);
+            throw;
+        }
+        // Setup waits for this process to exit, installs, then starts the new version, which reopens the files.
         _allowClose = true;
-        _ = Dispatcher.BeginInvoke(Close);
+        _ = Task.Delay(700).ContinueWith(_ => Dispatcher.BeginInvoke(Close), TaskScheduler.Default);
         return new { ok = true };
     }
 

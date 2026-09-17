@@ -4,8 +4,9 @@ import { renderMarkdown } from './markdown.js';
 
 // In-app updates. Once a day (unless turned off) Vellum quietly asks GitHub for the newest release; if
 // there is one, an "Update" pill appears in the title bar. The update dialog shows what's new, downloads
-// the installer with progress (the host checks it against GitHub's published checksum), then Vellum
-// closes, installs the new version and reopens your documents.
+// the installer with progress, verifies it (the host checks it against GitHub's published checksum), then
+// installs it with no installer window of its own: Vellum closes, and the new version starts by itself
+// and reopens your documents. If the install fails, the version you had starts again and says so.
 
 const megabytes = (bytes) => `${(bytes / 1048576).toFixed(bytes >= 10 * 1048576 ? 0 : 1)} MB`;
 const longDate = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
@@ -14,6 +15,7 @@ export class Updates {
   /** The last "update available" answer, while it's still relevant. */
   offer = null;
   #onProgress = null;
+  #onStage = null;
 
   constructor({ bridge, titlebar, prepareToQuit, openFiles }) {
     this.bridge = bridge;
@@ -22,6 +24,7 @@ export class Updates {
     this.openFiles = openFiles;
     titlebar.onUpdate = () => { if (this.offer) this.show(this.offer); };
     bridge.on('update-progress', (p) => this.#onProgress?.(p));
+    bridge.on('update-stage', (s) => this.#onStage?.(s.stage));
   }
 
   settings() {
@@ -72,6 +75,17 @@ export class Updates {
     });
   }
 
+  /** Setup couldn't install an update and started this version again (its changes were rolled back). */
+  async failed(version, current) {
+    const choice = await showDialog({
+      title: 'The update didn’t install',
+      iconName: 'triangle-alert',
+      message: `Vellum ${version} couldn’t be installed, so Vellum ${current} was kept and your documents were reopened. You can try again now or later.`,
+      buttons: [{ id: 'close', label: 'Close' }, { id: 'retry', label: 'Try again', primary: true }],
+    });
+    if (choice === 'retry') this.checkNow();
+  }
+
   async whatsNew(version) {
     let notes = '';
     let page = null;
@@ -87,7 +101,7 @@ export class Updates {
     if (choice === 'page') window.open(page, '_blank');
   }
 
-  /** The update dialog: what's new → download (with progress) → restart into the new version. */
+  /** The update dialog: what's new → downloading → verifying → installing → restarting into the new version. */
   show(offer) {
     const meta = [
       `You have ${offer.current}`,
@@ -146,36 +160,50 @@ export class Updates {
           downloading = true;
           bar.hidden = false;
           fill.style.width = '0%';
-          setStatus('Starting the download…');
+          setStatus('Downloading…');
           setActions(button('Cancel', () => this.bridge.request('update.cancel').catch(() => {})));
           this.#onProgress = ({ received, total }) => {
             fill.style.width = `${total > 0 ? Math.min(100, (received / total) * 100).toFixed(1) : 0}%`;
             setStatus(total > 0 ? `Downloading… ${megabytes(received)} of ${megabytes(total)}` : `Downloading… ${megabytes(received)}`);
           };
+          this.#onStage = (stage) => {
+            if (stage !== 'verifying') return;
+            this.#onProgress = null;
+            fill.style.width = '100%';
+            setStatus('Verifying…');
+          };
+          let ready = false;
           try {
             const result = await this.bridge.request('update.download');
             if (result.cancelled) {
               offerStage();
               return;
             }
-            fill.style.width = '100%';
-            setStatus('Downloaded and verified. Vellum will close, install the update and reopen your documents.');
-            setActions(button('Later', () => finish('later')), button('Restart and update', install, true));
+            ready = true;
           } catch (err) {
             setStatus(err.message, true);
             setActions(button('Close', () => finish('error')), button('Try again', download, true));
           } finally {
             downloading = false;
             this.#onProgress = null;
+            this.#onStage = null;
           }
+          if (ready) install();
         };
 
+        // Verified: install straight away. Only unsaved changes can hold it up (the usual save prompt).
         const install = async () => {
-          if (!(await this.prepareToQuit())) return;
-          setStatus('Starting the installer…');
+          fill.style.width = '100%';
           setActions();
+          if (!(await this.prepareToQuit())) {
+            setStatus('The update is downloaded and verified. It installs when you’re ready; Vellum restarts by itself.');
+            setActions(button('Later', () => finish('later')), button('Install update', install, true));
+            return;
+          }
+          setStatus('Installing…');
           try {
             await this.bridge.request('update.install', { files: this.openFiles() });
+            setStatus('Restarting…');
           } catch (err) {
             setStatus(err.message, true);
             setActions(button('Close', () => finish('error')), button('Try again', install, true));
