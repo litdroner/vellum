@@ -23,8 +23,10 @@
 // Anything it can't prove it has removed refuses the whole save (EditError), rather than leave content
 // behind a box: text or pictures inside a Form XObject that reaches an area, text whose position isn't
 // known exactly, replacement text (/ActualText) or a tagged structure that could still carry the words,
-// text used as a clipping shape, and a link or other annotation over an area. Vector drawings and
-// shadings in an area are left as they are and painted over: they are shapes, not text or pictures.
+// text used as a clipping shape, a link or other annotation over an area, and a vector drawing or shading
+// that reaches an area — Vellum can't take a shape out of the page yet, and a shape left under a black
+// box is still in the file. The drawings, shadings and forms are also checked when the redaction is
+// made (checkShapes, from editing/session.js), so that refusal shows at once instead of at save.
 
 import { EditError } from '../edits.js';
 import { num } from '../content/writer.js';
@@ -63,8 +65,13 @@ export function planRedaction({ entry, rects, id = newId() }) {
   return { ...record, rects: areasOf(record) };
 }
 
-const refuse = (index, what) => {
-  throw new EditError('redact', `Page ${index + 1}: ${what} Vellum can’t prove it would be removed, so nothing was saved.`);
+const refuse = (index, what, outcome = 'nothing was saved') => {
+  throw new EditError('redact', `Page ${index + 1}: ${what} Vellum can’t prove it would be removed, so ${outcome}.`);
+};
+
+/** A shape can't be taken out of a page yet, and one left under the black box is still in the file. */
+const refuseShape = (index, what, outcome = 'nothing was saved') => {
+  throw new EditError('redact', `Page ${index + 1}: ${what} reaches a redaction area. Vellum can’t remove drawn shapes yet, and covering one would leave it in the file, so ${outcome}.`);
 };
 
 /**
@@ -78,9 +85,7 @@ export function write({ lib, doc, page, index, analysis, records }) {
   const hits = (box) => areas.some((a) => overlaps(box, a));
   const tagged = Boolean(doc.catalog.get(lib.PDFName.of('StructTreeRoot')));
 
-  for (const form of analysis.forms) {
-    if (form.error || !form.box || hits(form.box)) refuse(index, 'part of an area is drawn by a reusable graphic (a form), whose content');
-  }
+  checkShapes(analysis, areas, index);
 
   const edited = new Map(); // show index → Set of glyph indexes taken out
   for (const show of analysis.shows) {
@@ -114,6 +119,35 @@ export function write({ lib, doc, page, index, analysis, records }) {
 
   const append = areas.map((a) => `q 0 g ${num(a[0])} ${num(a[1])} ${num(a[2] - a[0])} ${num(a[3] - a[1])} re f Q`);
   return { patches, append };
+}
+
+/**
+ * Refuses (EditError) when a form, or a vector drawing or shading of the page itself, reaches one of these
+ * areas: none of them can be taken out of the page, and covering one leaves it in the file. A form's own
+ * drawings are covered by the form check. A stroke counts with half its line width around its path, and
+ * a shading with no clip paints the whole page. `outcome` ends the message: what didn't happen.
+ */
+export function checkShapes(analysis, areas, index, outcome) {
+  const hits = (box) => areas.some((a) => overlaps(box, a));
+  for (const form of analysis.forms) {
+    if (form.error || !form.box || hits(form.box)) refuse(index, 'part of an area is drawn by a reusable graphic (a form), whose content', outcome);
+  }
+  for (const path of analysis.paths) {
+    if (path.form) continue;
+    if (!path.box) refuseShape(index, 'a shading that fills the whole page', outcome);
+    let box = path.box;
+    if (path.paint === 'stroke' || path.paint === 'fill-stroke') {
+      const [a, b, c, d] = path.ctm;
+      const pad = ((path.lineWidth || 0) * Math.max(Math.hypot(a, b), Math.hypot(c, d))) / 2 || 0.5; // a 0 width is still a thin line
+      box = [box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad];
+    }
+    if (path.clip) {
+      const c = path.clip.box;
+      box = [Math.max(box[0], c[0]), Math.max(box[1], c[1]), Math.min(box[2], c[2]), Math.min(box[3], c[3])];
+      if (box[2] <= box[0] || box[3] <= box[1]) continue; // clipped away entirely
+    }
+    if (hits(box)) refuseShape(index, path.paint === 'shading' ? 'a shading (colour gradient)' : 'a drawn shape (a line, box or other vector graphic)', outcome);
+  }
 }
 
 /**

@@ -531,7 +531,7 @@ Recorded so they are not decided silently. Each needs the owner.
 2. **Redaction method** (§3.6): the requirement is settled (true removal, no covering, no silent
    rasterising). On 2026-09-17 the owner asked for the smallest safe subset — text and pictures removed
    from the page's content streams (`editing/objects/redaction.js`) — and it is built. Still open: whether
-   vector content in an area is removed (today it is painted over, not removed; a shape crossing the area,
+   vector content in an area is removed (today a redaction reaching one is refused, never painted over; a shape crossing the area,
    such as a page background or table rule, can't simply be deleted), and the repeated information the
    table in §3.6 lists (metadata, bookmarks, annotations, form values, tagged-structure text), which this
    subset refuses or doesn't touch.

@@ -113,3 +113,11 @@ test('content it can’t prove it removes refuses the save: a form in the area',
   await assert.rejects(save(d, [redact(d, [[410, 110, 420, 120]])]), (err) => err instanceof EditError && err.kind === 'redact');
   assert.throws(() => planRedaction({ entry: d.plan[0].id, rects: [[1, 1, 1, 5]] }), EditError);
 });
+
+test('a drawn shape or shading in the area refuses the save, instead of being covered', async () => {
+  const d = await open('objects');
+  const refused = (what) => (err) => err instanceof EditError && err.kind === 'redact' && err.message.includes(what);
+  await assert.rejects(save(d, [redact(d, [[100, 410, 120, 420]])]), refused('drawn shape'), 'a filled box');
+  await assert.rejects(save(d, [redact(d, [[100, 370, 120, 379.5]])]), refused('drawn shape'), 'a 2pt line, by its line width');
+  await assert.rejects(save(d, [redact(d, [[350, 375, 360, 390]])]), refused('shading'), 'a clipped shading');
+});

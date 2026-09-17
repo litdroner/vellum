@@ -23,7 +23,7 @@ import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, runStyleOf, styleN
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
-import { kind as redactKind, planRedaction } from './objects/redaction.js';
+import { checkShapes, kind as redactKind, planRedaction } from './objects/redaction.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
 import { boxQuad, quadBox, quadWithin, transformQuad, unionBox } from './objects/geometry.js';
 import { IDENTITY, multiply, translate } from './matrix.js';
@@ -579,14 +579,17 @@ export class TextEditing {
   /**
    * Redacts these areas of a page ([x1, y1, x2, y2] in its user space, objects/redaction.js): one undo
    * step. When the document is composed, the text and pictures in them are taken out of the page and the
-   * areas painted black; what can't be removed for certain refuses the save instead.
+   * areas painted black; what can't be removed for certain refuses the save instead. Forms, drawn shapes
+   * and shadings in an area are refused here, before anything is marked.
    */
-  redactAreas(pageNumber, rects) {
+  async redactAreas(pageNumber, rects) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     const entry = view.shownPlan?.[pageNumber - 1];
     if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
-    view.annotations.applyEdits([[null, planRedaction({ entry: entry.id, rects })]]);
+    const record = planRedaction({ entry: entry.id, rects });
+    if (entry.src !== 'blank') checkShapes(await this.#analysis(entry, pageNumber), record.rects, pageNumber - 1, 'it wasn’t redacted');
+    view.annotations.applyEdits([[null, record]]);
     return true;
   }
 

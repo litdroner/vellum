@@ -527,13 +527,13 @@ export class TextEditor {
     const quads = current.keys.map((key) => (page ? this.#shownQuad(page, key) : null));
     if (quads.some((q) => !q)) return false;
     try {
-      this.#view.textEditing.redactAreas(current.page, quads.map(quadBox));
+      await this.#view.textEditing.redactAreas(current.page, quads.map(quadBox));
     } catch (err) {
       this.#notify(err instanceof EditError ? err.message : `That couldn’t be redacted: ${err.message}`);
       return false;
     }
     this.#select(null);
-    this.#announce('Redacted. Text and pictures in the area are removed from the file when you save; drawn shapes there are covered, not removed.');
+    this.#announce('Redacted. Text and pictures in the area are removed from the file when you save.');
     return true;
   }
 
