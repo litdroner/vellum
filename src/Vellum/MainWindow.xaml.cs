@@ -33,6 +33,7 @@ public partial class MainWindow : Window
 
     private readonly List<string> _pendingFiles;
     private readonly RecentFiles _recent = new(DataFolder);
+    private readonly DocumentHistory _history = new(DataFolder);
     private readonly AppSettings _settings = AppSettings.Load(DataFolder);
     private AppResourceServer? _server;
     private BridgeHost? _bridge;
@@ -383,6 +384,37 @@ public partial class MainWindow : Window
             return Done(new { ok = true });
         });
 
+        // Document history: snapshots of an open document, kept on this PC (Services/DocumentHistory.cs).
+        // Only documents the page was given to open or save may have history; snapshots open read-only.
+        bridge.Register("history.list", request => Done(new { snapshots = _history.List(HistoryDocument(request)) }));
+        bridge.Register("history.create", request =>
+            Done(new { snapshot = _history.Create(HistoryDocument(request), OptionalString(request, "name")) }));
+        bridge.Register("history.open", request =>
+        {
+            var document = HistoryDocument(request);
+            var (snapshot, file) = _history.Get(document, RequiredString(request, "id"));
+            var token = _server!.RegisterReadOnlyDocument(file);
+            var label = snapshot.Name.Length > 0 ? snapshot.Name : $"Snapshot {snapshot.CreatedAt:d MMM yyyy HH.mm}";
+            return Done(new
+            {
+                file = new
+                {
+                    token,
+                    path = file,
+                    name = $"{Path.GetFileNameWithoutExtension(document)} — {label}.pdf",
+                    size = snapshot.Size,
+                    url = $"{AppResourceServer.Origin}/doc/{token}",
+                    readOnly = true,
+                    snapshot = new { snapshot.Id, snapshot.Name, snapshot.CreatedAt, document },
+                },
+            });
+        });
+        bridge.Register("history.delete", request =>
+        {
+            _history.Delete(HistoryDocument(request), RequiredString(request, "id"));
+            return Done();
+        });
+
         // The page has dealt with unsaved annotations; really close now.
         bridge.Register("window.closeConfirmed", _ =>
         {
@@ -512,6 +544,13 @@ public partial class MainWindow : Window
             url = $"{AppResourceServer.Origin}/doc/{token}",
             resume = entry is null ? null : new { page = entry.Page, scaleValue = entry.ScaleValue, viewMode = entry.ViewMode },
         };
+    }
+
+    private string HistoryDocument(BridgeRequest request)
+    {
+        var path = RequiredString(request, "path");
+        if (!_server!.IsWritable(path)) throw new InvalidOperationException("That document isn’t open in Vellum.");
+        return Path.GetFullPath(path);
     }
 
     private string LastFolder()

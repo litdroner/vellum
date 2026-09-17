@@ -42,6 +42,8 @@ public sealed class AppResourceServer
     private readonly string _webRoot;
     private readonly Dispatcher _dispatcher;
     private readonly ConcurrentDictionary<string, string> _documents = new();
+    /// <summary>Tokens the page may read but never write (document history snapshots).</summary>
+    private readonly ConcurrentDictionary<string, bool> _readOnly = new();
 
     public AppResourceServer(CoreWebView2 core, CoreWebView2Environment env, string webRoot)
     {
@@ -59,13 +61,32 @@ public sealed class AppResourceServer
     {
         var full = Path.GetFullPath(path);
         foreach (var (token, existing) in _documents)
-            if (string.Equals(existing, full, StringComparison.OrdinalIgnoreCase)) return token;
+            if (string.Equals(existing, full, StringComparison.OrdinalIgnoreCase) && !_readOnly.ContainsKey(token)) return token;
         var newToken = Guid.NewGuid().ToString("N");
         _documents[newToken] = full;
         return newToken;
     }
 
+    /// <summary>Makes a file readable by the page, never writable: POST /save/{token} is refused.</summary>
+    public string RegisterReadOnlyDocument(string path)
+    {
+        var full = Path.GetFullPath(path);
+        foreach (var (token, existing) in _documents)
+            if (string.Equals(existing, full, StringComparison.OrdinalIgnoreCase) && _readOnly.ContainsKey(token)) return token;
+        var newToken = Guid.NewGuid().ToString("N");
+        _readOnly[newToken] = true;
+        _documents[newToken] = full;
+        return newToken;
+    }
+
     public string? ResolveDocument(string token) => _documents.TryGetValue(token, out var p) ? p : null;
+
+    /// <summary>True if the page was given this file to open or save to (writable).</summary>
+    public bool IsWritable(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return _documents.Any(d => !_readOnly.ContainsKey(d.Key) && string.Equals(d.Value, full, StringComparison.OrdinalIgnoreCase));
+    }
 
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
     {
@@ -121,6 +142,11 @@ public sealed class AppResourceServer
     private void HandleSave(CoreWebView2WebResourceRequestedEventArgs e, string token)
     {
         var file = ResolveDocument(token);
+        if (file is not null && _readOnly.ContainsKey(token))
+        {
+            e.Response = JsonResponse(403, new { ok = false, error = "This is a snapshot from the document’s history. It can’t be changed; use Save As to keep a copy." });
+            return;
+        }
         if (file is null)
         {
             e.Response = JsonResponse(404, new { ok = false, error = "That document isn't open in Vellum." });

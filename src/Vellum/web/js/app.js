@@ -23,6 +23,7 @@ import { TextEditor } from './ui/text-editor.js';
 import { createPageActions } from './pages/actions.js';
 import { createOcrActions } from './ocr/actions.js';
 import { createCompareActions } from './compare/actions.js';
+import { createHistoryActions } from './history/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -88,7 +89,8 @@ class App extends EventTarget {
     this.#emit('viewschange');
     this.activate(view);
     await view.load({ askPassword: promptPassword });
-    if (view.status === 'ready') {
+    // A history snapshot (read-only) is not a recent file.
+    if (view.status === 'ready' && !view.file.readOnly) {
       bridge.send('recent.opened', { path: view.file.path });
       rememberCover(view);
     }
@@ -135,7 +137,7 @@ class App extends EventTarget {
     const index = this.views.indexOf(view);
     if (index < 0) return;
     rememberPosition(view);
-    this.closed.push(view.file.path);
+    if (!view.file.readOnly) this.closed.push(view.file.path);
     if (this.closed.length > 20) this.closed.shift();
     this.views.splice(index, 1);
     try {
@@ -157,7 +159,7 @@ class App extends EventTarget {
 
 /** Tells the host where you are in a file, so it reopens there next time. */
 function rememberPosition(view) {
-  if (view.status !== 'ready') return;
+  if (view.status !== 'ready' || view.file.readOnly) return;
   const s = view.state;
   bridge.send('recent.update', { path: view.file.path, page: s.pageNumber, scaleValue: String(s.scaleValue ?? ''), viewMode: s.viewMode });
 }
@@ -203,6 +205,8 @@ async function saveView(view, { saveAs = false } = {}) {
   // Keep text that's still being typed; if it can't be kept, the editor says why and nothing is saved.
   if (view.textEditor && !(await view.textEditor.commitPending())) return false;
   if (!saveAs && !view.annotations.dirty) return true;
+  // A history snapshot never changes: saving it means keeping a copy somewhere else.
+  if (view.file.readOnly) saveAs = true;
   if (view.encrypted && saveAs) {
     await showDialog({
       title: 'Save As isn’t available for this PDF',
@@ -362,6 +366,7 @@ const actions = {
 actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
 actions.ocr = createOcrActions();
 actions.compare = createCompareActions({ app, pdfjsLib: libs.pdfjsLib });
+actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 
 const commands = createCommands(app, ui, actions);
 
@@ -484,6 +489,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('file.saveAs', null, { disabled: !ready }),
     menuItem('file.print', null, { disabled: !ready }),
     menuItem('file.showInFolder', null, { disabled: !app.active }),
+    menuItem('file.history', null, { disabled: !actions.history.canUse(app.active) }),
     menuItem('file.close', null, { disabled: !app.active }),
     '-',
     menuItem('pages.insert', null, { disabled: !app.active?.canEditPages }),
