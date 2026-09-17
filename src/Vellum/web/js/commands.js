@@ -96,6 +96,7 @@ export function createCommands(app, ui, actions) {
     'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 
     'find.open': { group: 'Search', icon: 'search', doc: true, label: 'Find in document', keys: ['Ctrl+F'], global: true, run: () => ui.findbar.open(doc()?.getSelectedText()) },
+    'find.replace': { group: 'Search', icon: 'search', doc: true, label: 'Replace text', keys: ['Ctrl+H'], global: true, run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
     'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
     'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
 

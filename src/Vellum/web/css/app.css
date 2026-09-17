@@ -772,6 +772,10 @@ kbd {
 .findbar.no-match .find-count { color: var(--danger); }
 .findbar.no-match .find-field { animation: shake .3s; }
 .find-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--line-2); }
+.findbar.replacing { display: grid; grid-template-columns: repeat(8, auto); row-gap: 5px; }
+.find-replace { display: flex; grid-column: 2 / -1; align-items: center; gap: 4px; }
+.find-replace[hidden] { display: none; }
+.find-replace .find-input { width: 180px; }
 
 /* ---- menus -------------------------------------------------------------------------------- */
 

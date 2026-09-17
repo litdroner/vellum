@@ -43,6 +43,7 @@ Vision.
 | View rotation (not saved) | done | document-view.js |
 | Page thumbnails, document outline (bookmarks) | done | ui/sidebar.js, ui/thumbnails.js |
 | Search with highlighting, match case, whole words | done | ui/findbar.js |
+| Find and replace (V1): Ctrl+H (or "Replace text" in the command palette) shows a Replace row in the find bar; Replace (Enter) changes the highlighted match, Replace all (Ctrl+Alt+Enter) every match in the document as ONE undo step; plain text only, with match case and whole words. Replacing is retyping: each run is planned exactly as typing into it (planTextEdit — the run's own font, a standard font of the same style, or a refusal), so it saves, reopens and undoes like any text edit. Only a page's own text, and a match inside one run; matches the engine can't change safely are left and counted with the reason. Not: patterns, pasted copies and new text, matches across lines, other documents | done, unreleased | editing/find-replace.js, editing/session.js (replaceText), ui/findbar.js, commands.js (find.replace); tests/editing/find-replace.test.mjs, tests/e2e/suites/find-replace.mjs |
 | Password-protected PDFs (correct password only) | done | document-view.js |
 | Damaged / missing / empty files explained | done | document-view.js |
 | Page colours: normal, dark, sepia (display only) | done | css (page tone), themes |

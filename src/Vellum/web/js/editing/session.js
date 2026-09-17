@@ -11,6 +11,7 @@
 import { openSource } from './source.js';
 import { analyzePage, verifyPage, REASONS } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
+import { findMatches, mayContain, nearestMatch, replaceMatches } from './find-replace.js';
 import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
@@ -164,21 +165,30 @@ export class TextEditing {
     const { entry, runs } = await this.page(pageNumber);
     const item = runs.find((r) => r.run.key === runKey);
     if (!item) throw new EditError('missing', 'That text isn’t on this page any more.');
+    const pair = await this.#retypePair(entry, item, text);
+    if (!pair) return false;
+    view.annotations.applyEdit(...pair);
+    return true;
+  }
+
+  /**
+   * What retyping a page's run (an item of page()) to `text` changes: [before, after] for the edit
+   * store, or null when nothing changes. Throws EditError when it can't be done safely.
+   */
+  async #retypePair(entry, item, text) {
     const next = text.replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
-    const store = view.annotations;
-    if (next === item.text) return false;
+    if (next === item.text) return null;
     if (next === item.run.text) {
       // Back to exactly what the file says: the edit simply goes away. A placement isn’t about
       // the text, though, so a run that has also been moved keeps its one record — holding the
       // file’s own glyphs again, which is what it would have had if it had only ever been moved.
-      if (!item.edit) return false;
+      if (!item.edit) return null;
       const placed = item.edit.transform || item.edit.format || item.edit.face
         ? planTextTransform({
           run: item.run, transform: item.edit.transform ?? null, entry: entry.id, id: item.edit.id, format: item.edit.format ?? null, face: item.edit.face ?? null,
         })
         : null;
-      store.applyEdit(item.edit, placed);
-      return true;
+      return [item.edit, placed];
     }
     // Another face draws the file's own glyphs of the line (objects/run-face.js): retyped text has none.
     if (item.edit?.face) throw runFaceError('retype');
@@ -189,8 +199,58 @@ export class TextEditing {
       run: item.run, text: next, entry: entry.id, glyphs: source.glyphs,
       id: item.edit?.id, transform: item.edit?.transform ?? null, format: item.edit?.format ?? null, ...(await this.#constraints()),
     });
-    store.applyEdit(item.edit, record);
-    return true;
+    return [item.edit, record];
+  }
+
+  // ---- find and replace ------------------------------------------------------------------------------
+  //
+  // Replacing is retyping: each run a match is in is planned exactly as edit() plans it — its own
+  // font's codes, a standard font of the same style, or a refusal — and all of it goes into the store
+  // as ONE undo step. Only a page's own text runs are replaced, and only a match inside one run; a
+  // match the engine can't change safely is left as it is, and counted with the reason.
+
+  /**
+   * Replaces `query` with `replacement` in the document's text. With `at` ({ pageNumber, point } in
+   * that page's user space) only the match nearest that point, in the run drawn under it; otherwise
+   * every match on every page. Returns { replaced, skipped, reasons }: how many matches were replaced
+   * and left, and why they were left, each reason once.
+   */
+  async replaceText(query, replacement, { caseSensitive = false, entireWord = false } = {}, at = null) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const options = { caseSensitive, entireWord };
+    const pairs = [];
+    const reasons = new Set();
+    let replaced = 0;
+    let skipped = 0;
+    const pageNumbers = at ? [at.pageNumber] : view.shownPlan.map((_, i) => i + 1);
+    for (const n of pageNumbers) {
+      if (!at) {
+        // Only pages whose text might hold the query are analyzed: reading a page isn't free.
+        const content = await (await view.pdf.getPage(n)).getTextContent();
+        if (!mayContain(content.items.map((i) => i.str).join(''), query)) continue;
+      }
+      const { entry, runs } = await this.page(n);
+      let found = runs.map((item) => ({ item, matches: findMatches(item.text, query, options) })).filter((f) => f.matches.length);
+      if (at) {
+        const one = nearestRun(found, at.point);
+        if (!one) throw new EditError('missing', 'Vellum can’t change this match: only the page’s own text is replaced.');
+        found = [{ item: one.item, matches: [one.match] }];
+      }
+      for (const { item, matches } of found) {
+        try {
+          const pair = await this.#retypePair(entry, item, replaceMatches(item.text, matches, replacement));
+          if (pair) pairs.push(pair);
+          replaced += matches.length;
+        } catch (err) {
+          if (!(err instanceof EditError) || at) throw err;
+          skipped += matches.length;
+          reasons.add(err.message);
+        }
+      }
+    }
+    if (pairs.length) view.annotations.applyEdits(pairs);
+    return { replaced, skipped, reasons: [...reasons] };
   }
 
   // ---- retyping pasted text ------------------------------------------------------------------------
@@ -1055,6 +1115,27 @@ export class TextEditing {
     }
     return this.#sources.get(src);
   }
+}
+
+/**
+ * Of the runs with matches ([{ item, matches }]), the one drawn under `point` (where it is now, moved
+ * or not), and in it the match nearest the point along the line: { item, match }, or null.
+ */
+function nearestRun(found, point) {
+  let best = null;
+  for (const { item, matches } of found) {
+    const quad = transformQuad(item.run.quad, item.edit?.transform ?? null);
+    if (!quad) continue;
+    const [ux, uy, vx, vy] = [quad[2] - quad[0], quad[3] - quad[1], quad[6] - quad[0], quad[7] - quad[1]];
+    const [px, py] = [point[0] - quad[0], point[1] - quad[1]];
+    const along = (px * ux + py * uy) / Math.max(1e-9, ux * ux + uy * uy);
+    const across = (px * vx + py * vy) / Math.max(1e-9, vx * vx + vy * vy);
+    // How far outside the run's box the point is, in line heights (0 inside it).
+    const outside = Math.max(0, -along, along - 1) * Math.hypot(ux, uy) / Math.max(1e-9, Math.hypot(vx, vy)) + Math.max(0, -across, across - 1);
+    if (outside > 1 || (best && outside >= best.outside)) continue;
+    best = { item, outside, match: nearestMatch(item.text, matches, Math.min(1, Math.max(0, along))) };
+  }
+  return best && { item: best.item, match: best.match };
 }
 
 /** The object of a page (`objects`) that a copy's record or clip item draws again, or null. */
