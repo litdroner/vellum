@@ -498,6 +498,7 @@ ui.toolbar.onMenu = async (anchor) => {
     '-',
     menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),
+    menuItem('tools.structure', null, { disabled: !ready }),
     menuItem('tools.compare'),
     '-',
     menuItem('app.palette'),

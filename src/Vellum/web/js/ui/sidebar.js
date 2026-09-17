@@ -1,8 +1,10 @@
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
+import { StructurePanel } from './structure.js';
 import { ThumbnailPanel } from './thumbnails.js';
 
-// Left sidebar: page thumbnails (which double as the page organiser) and the document's own outline.
+// Left sidebar: page thumbnails (which double as the page organiser), the document's own outline and,
+// once asked for, its structure (the semantic document model, read-only).
 // Each document gets its own panels, created lazily and kept while its tab is open. When a
 // document's pages are rearranged it's rebuilt, so its panels are replaced (carrying over the
 // thumbnails already drawn, the selection and the scroll position).
@@ -16,6 +18,7 @@ export class Sidebar {
     this.app = app;
     this.pageActions = pageActions;
     this.mode = localStorage.getItem('vellum.sidebar.mode') === 'outline' ? 'outline' : 'thumbs';
+    this.hasStructure = false; // the Structure tab joins the others once it is first opened, for the session
     this.isOpen = localStorage.getItem('vellum.sidebar.open') !== '0';
     // In a narrow window the sidebar floats over the document (so the page keeps its width) and
     // starts closed; opening it there doesn't change the remembered wide-window choice.
@@ -31,7 +34,9 @@ export class Sidebar {
       h('span', { html: icon('layout-grid', 16) }), h('span', { text: 'Pages' }));
     this.outlineTab = h('button', { class: 'seg-btn', role: 'tab', title: 'Document outline', onClick: () => this.setMode('outline') },
       h('span', { html: icon('list-tree', 16) }), h('span', { text: 'Outline' }));
-    this.tabs = h('div', { class: 'seg sidebar-tabs', role: 'tablist' }, this.thumbsTab, this.outlineTab);
+    this.structureTab = h('button', { class: 'seg-btn', role: 'tab', title: 'Document structure', hidden: true, onClick: () => this.setMode('structure') },
+      h('span', { html: icon('file-text', 16) }), h('span', { text: 'Structure' }));
+    this.tabs = h('div', { class: 'seg sidebar-tabs', role: 'tablist' }, this.thumbsTab, this.outlineTab, this.structureTab);
     this.pageMenuBtn = h('button', {
       class: 'tb-btn small page-menu-btn', title: 'Page tools', 'aria-label': 'Page tools', 'aria-haspopup': 'menu',
       html: icon('ellipsis', 16), onClick: () => this.pageActions.panelMenu(this.app.active, this.thumbs, this.pageMenuBtn),
@@ -73,16 +78,32 @@ export class Sidebar {
     if (this.mode !== 'thumbs') this.setMode('thumbs');
   }
 
+  /** Opens the sidebar on the document's structure (the Document structure command). */
+  showStructure() {
+    this.hasStructure = true;
+    if (!this.isShown) this.toggle(true);
+    this.setMode('structure');
+  }
+
+  /** The structure panel of the active document, if it has been created. */
+  get structure() {
+    return this.#panelsFor(this.app.active)?.structure ?? null;
+  }
+
   setMode(mode) {
     this.mode = mode;
-    localStorage.setItem('vellum.sidebar.mode', mode);
+    if (mode !== 'structure') localStorage.setItem('vellum.sidebar.mode', mode);
     this.render();
   }
 
   render() {
     this.thumbsTab.setAttribute('aria-selected', String(this.mode === 'thumbs'));
     this.outlineTab.setAttribute('aria-selected', String(this.mode === 'outline'));
-    this.tabs.style.setProperty('--seg-index', this.mode === 'outline' ? '1' : '0');
+    this.structureTab.setAttribute('aria-selected', String(this.mode === 'structure'));
+    this.structureTab.hidden = !this.hasStructure;
+    this.tabs.classList.toggle('compact', this.hasStructure);
+    this.tabs.style.setProperty('--seg-count', this.hasStructure ? '3' : '2');
+    this.tabs.style.setProperty('--seg-index', String(['thumbs', 'outline', 'structure'].indexOf(this.mode)));
     const view = this.app.active;
     const ready = view?.status === 'ready';
     this.pageMenuBtn.hidden = this.mode !== 'thumbs' || !ready;
@@ -100,6 +121,8 @@ export class Sidebar {
       panels.thumbs ??= new ThumbnailPanel(view, { actions: this.pageActions, ...panels.carry });
       panels.carry = null;
       panel = panels.thumbs;
+    } else if (this.mode === 'structure') {
+      panel = panels.structure ??= new StructurePanel(view);
     } else {
       panel = panels.outline ??= new OutlinePanel(view);
     }
@@ -117,6 +140,8 @@ export class Sidebar {
     }
     panels.thumbs = null;
     panels.outline = null;
+    panels.structure?.destroy();
+    panels.structure = null;
     if (view === this.app.active) this.render();
   }
 

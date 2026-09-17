@@ -819,6 +819,28 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.page(PageSizes.Letter, lines([20, 700, 'Glossary'], [12, 660, 'Terms used throughout this report are defined here']), res);
   });
 
+  // Document structure: every kind of object the semantic model describes, over two pages — a heading, a
+  // paragraph, a link, a note and a form field on page 1; text and a picture on page 2.
+  await build('structure', async (b) => {
+    const F1 = b.std(StandardFonts.Helvetica);
+    const Im1 = b.image(48, 36);
+    const at = (x, y, str, size = 11) => text('F1', size, x, y, str);
+    const first = b.page(PageSizes.Letter, [
+      at(72, 720, 'Structure report', 20),
+      at(72, 680, 'The first line of a plain paragraph that'), at(72, 666, 'runs on to a second line and ends here.'),
+      at(72, 620, 'Visit the project page'),
+      at(72, 580, 'Your name:'),
+    ].join('\n'), { Font: { F1 } });
+    const ctx = b.ctx;
+    const link = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [72, 615, 200, 632], Border: [0, 0, 0], A: { S: 'URI', URI: PDFString.of('https://example.com/structure') } }));
+    const note = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Text', Rect: [400, 700, 420, 720], Contents: PDFHexString.fromText('Check the figures'), Name: 'Comment' }));
+    first.node.set(PDFName.of('Annots'), ctx.obj([link, note]));
+    const field = b.doc.getForm().createTextField('reader.name');
+    field.setText('Grace Hopper');
+    field.addToPage(first, { x: 160, y: 572, width: 200, height: 22 });
+    b.page(PageSizes.Letter, [at(72, 720, 'A figure on page two', 16), 'q 240 0 0 180 72 480 cm /Im1 Do Q', at(72, 460, 'Figure 1: a picture')].join('\n'),{ Font: { F1 }, XObject: { Im1 } });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

@@ -104,6 +104,7 @@ export function createCommands(app, ui, actions) {
     'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page (English)', run: () => actions.ocr.run(doc(), 'page') },
     'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document (English)', run: () => actions.ocr.run(doc(), 'document') },
 
+    'tools.structure': { group: 'Tools', icon: 'file-text', doc: true, label: 'Document structure', run: () => doc() && ui.sidebar.showStructure() },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
 
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },

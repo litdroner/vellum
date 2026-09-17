@@ -180,10 +180,13 @@ export async function readSemanticPage(analysis, pdfPage = null) {
  */
 export async function readSemanticDocument(session, pdf) {
   const pages = [];
-  for (let number = 1; number <= pdf.numPages; number++) {
-    const [{ objects }, pdfPage] = await Promise.all([session.objects(number), pdf.getPage(number)]);
-    const annotations = await pdfPage.getAnnotations().catch(() => []);
-    pages.push(semanticPage({ number, objects, annotations, box: pdfPage.view, rotate: pdfPage.rotate }));
-  }
+  for (let number = 1; number <= pdf.numPages; number++) pages.push(await readSessionPage(session, pdf, number));
   return semanticDocument(pages);
+}
+
+/** One page of the document open in an editing session, as readSemanticDocument reads it: for a reader that goes a page at a time. */
+export async function readSessionPage(session, pdf, number) {
+  const [{ objects }, pdfPage] = await Promise.all([session.objects(number), pdf.getPage(number)]);
+  const annotations = await pdfPage.getAnnotations().catch(() => []);
+  return semanticPage({ number, objects, annotations, box: pdfPage.view, rotate: pdfPage.rotate });
 }
