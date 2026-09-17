@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { analyzeFile, openWithPdfjs, webModule, withSession } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
-const { semanticPage, semanticDocument, readSemanticPage, readSemanticDocument } = await webModule('semantic/model.js');
+const { semanticPage, semanticDocument, readSemanticPage, readSemanticDocument, readSessionPage, readPdfPage } = await webModule('semantic/model.js');
 const { objectsOf } = await webModule('editing/objects/page-objects.js');
 
 let files;
@@ -139,6 +139,60 @@ test('integration: the document open in an editing session is described page by 
       // The link lies over the text it links.
       const text = doc.byId(page.blocks[0].runIds[0]);
       assert.ok(text.box[0] >= page.links[0].box[0] && text.box[2] <= page.links[0].box[2]);
+    } finally {
+      await js.close();
+    }
+  });
+});
+
+test('protected PDF: opened only with its password, read from pdf.js alone — fields, annotations, links, page geometry, no text', async () => {
+  await assert.rejects(openWithPdfjs(read('encrypted-structure')), (err) => err.name === 'PasswordException', 'no password, no document');
+  await assert.rejects(openWithPdfjs(read('encrypted-structure'), { password: 'wrong' }), (err) => err.name === 'PasswordException');
+  const js = await openWithPdfjs(read('encrypted-structure'), { password: 'secret' });
+  try {
+    const doc = semanticDocument([await readPdfPage(js.doc, 1), await readPdfPage(js.doc, 2)]);
+    const [one, two] = doc.pages;
+    assert.deepEqual([one.box, one.rotate, two.box, two.rotate], [[0, 0, 612, 792], 0, [0, 0, 612, 792], 90]);
+    assert.deepEqual(one.fields.map((f) => [f.name, f.type, f.value, f.box]), [['secret.name', 'text', 'Ada Lovelace', [72, 600, 272, 622]]]);
+    assert.deepEqual(one.annotations.map((a) => [a.subtype, a.contents]), [['Text', 'Locked note']]);
+    assert.deepEqual(one.links.map((l) => [l.url, l.internal, l.page, l.box]), [[null, true, 2, [72, 660, 240, 680]]]);
+    assert.ok(doc.pages.every((p) => p.contentRead === false && !p.blocks.length && !p.runs.length && !p.images.length && !p.readingOrder.length), 'text and images are not read');
+    assert.equal(doc.byId(one.links[0].id), one.links[0]);
+  } finally {
+    await js.close();
+  }
+});
+
+test('internal links: the page a named or explicit destination goes to; web links have none', async () => {
+  await withSession(read('structure'), async ({ bytes, session }) => {
+    const js = await openWithPdfjs(bytes);
+    try {
+      const [one, two] = [await readSessionPage(session, js.doc, 1), await readSessionPage(session, js.doc, 2)];
+      assert.deepEqual(one.links.map((l) => [l.url, l.internal, l.page]), [['https://example.com/structure', false, null]]);
+      assert.deepEqual(two.links.map((l) => [l.url, l.internal, l.page]), [[null, true, 1]], 'a named destination');
+      assert.equal(one.contentRead, true);
+    } finally {
+      await js.close();
+    }
+  });
+  const pure = semanticPage({ number: 1, annotations: [{ id: '5R', subtype: 'Link', rect: [0, 0, 10, 10], dest: 'gone' }] });
+  assert.deepEqual(pure.links.map((l) => [l.internal, l.page]), [[true, null]], 'an unresolved destination stays unknown');
+});
+
+test('changes made in Vellum: a page read again shows edited text and a moved run where it is now', async () => {
+  await withSession(read('structure'), async ({ bytes, session }) => {
+    const js = await openWithPdfjs(bytes);
+    try {
+      const before = await readSessionPage(session, js.doc, 1);
+      const title = before.runs.find((r) => r.text === 'Structure report');
+      assert.equal(await session.edit(1, title.key.replace(/^run:/, ''), 'Structure summary'), true);
+      assert.equal(await session.transformObjects(1, [{ key: title.key, delta: [1, 0, 0, 1, 0, -30] }]), true);
+      const after = await readSessionPage(session, js.doc, 1);
+      const moved = after.runs.find((r) => r.id === title.id);
+      assert.equal(moved.text, 'Structure summary');
+      assert.ok(Math.abs(moved.box[1] - (title.box[1] - 30)) < 0.01 && Math.abs(moved.box[3] - (title.box[3] - 30)) < 0.01, JSON.stringify([title.box, moved.box]));
+      assert.equal(after.blocks.find((b) => b.runIds.includes(title.id)).text, 'Structure summary');
+      assert.equal(before.runs.find((r) => r.id === title.id).text, 'Structure report', 'the earlier snapshot is not changed');
     } finally {
       await js.close();
     }

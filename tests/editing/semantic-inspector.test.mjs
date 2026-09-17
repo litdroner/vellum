@@ -10,7 +10,7 @@ import { openWithPdfjs, webModule, withSession } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { readSessionPage } = await webModule('semantic/model.js');
-const { countsLabel, pageCounts, pageRows, properties } = await webModule('semantic/inspector.js');
+const { countsLabel, pageCounts, pageNote, pageRows, properties } = await webModule('semantic/inspector.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
@@ -43,7 +43,8 @@ test('rows: text in reading order, a paragraph holding its runs, then images, fi
   assert.equal(groups[3].rows[0].label, 'https://example.com/structure');
   assert.deepEqual(pageCounts(one), { blocks: 4, runs: 5, images: 0, fields: 1, annotations: 1, links: 1, total: 7 });
   assert.equal(countsLabel(one), '4 text blocks · 1 field · 1 annotation · 1 link');
-  assert.deepEqual(pageRows(two).map((g) => [g.key, g.rows.length]), [['text', 2], ['images', 1]]);
+  assert.deepEqual(pageRows(two).map((g) => [g.key, g.rows.length]), [['text', 2], ['images', 1], ['links', 1]]);
+  assert.equal(pageRows(two)[2].rows[0].label, 'Link to page 1');
   assert.equal(pageRows(two)[1].rows[0].label, 'Image 1 · 48×36');
   assert.equal(JSON.stringify(one), before, 'the model is read, never changed');
 });
@@ -62,6 +63,16 @@ test('properties: text, image, field, annotation and link, from the model’s ow
   assert.deepEqual([values('field', one.fields[0]).Name, values('field', one.fields[0]).Type, values('field', one.fields[0]).Value, values('field', one.fields[0])['Read-only']], ['reader.name', 'text', 'Grace Hopper', 'No']);
   assert.deepEqual([values('annotation', one.annotations[0]).Subtype, values('annotation', one.annotations[0]).Contents], ['Text', 'Check the figures']);
   assert.equal(values('link', one.links[0]).Destination, 'https://example.com/structure');
-  assert.equal(values('link', { id: 'p1:annot:9', url: null, internal: true, box: null }).Destination, 'A place in this document');
+  assert.equal(values('link', two.links[0]).Destination, 'Page 1');
+  assert.equal(values('link', { id: 'p1:annot:9', url: null, internal: true, page: null, box: null }).Destination, 'A place in this document');
+  assert.equal(pageNote(one), null, 'a page whose content was read has no note');
   assert.equal(values('block', one.blocks[1]).Lines, '2');
+});
+
+test('a protected page: its size and that text and images aren’t read, then what it does have', () => {
+  const page = { id: 'p2', number: 2, box: [0, 0, 612, 792], rotate: 90, contentRead: false, blocks: [], runs: [], images: [], fields: [], annotations: [], readingOrder: [],
+    links: [{ id: 'p2:annot:8R', url: null, internal: true, page: 1, box: [72, 660, 240, 680] }] };
+  assert.equal(pageNote(page), '612 × 792 pt, turned 90° · Text and images aren’t read in a protected PDF.');
+  assert.deepEqual(pageRows(page).map((g) => [g.key, g.rows.map((r) => r.label)]), [['links', ['Link to page 1']]]);
+  assert.equal(countsLabel(page), '1 link');
 });

@@ -820,7 +820,8 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
   });
 
   // Document structure: every kind of object the semantic model describes, over two pages — a heading, a
-  // paragraph, a link, a note and a form field on page 1; text and a picture on page 2.
+  // paragraph, a link, a note and a form field on page 1; text, a picture and a link back to page 1 (a named
+  // destination) on page 2.
   await build('structure', async (b) => {
     const F1 = b.std(StandardFonts.Helvetica);
     const Im1 = b.image(48, 36);
@@ -838,13 +839,30 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     const field = b.doc.getForm().createTextField('reader.name');
     field.setText('Grace Hopper');
     field.addToPage(first, { x: 160, y: 572, width: 200, height: 22 });
-    b.page(PageSizes.Letter, [at(72, 720, 'A figure on page two', 16), 'q 240 0 0 180 72 480 cm /Im1 Do Q', at(72, 460, 'Figure 1: a picture')].join('\n'),{ Font: { F1 }, XObject: { Im1 } });
+    const second = b.page(PageSizes.Letter, [at(72, 720, 'A figure on page two', 16), 'q 240 0 0 180 72 480 cm /Im1 Do Q', at(72, 460, 'Figure 1: a picture')].join('\n'),{ Font: { F1 }, XObject: { Im1 } });
+    const back = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [72, 440, 200, 456], Border: [0, 0, 0], Dest: PDFString.of('report') }));
+    second.node.set(PDFName.of('Annots'), ctx.obj([back]));
+    b.doc.catalog.set(PDFName.of('Names'), ctx.obj({ Dests: { Names: [PDFString.of('report'), ctx.obj([first.ref, PDFName.of('XYZ'), 0, 792, 0])] } }));
   });
 
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');
   written['encrypted-password'] = writeEncrypted(path.join(outDir, 'encrypted-password.pdf'), 'secret');
+  // A password-protected document with structure: on page 1 text, a link to page 2 (an explicit
+  // destination), a text field and a note; page 2 is blank and turned 90°.
+  written['encrypted-structure'] = writeEncrypted(path.join(outDir, 'encrypted-structure.pdf'), 'secret', ({ hex, stream }) => [
+    '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [9 0 R] >> >>',
+    '<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [8 0 R 9 0 R 10 0 R] >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    stream(5, 'BT /F1 18 Tf 72 700 Td (Protected structure) Tj ET'),
+    null,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Rotate 90 >>',
+    '<< /Type /Annot /Subtype /Link /Rect [72 660 240 680] /Border [0 0 0] /Dest [7 0 R /XYZ 0 792 0] >>',
+    `<< /Type /Annot /Subtype /Widget /FT /Tx /T ${hex(9, 'secret.name')} /V ${hex(9, 'Ada Lovelace')} /Rect [72 600 272 622] /P 3 0 R /F 4 >>`,
+    `<< /Type /Annot /Subtype /Text /Rect [400 700 420 720] /Contents ${hex(10, 'Locked note')} >>`,
+  ]);
   return written;
 }
 
@@ -874,7 +892,21 @@ function rc4(key, data) {
 const md5 = (...parts) => crypto.createHash('md5').update(Buffer.concat(parts)).digest();
 const pad = (password) => Buffer.concat([Buffer.from(password, 'latin1'), PADDING]).subarray(0, 32);
 
-function writeEncrypted(file, userPassword) {
+const defaultEncryptedObjects = ({ stream }) => [
+  '<< /Type /Catalog /Pages 2 0 R >>',
+  '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+  stream(5, 'BT /F1 18 Tf 72 700 Td (Protected text) Tj ET'),
+  null,
+];
+
+/**
+ * An RC4-encrypted PDF. objectsOf({ hex, stream }) gives its objects in number order, each a dictionary
+ * string or stream(num, text); hex(num, text) is a string encrypted for object num. The sixth (number 6)
+ * must be null: it becomes the /Encrypt dictionary.
+ */
+function writeEncrypted(file, userPassword, objectsOf = defaultEncryptedObjects) {
   const id = crypto.createHash('md5').update(`vellum-${userPassword}`).digest();
   const permissions = -44;
   const ownerKey = md5(pad(`owner-${userPassword}`)).subarray(0, 5);
@@ -884,24 +916,18 @@ function writeEncrypted(file, userPassword) {
   const key = md5(pad(userPassword), O, P, id).subarray(0, 5);
   const U = rc4(key, PADDING);
   const objectKey = (num) => md5(key, Buffer.from([num & 255, (num >> 8) & 255, (num >> 16) & 255, 0, 0])).subarray(0, 10);
-  const content = Buffer.from('BT /F1 18 Tf 72 700 Td (Protected text) Tj ET');
-  const encrypted = rc4(objectKey(5), content);
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
-    null,
-    `<< /Filter /Standard /V 1 /R 2 /O <${O.toString('hex')}> /U <${U.toString('hex')}> /P ${permissions} >>`,
-  ];
+  const encrypt = (num, text) => rc4(objectKey(num), Buffer.from(text, 'latin1'));
+  const objects = objectsOf({ hex: (num, text) => '<' + encrypt(num, text).toString('hex') + '>', stream: (num, text) => ({ stream: encrypt(num, text) }) });
+  objects.splice(5, 1,
+    `<< /Filter /Standard /V 1 /R 2 /O <${O.toString('hex')}> /U <${U.toString('hex')}> /P ${permissions} >>`);
   const chunks = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
   const offsets = [];
   let length = chunks[0].length;
   objects.forEach((body, i) => {
     offsets.push(length);
     const head = Buffer.from(`${i + 1} 0 obj\n`);
-    const part = body === null
-      ? Buffer.concat([head, Buffer.from(`<< /Length ${encrypted.length} >>\nstream\n`), encrypted, Buffer.from('\nendstream\nendobj\n')])
+    const part = body.stream
+      ? Buffer.concat([head, Buffer.from(`<< /Length ${body.stream.length} >>\nstream\n`), body.stream, Buffer.from('\nendstream\nendobj\n')])
       : Buffer.concat([head, Buffer.from(`${body}\nendobj\n`)]);
     chunks.push(part);
     length += part.length;

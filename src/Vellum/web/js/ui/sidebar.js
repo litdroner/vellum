@@ -140,8 +140,7 @@ export class Sidebar {
     }
     panels.thumbs = null;
     panels.outline = null;
-    panels.structure?.destroy();
-    panels.structure = null;
+    panels.structure?.documentChanged(); // the same panel reads again what changed
     if (view === this.app.active) this.render();
   }
 

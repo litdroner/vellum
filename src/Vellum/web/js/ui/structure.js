@@ -1,13 +1,15 @@
 import { h, reducedMotion } from '../dom.js';
 import { icon } from '../icons.js';
-import { readSessionPage } from '../semantic/model.js';
-import { countsLabel, pageCounts, pageRows, properties } from '../semantic/inspector.js';
+import { readPdfPage, readSessionPage } from '../semantic/model.js';
+import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../semantic/inspector.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
 // the one selected. Read-only: selecting an object goes to its page and marks its box for a moment, and
 // nothing in the document, the model or Edit mode's selection changes. A page is read when it is opened
-// (through the editing session's analysis, which is the editor's own and done once per page).
+// (through the editing session's analysis, which is the editor's own and done once per page). A protected
+// PDF has no editing session, so its pages are read from pdf.js alone: fields, annotations and links, no
+// text or images. A change made in Vellum reads the pages it touched again.
 
 const MARK_MS = 2400;
 
@@ -15,9 +17,15 @@ export class StructurePanel {
   #pages = new Map(); // page number → Promise of its model
   #selected = null; // { row, number, el }
   #mark = null;
+  #readEdits = new Map(); // page number → the content edits on it when it was read
+  #replan = false; // the page list changed: every page is read again
+  #abort = new AbortController();
 
   constructor(view) {
     this.view = view;
+    // Content and page changes rebuild the document, and documentChanged() follows. Annotations and form
+    // values kept in Vellum aren't read from the file, so they change nothing here.
+    view.annotations.addEventListener('change', (e) => { if (e.detail.plan) this.#replan = true; }, { signal: this.#abort.signal });
     this.el = h('div', { class: 'structure' });
     this.tree = h('div', { class: 'structure-tree', role: 'tree', 'aria-label': 'Document structure' });
     this.props = h('div', { class: 'structure-props', 'aria-live': 'polite' });
@@ -27,7 +35,7 @@ export class StructurePanel {
 
   #build() {
     const reason = this.view.textEditing.unavailableReason;
-    if (reason) {
+    if (reason && !this.view.encrypted) {
       this.el.replaceChildren(h('div', { class: 'panel-empty' },
         h('span', { html: icon('file-text', 22) }),
         h('strong', { text: 'No structure' }),
@@ -52,7 +60,51 @@ export class StructurePanel {
   }
 
   destroy() {
+    this.#abort.abort();
     this.#clearMark();
+  }
+
+  /** The document was rebuilt after a change made in Vellum: reads again the pages it touched, or every page when the page list changed. */
+  documentChanged() {
+    if (this.#replan || this.tree.querySelectorAll('.structure-page').length !== this.view.pdf.numPages) {
+      const open = [...this.tree.querySelectorAll('.structure-page.open')].map((n) => Number(n.dataset.page));
+      this.#replan = false;
+      this.#pages.clear();
+      this.#readEdits.clear();
+      this.#unselect();
+      this.#build();
+      for (const n of open) if (n <= this.view.pdf.numPages) this.#toggle(n, true);
+      return;
+    }
+    const stale = [...this.#readEdits].filter(([number, edits]) => {
+      const now = this.#editsOn(number);
+      return now.length !== edits.length || now.some((e, i) => e !== edits[i]);
+    });
+    for (const [number] of stale) this.#reread(number);
+    this.#summarize();
+  }
+
+  /** The content edits (text, pictures, redactions…) on a page as shown now. */
+  #editsOn(number) {
+    const entry = this.view.shownPlan?.[number - 1];
+    return entry ? this.view.annotations.edits.filter((e) => e.entry === entry.id) : [];
+  }
+
+  /** Reads a changed page again: at once when it is open, else when it is next opened. */
+  #reread(number) {
+    this.#pages.delete(number);
+    this.#readEdits.delete(number);
+    const node = this.tree.querySelector(`[data-page="${number}"]`);
+    if (!node) return;
+    delete node.dataset.read;
+    if (this.#selected?.number === number) this.#unselect();
+    if (node.classList.contains('open')) this.#toggle(number, true);
+  }
+
+  #unselect() {
+    this.#selected = null;
+    this.#clearMark();
+    this.props.replaceChildren(h('p', { class: 'structure-hint', text: 'Select an object to see its properties.' }));
   }
 
   #summarize() {
@@ -72,7 +124,10 @@ export class StructurePanel {
   }
 
   #read(number) {
-    if (!this.#pages.has(number)) this.#pages.set(number, readSessionPage(this.view.textEditing, this.view.pdf, number));
+    if (!this.#pages.has(number)) {
+      this.#readEdits.set(number, this.#editsOn(number));
+      this.#pages.set(number, this.view.encrypted ? readPdfPage(this.view.pdf, number) : readSessionPage(this.view.textEditing, this.view.pdf, number));
+    }
     return this.#pages.get(number);
   }
 
@@ -86,18 +141,23 @@ export class StructurePanel {
     const children = node.querySelector('.structure-children');
     children.replaceChildren(h('p', { class: 'structure-hint', text: 'Reading page…' }));
     let page;
+    const reading = this.#read(number);
     try {
-      page = await this.#read(number);
+      page = await reading;
     } catch (err) {
-      this.#pages.delete(number);
+      if (this.#pages.get(number) === reading) this.#pages.delete(number);
       children.replaceChildren(h('p', { class: 'structure-hint', text: err.message }));
       return;
     }
+    if (this.#pages.get(number) !== reading) return; // read again meanwhile: that read fills the page
     node.dataset.read = '';
     node.querySelector('.structure-count').textContent = String(pageCounts(page).total);
     node.querySelector('.structure-page-row').title = countsLabel(page);
     const groups = pageRows(page);
-    children.replaceChildren(...(groups.length ? groups.map((g) => this.#group(g, number)) : [h('p', { class: 'structure-hint', text: 'Nothing found on this page.' })]));
+    const note = pageNote(page);
+    children.replaceChildren(
+      ...(note ? [h('p', { class: 'structure-hint structure-note', text: note })] : []),
+      ...(groups.length ? groups.map((g) => this.#group(g, number)) : [h('p', { class: 'structure-hint', text: 'Nothing found on this page.' })]));
     this.#summarize();
   }
 

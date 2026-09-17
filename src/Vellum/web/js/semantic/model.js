@@ -8,14 +8,18 @@
 // separate one-line blocks here too; fields, annotations and links are pdf.js's reading of the page's
 // annotations (page.getAnnotations()). Nothing here writes, edits or selects.
 //
+// A protected (encrypted) PDF has no editing session, so its pages are read from pdf.js alone
+// (readPdfPage): page geometry, fields, annotations and links, but no text runs, blocks or images —
+// `contentRead` is false on such a page.
+//
 //   document  { pageCount, pages }
-//   page      { id, number, box, rotate, blocks, runs, images, fields, annotations, links, readingOrder }
+//   page      { id, number, box, rotate, contentRead, blocks, runs, images, fields, annotations, links, readingOrder }
 //   block     { id, kind: 'paragraph' | 'line', text, lines, runIds, box }
 //   run       { id, key, blockId, text, box, quad, font, size, dir, editable, invisible }
 //   image     { id, key, box, quad, inline, inserted, pixels }
 //   field     { id, name, type, value, box, readOnly }
 //   annotation{ id, subtype, contents, box }
-//   link      { id, url, internal, box }
+//   link      { id, url, internal, page, box }       page: the 1-based page an internal link goes to, when known
 //
 // Boxes are [x1, y1, x2, y2] in the page's PDF user space (y up), as the analysis and pdf.js give them.
 // IDs are `p<page>:<key>`: the object model's key for text and images, pdf.js's object id for the rest.
@@ -26,7 +30,7 @@
 
 import { compareOrder, objectsOf } from '../editing/objects/page-objects.js';
 import { textBlocks } from '../editing/objects/text-block.js';
-import { unionBox } from '../editing/objects/geometry.js';
+import { quadBox, transformQuad, unionBox } from '../editing/objects/geometry.js';
 
 const freezeAll = (list) => Object.freeze(list.map((x) => Object.freeze(x)));
 
@@ -45,7 +49,7 @@ function fieldType(a) {
 }
 
 /** pdf.js annotation data → fields, links and annotations. Popups belong to their parent; they are not their own. */
-function classifyAnnotations(prefix, list) {
+function classifyAnnotations(prefix, list, linkPages) {
   const fields = [];
   const links = [];
   const annotations = [];
@@ -56,7 +60,8 @@ function classifyAnnotations(prefix, list) {
     if (a.subtype === 'Widget' && a.fieldName !== undefined) {
       fields.push({ id, name: a.fieldName ?? '', type: fieldType(a), value: a.fieldValue ?? null, box, readOnly: Boolean(a.readOnly) });
     } else if (a.subtype === 'Link') {
-      links.push({ id, url: a.url ?? a.unsafeUrl ?? null, internal: !a.url && !a.unsafeUrl && (a.dest != null || a.action != null), box });
+      const internal = !a.url && !a.unsafeUrl && (a.dest != null || a.action != null);
+      links.push({ id, url: a.url ?? a.unsafeUrl ?? null, internal, page: internal ? linkPages?.get(a.id) ?? null : null, box });
     } else {
       const contents = a.contentsObj?.str ?? (typeof a.contents === 'string' ? a.contents : null);
       annotations.push({ id, subtype: a.subtype ?? 'Unknown', contents: contents || null, box });
@@ -70,11 +75,16 @@ function classifyAnnotations(prefix, list) {
  *   number       1-based position of the page in the document
  *   objects      the page's objects (objectsOf(analysis), or a session's objects(pageNumber).objects)
  *   annotations  pdf.js's page.getAnnotations() for the page (optional)
+ *   linkPages    Map of annotation id → the 1-based page an internal link goes to (optional; linkTargets)
+ *   records      the page's content edits by object key (a session's objects(pageNumber).records, optional):
+ *                a run shows its edited text, and a moved run or picture its box where it is now
  *   box, rotate  the page's box in user space and its rotation (optional)
+ *   contentRead  false when the page's content was not analyzed (a protected PDF): no text or images
  */
-export function semanticPage({ number, objects = [], annotations = [], box = null, rotate = 0 }) {
+export function semanticPage({ number, objects = [], annotations = [], linkPages = null, records = null, box = null, rotate = 0, contentRead = true }) {
   const prefix = `p${number}`;
   const idOf = (o) => `${prefix}:${o.ref.key}`;
+  objects = records?.size ? objects.map((o) => edited(o, records.get(o.ref.key))) : objects;
   const texts = objects.filter((o) => o.kind === 'text-run' && o.text?.trim() && o.geometry?.quad);
   const byKey = new Map(texts.map((o) => [o.ref.key, o]));
 
@@ -131,12 +141,13 @@ export function semanticPage({ number, objects = [], annotations = [], box = nul
     pixels: o.record.info?.width && o.record.info?.height ? Object.freeze([o.record.info.width, o.record.info.height]) : null,
   }));
 
-  const { fields, links, annotations: notes } = classifyAnnotations(prefix, annotations);
+  const { fields, links, annotations: notes } = classifyAnnotations(prefix, annotations, linkPages);
   return Object.freeze({
     id: prefix,
     number,
     box: normalRect(box),
     rotate: rotate ?? 0,
+    contentRead,
     blocks: freezeAll(blocks),
     runs: freezeAll(runs),
     images: freezeAll(images),
@@ -145,6 +156,41 @@ export function semanticPage({ number, objects = [], annotations = [], box = nul
     links: freezeAll(links),
     readingOrder: Object.freeze(blocks.map((b) => b.id)),
   });
+}
+
+/** An object as its edit record leaves it: a run's text as edited, and its quad and box moved by the record's transform. */
+function edited(o, record) {
+  if (!record) return o;
+  const text = o.kind === 'text-run' && record.kind === 'text' && typeof record.text === 'string' ? record.text : o.text;
+  const quad = record.transform && o.geometry?.quad ? transformQuad(o.geometry.quad, record.transform) : null;
+  if (text === o.text && !quad) return o;
+  return { ...o, text, geometry: quad ? { ...o.geometry, quad, box: quadBox(quad) } : o.geometry };
+}
+
+/**
+ * Where a page's internal links go: Map of annotation id → 1-based page number, for each link whose
+ * destination pdf.js can resolve in `pdf` (a named or explicit destination, or a GoTo action's). Links it
+ * can't resolve are left out.
+ */
+export async function linkTargets(pdf, annotations) {
+  const pages = new Map();
+  for (const a of annotations ?? []) {
+    if (a?.subtype !== 'Link' || a.url || a.unsafeUrl || a.dest == null) continue;
+    try {
+      const dest = typeof a.dest === 'string' ? await pdf.getDestination(a.dest) : a.dest;
+      const target = Array.isArray(dest) ? dest[0] : null;
+      const index = Number.isInteger(target) ? target : target && typeof target === 'object' ? await pdf.getPageIndex(target) : null;
+      if (Number.isInteger(index) && index >= 0 && index < pdf.numPages) pages.set(a.id, index + 1);
+    } catch {
+      // a destination that doesn't resolve stays unknown
+    }
+  }
+  return pages;
+}
+
+async function pageAnnotations(pdf, pdfPage) {
+  const annotations = await pdfPage.getAnnotations().catch(() => []);
+  return { annotations, linkPages: pdf ? await linkTargets(pdf, annotations) : null };
 }
 
 /** A document's model from its pages' models. Pure. */
@@ -163,12 +209,13 @@ export function semanticDocument(pages) {
  * The model of one analyzed page (editing/runs.js analyzePage) and its pdf.js page proxy, or of a page's
  * analysis alone.
  */
-export async function readSemanticPage(analysis, pdfPage = null) {
-  const annotations = pdfPage ? await pdfPage.getAnnotations().catch(() => []) : [];
+export async function readSemanticPage(analysis, pdfPage = null, pdf = null) {
+  const { annotations, linkPages } = pdfPage ? await pageAnnotations(pdf, pdfPage) : { annotations: [], linkPages: null };
   return semanticPage({
     number: analysis ? analysis.page + 1 : pdfPage.pageNumber,
     objects: analysis ? objectsOf(analysis) : [],
     annotations,
+    linkPages,
     box: analysis?.box ?? pdfPage?.view ?? null,
     rotate: pdfPage?.rotate ?? 0,
   });
@@ -186,7 +233,18 @@ export async function readSemanticDocument(session, pdf) {
 
 /** One page of the document open in an editing session, as readSemanticDocument reads it: for a reader that goes a page at a time. */
 export async function readSessionPage(session, pdf, number) {
-  const [{ objects }, pdfPage] = await Promise.all([session.objects(number), pdf.getPage(number)]);
-  const annotations = await pdfPage.getAnnotations().catch(() => []);
-  return semanticPage({ number, objects, annotations, box: pdfPage.view, rotate: pdfPage.rotate });
+  const [{ objects, records }, pdfPage] = await Promise.all([session.objects(number), pdf.getPage(number)]);
+  const { annotations, linkPages } = await pageAnnotations(pdf, pdfPage);
+  return semanticPage({ number, objects, records, annotations, linkPages, box: pdfPage.view, rotate: pdfPage.rotate });
+}
+
+/**
+ * One page from pdf.js alone, without an editing session: what a protected PDF, opened with its
+ * password, still exposes — the page's box and rotation, form fields, annotations and links. Its text and
+ * images are not analyzed (contentRead: false).
+ */
+export async function readPdfPage(pdf, number) {
+  const pdfPage = await pdf.getPage(number);
+  const { annotations, linkPages } = await pageAnnotations(pdf, pdfPage);
+  return semanticPage({ number, annotations, linkPages, box: pdfPage.view, rotate: pdfPage.rotate, contentRead: false });
 }

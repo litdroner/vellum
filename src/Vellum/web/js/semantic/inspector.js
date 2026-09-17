@@ -64,9 +64,19 @@ export function pageRows(page) {
     images: page.images.map((image, i) => ({ id: image.id, kind: 'image', label: image.pixels ? `Image ${i + 1} · ${image.pixels[0]}×${image.pixels[1]}` : `Image ${i + 1}`, item: image })),
     fields: page.fields.map((field) => ({ id: field.id, kind: 'field', label: `${field.name || 'Unnamed'} · ${field.type}`, item: field })),
     annotations: page.annotations.map((a) => ({ id: a.id, kind: 'annotation', label: a.contents ? `${a.subtype} · ${clip(a.contents, 40)}` : a.subtype, item: a })),
-    links: page.links.map((link) => ({ id: link.id, kind: 'link', label: link.url ? clip(link.url, 50) : link.internal ? 'Link within the document' : 'Link', item: link })),
+    links: page.links.map((link) => ({ id: link.id, kind: 'link', label: link.url ? clip(link.url, 50) : link.page ? `Link to page ${link.page}` : link.internal ? 'Link within the document' : 'Link', item: link })),
   };
   return GROUPS.map((g) => ({ ...g, rows: rows[g.key] })).filter((g) => g.rows.length);
+}
+
+/**
+ * What a page read without its content (a protected PDF) can't show, with its size: null for a page whose
+ * content was read.
+ */
+export function pageNote(page) {
+  if (page.contentRead !== false) return null;
+  const size = page.box ? `${pt(page.box[2] - page.box[0])} × ${pt(page.box[3] - page.box[1])} pt${page.rotate ? `, turned ${page.rotate}°` : ''} · ` : '';
+  return `${size}Text and images aren’t read in a protected PDF.`;
 }
 
 const yesNo = (v) => (v ? 'Yes' : 'No');
@@ -105,7 +115,7 @@ export function properties(kind, item) {
     case 'annotation':
       return [['Subtype', item.subtype], ['Contents', item.contents ?? 'None'], ...common];
     case 'link':
-      return [['Subtype', 'Link'], ['Destination', item.url ?? (item.internal ? 'A place in this document' : 'Not known')], ...common];
+      return [['Subtype', 'Link'], ['Destination', item.url ?? (item.page ? `Page ${item.page}` : item.internal ? 'A place in this document' : 'Not known')], ...common];
     default:
       return common;
   }
