@@ -1,6 +1,7 @@
 import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
 import { applyObjectEdits } from '../editing/page-writer.js';
+import { writeFormValues } from '../forms/fields.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -47,9 +48,10 @@ export function writeAnnotations(bytes, annotations) {
  *   sources      Map of sourceId → bytes: pages inserted from other PDFs, and images replacing pictures
  *   annotations  Vellum annotations to write; .page is the 1-based position in the plan
  *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/page-writer.js
+ *   forms        values of the file's own form fields, by field name (forms/fields.js)
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
  */
-export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], clean = true }) {
+export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], forms = [], clean = true }) {
   const lib = await pdfLib();
   const doc = await loadForWriting(lib, base);
   const ctx = doc.context;
@@ -66,6 +68,11 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   for (const a of annotations) {
     const page = pages[a.page - 1];
     if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
+  }
+  try {
+    await writeFormValues(lib, doc, forms);
+  } catch (err) {
+    throw new AnnotationSaveError(err.message);
   }
   // After a rearrangement the old page tree (and any deleted pages) are left unreferenced; after a
   // text edit, the page's old content stream is. Removing them keeps deleted pages and replaced

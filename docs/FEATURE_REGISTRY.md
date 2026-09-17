@@ -114,6 +114,12 @@ Vision.
 | Extract pages to a new PDF, split into files | done | pages/actions.js |
 | Deleted pages really removed on save; bookmarks kept | done | annotations/persist.js |
 
+## Forms
+
+| Feature | Status | Where |
+|---|---|---|
+| Filling the PDF's own form fields (0.7, Forms v1): the AcroForm fields pdf.js finds are drawn as inputs over the page — text fields, checkboxes, radio buttons, dropdowns and list boxes — and what is typed or chosen is kept by field name (not an undo step; the field is where it's changed back) and marks the document changed. Saved into the same fields: /V, a checkbox or radio button's /AS, a choice field's export value, and a new appearance in Helvetica so other readers show it; where Helvetica can't show the value (or a choice's export value isn't the text it shows) /NeedAppearances is set instead. The fields stay real, interactive fields: never created, removed, flattened or rasterized; no form JavaScript or actions run. Page changes rebuild with the filled values. Refused with the reason: a field no longer in the file. Protected (encrypted) PDFs can be typed into but not saved (a notice says so). Limits: filling is not in undo; appearances use Helvetica, not the field's own font; no XFA forms | done, unreleased | forms/fields.js (readFields, valueOfInput, writeFormValues), annotations/model.js (setFormValue, formValues), annotations/persist.js (composeDocument forms), document-view.js; tests/editing/forms.test.mjs, tests/e2e/suites/forms.mjs |
+
 ## App
 
 | Feature | Status | Where |
@@ -143,8 +149,8 @@ intended behaviour and its rules.
 | Tag-preserving edits; PDF/A font embedding; keeping edited text on its layer | planned | §2.2, §10 |
 | Annotations: strikethrough, shapes, stamps, text boxes, measure (also listed under Annotating); moving annotations and links with content | planned | §3.3 |
 | Two-page (spread) layout, full-screen reading (also listed under App) | planned | §3.1 |
-| Fill & sign: form filling (text fields, checkboxes, radio buttons, dropdowns), signatures (type / draw / upload, place, resize) | planned — earlier stated order: after 0.5.0, before redaction | §3.7 |
-| Form detection, form creation, form flattening as an explicit user-requested output | planned | §3.7 |
+| Fill & sign: signatures (type / draw / upload, place, resize) | planned — earlier stated order: after 0.5.0, before redaction | §3.7 |
+| Form creation, form flattening as an explicit user-requested output (detecting and filling existing fields: Forms) | planned | §3.7 |
 | Digital (certificate) signatures, separate from signature pictures: signing with a certificate, validity display (needs a local signing/certificate engine chosen) | planned | §3.7 |
 | True redaction: sensitive content really removed from the saved PDF; a covering box is not redaction; no silent page rasterising (method to be designed and approved) | research | §3.6 |
 | Password protection: add / change / remove (with the correct password); permissions (print, copy, edit) | planned | §3.6 |

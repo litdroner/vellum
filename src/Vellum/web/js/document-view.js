@@ -14,6 +14,7 @@ import {
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
 import { ObjectSelection } from './editing/objects/selection.js';
+import { readFields, valueOfInput } from './forms/fields.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
 // (page, zoom, rotation, layout, search) and reports changes with a 'change' event.
@@ -95,6 +96,8 @@ export class DocumentView extends EventTarget {
   #refitFrame = 0;
   /** The document is to start at the very top, and hasn't been able to yet (see #toStart). */
   #startAtTop = false;
+  /** The PDF's own form fields on screen, by widget id (forms/fields.js). */
+  #fields = new Map();
   /** Other PDFs pages were inserted from: sourceId → bytes. */
   sources = new Map();
   rebuilding = false;
@@ -237,6 +240,18 @@ export class DocumentView extends EventTarget {
     });
     this.linkService.setViewer(this.viewer);
     this.annotLayer = new AnnotationLayer(this, this.annotations);
+    // A value typed or chosen in one of the PDF's own form fields (drawn by pdf.js) is kept for saving.
+    const keepField = (e) => {
+      const entry = valueOfInput(e.target, this.#fields);
+      if (!entry) return;
+      if (!this.encrypted) this.annotations.setFormValue(entry);
+      else if (!warnedProtected.has(`form:${this.file.path}`)) {
+        warnedProtected.add(`form:${this.file.path}`);
+        this.#notice('This PDF is protected, so Vellum can’t save what’s filled in its form.');
+      }
+    };
+    this.viewerEl.addEventListener('input', keepField);
+    this.viewerEl.addEventListener('change', keepField);
     this.annotLayer.addEventListener('toolchange', () => this.#changed());
     this.annotLayer.addEventListener('selectionchange', () => this.#changed());
 
@@ -378,6 +393,7 @@ export class DocumentView extends EventTarget {
     this.annotations.initPlan(identityPlan(this.pdf.numPages));
     this.#shownPlan = this.annotations.plan;
     this.viewer.setDocument(this.pdf);
+    readFields(this.pdf).then((fields) => { this.#fields = fields; });
     this.linkService.setDocument(this.pdf, null);
     try {
       const { info } = await this.pdf.getMetadata();
@@ -533,7 +549,7 @@ export class DocumentView extends EventTarget {
     }
     const bytes = await composeDocument({
       base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources,
-      annotations: this.annotations.all, edits: this.annotations.edits,
+      annotations: this.annotations.all, edits: this.annotations.edits, forms: this.annotations.formValues,
     });
     await this.writeFile(target, bytes);
     this.annotations.markSaved();
@@ -623,7 +639,7 @@ export class DocumentView extends EventTarget {
       const page = position.get(current[a.page - 1]?.id);
       if (page) annotations.push({ ...a, page });
     }
-    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations, edits: this.annotations.edits });
+    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations, edits: this.annotations.edits, forms: this.annotations.formValues });
   }
 
   async #baseBytes() {
@@ -657,7 +673,7 @@ export class DocumentView extends EventTarget {
         const keepId = this.#shownPlan?.[this.viewer.currentPageNumber - 1]?.id;
         const keepIndex = this.viewer.currentPageNumber;
         const bytes = await composeDocument({
-          base: await this.#baseBytes(), plan, sources: this.sources, edits: this.annotations.edits, clean: false,
+          base: await this.#baseBytes(), plan, sources: this.sources, edits: this.annotations.edits, forms: this.annotations.formValues, clean: false,
         });
         if (this.#rebuildQueued) continue;
         const found = plan.findIndex((e) => e.id === keepId);
@@ -683,6 +699,7 @@ export class DocumentView extends EventTarget {
     this.#shownPlan = plan;
     Object.assign(this.find, { current: 0, total: 0, state: null });
     this.viewer.setDocument(pdf);
+    readFields(pdf).then((fields) => { if (this.pdf === pdf) this.#fields = fields; });
     this.linkService.setDocument(pdf, null);
     previous?.destroy();
     this.dispatchEvent(new Event('documentchange'));

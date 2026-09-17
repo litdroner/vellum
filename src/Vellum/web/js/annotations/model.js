@@ -39,6 +39,8 @@ export class AnnotationStore extends EventTarget {
   #undo = [];
   #redo = [];
   #savedAt = 0;
+  #forms = new Map();
+  #formsChanged = false;
   #held = null;
 
   constructor({ author = '' } = {}) {
@@ -86,7 +88,23 @@ export class AnnotationStore extends EventTarget {
   get canUndo() { return this.#undo.length > 0; }
   get canRedo() { return this.#redo.length > 0; }
   /** True when the annotations differ from what's in the file. Undoing back to the saved state clears it. */
-  get dirty() { return (this.#undo.at(-1)?.seq ?? 0) !== this.#savedAt; }
+  get dirty() { return this.#formsChanged || (this.#undo.at(-1)?.seq ?? 0) !== this.#savedAt; }
+
+  /** Values typed or chosen in the PDF's own form fields since it was opened: [{ name, type, value }]. */
+  get formValues() { return [...this.#forms.values()]; }
+
+  /**
+   * Keeps a form field's value (forms/fields.js), written into that field when the file is saved. After
+   * the guard, as any change; not an undo step, since the field itself is where it's changed back.
+   */
+  async setFormValue(entry) {
+    const ok = await Promise.resolve(this.guard ? this.guard([]) : true).catch(() => false);
+    if (ok !== true) return false;
+    this.#forms.set(entry.name, entry);
+    this.#formsChanged = true;
+    this.#emit(new Set());
+    return true;
+  }
 
   get(id) { return this.#items.get(id) ?? null; }
 
@@ -191,6 +209,7 @@ export class AnnotationStore extends EventTarget {
 
   markSaved() {
     this.#savedAt = this.#undo.at(-1)?.seq ?? 0;
+    this.#formsChanged = false;
     this.#emit(new Set());
   }
 

@@ -784,6 +784,23 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.page([200, 200], text('F1', 10, 20, 100, 'Small page'), { Font: { F1: b.std(StandardFonts.Helvetica) } });
   });
 
+  // 26. A form (AcroForm): a text field, a checkbox, a radio group and a dropdown whose options have
+  // export values different from what they show.
+  await build('form', async (b) => {
+    const page = b.page(PageSizes.Letter, text('F1', 14, 72, 740, 'Application form'), { Font: { F1: b.std(StandardFonts.Helvetica) } });
+    const form = b.doc.getForm();
+    form.createTextField('name').addToPage(page, { x: 72, y: 680, width: 240, height: 24 });
+    form.createCheckBox('agree').addToPage(page, { x: 72, y: 630, width: 18, height: 18 });
+    const size = form.createRadioGroup('size');
+    for (const [i, option] of ['Small', 'Large'].entries()) size.addOptionToPage(option, page, { x: 72 + i * 60, y: 580, width: 18, height: 18 });
+    const country = form.createDropdown('country');
+    country.addToPage(page, { x: 72, y: 520, width: 160, height: 24 });
+    country.acroField.dict.set(PDFName.of('Opt'), b.ctx.obj([
+      [PDFHexString.fromText('in'), PDFHexString.fromText('India')],
+      [PDFHexString.fromText('se'), PDFHexString.fromText('Sweden')],
+    ]));
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');
