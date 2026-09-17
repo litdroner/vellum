@@ -9,7 +9,7 @@ import { inspectDocument, mayBeSigned } from './editing/source.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
 import { newId } from './annotations/model.js';
 import {
-  identityPlan, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, copyEntries, followPages,
+  identityPlan, setPageSetting, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, copyEntries, followPages,
 } from './pages/plan.js';
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
@@ -573,7 +573,7 @@ export class DocumentView extends EventTarget {
     if (!this.canEditPages) return false;
     const before = this.annotations.plan;
     const { plan, copies = [] } = fn(before);
-    const unchanged = plan.length === before.length && plan.every((e, i) => e.id === before[i].id && e.rotate === before[i].rotate);
+    const unchanged = plan.length === before.length && plan.every((e, i) => e === before[i] || JSON.stringify(e) === JSON.stringify(before[i]));
     if (unchanged) return false;
     if (!plan.length) {
       this.#notice('A PDF needs at least one page, so the last page can’t be deleted.');
@@ -592,6 +592,11 @@ export class DocumentView extends EventTarget {
 
   rotatePages(ids, delta) {
     return this.#editPlan((plan) => ({ plan: rotateEntries(plan, new Set(ids), delta) }));
+  }
+
+  /** Sets 'crop', 'pageNumber' or 'watermark' on pages (null removes it); value may be a function of the entry. */
+  setPageSetting(ids, key, value) {
+    return this.#editPlan((plan) => ({ plan: setPageSetting(plan, new Set(ids), key, value) }));
   }
 
   deletePages(ids) {

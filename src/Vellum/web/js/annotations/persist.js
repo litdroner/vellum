@@ -2,6 +2,7 @@ import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
 import { applyObjectEdits } from '../editing/page-writer.js';
 import { writeFormValues } from '../forms/fields.js';
+import { writePageSettings } from '../pages/stamps.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -65,6 +66,8 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
 
   // Text edits rewrite only their own pages' content streams.
   const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources, originals: basePages }) : { changed: 0 };
+  // Crop, page numbers and watermarks go on after content edits, which re-read each page's original content.
+  if (plan) await writePageSettings({ lib, doc, pages, plan });
 
   for (const a of annotations) {
     const page = pages[a.page - 1];

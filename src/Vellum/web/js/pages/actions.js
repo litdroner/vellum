@@ -2,6 +2,8 @@ import { bridge } from '../bridge.js';
 import { h } from '../dom.js';
 import { openMenu } from '../ui/menu.js';
 import { showDialog, toast } from '../ui/dialogs.js';
+import { loadPdfLib } from '../annotations/persist.js';
+import { PAGE_NUMBER_POSITIONS, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 
 // Page operations as the UI offers them: the DocumentView methods plus the dialogs, menus and
 // messages around them. Used by the thumbnail panel, the menus and keyboard shortcuts.
@@ -96,6 +98,77 @@ export function createPageActions({ onOpenFile }) {
       if (view.deletePages(ids)) toast(`Deleted ${plural(ids.length, 'page')}`, { action: undo(view) });
     },
 
+    /** Crop: margins as the pages are shown, kept per page in the page's own (unrotated) sides. */
+    async crop(view, ids) {
+      if (!ids.length || !(await allowed(view))) return;
+      const plan = view.annotations.plan;
+      const entries = plan.filter((e) => ids.includes(e.id));
+      // Quarter turns each page is shown at (its own rotation plus the plan's), from the pages on screen.
+      const turns = new Map(await Promise.all(view.shownPlan.map(async (e, i) => [e.id, Math.round((await view.pdf.getPage(i + 1)).rotate / 90) % 4])));
+      const turnsOf = (e) => turns.get(e.id) ?? 0;
+      const first = entries[0];
+      const shown = first.crop ? SIDES.map((_, i) => first.crop[SIDES[(i - turnsOf(first) + 4) % 4]] ?? 0) : [0, 0, 0, 0];
+      const answer = await askForPageSetting({
+        title: 'Crop pages', iconName: 'minimize-2', count: ids.length, total: plan.length, removable: entries.some((e) => e.crop),
+        message: 'Trims the edges of the pages as they’re shown. Nothing is deleted: the hidden parts stay in the file.',
+        fields: SIDES.map((side, i) => ({ key: side, label: side[0].toUpperCase() + side.slice(1), type: 'number', unit: 'mm', value: toMm(shown[i]), min: 0 })),
+      });
+      if (!answer) return;
+      const targets = answer.all ? plan.map((e) => e.id) : ids;
+      const value = answer.remove ? null : (e) => {
+        const k = turnsOf(e);
+        const crop = Object.fromEntries(SIDES.map((side, j) => [side, fromMm(answer.values[SIDES[(j + k) % 4]])]));
+        return Object.values(crop).some((v) => v > 0) ? crop : null;
+      };
+      if (view.setPageSetting(targets, 'crop', value)) toast(answer.remove ? 'Crop removed' : `Cropped ${plural(targets.length, 'page')}`, { action: undo(view) });
+    },
+
+    async pageNumbers(view, ids) {
+      if (!(await allowed(view))) return;
+      const plan = view.annotations.plan;
+      const current = plan.find((e) => ids.includes(e.id) && e.pageNumber)?.pageNumber ?? { format: 'Page {n} of {total}', position: 'bottom-center', size: 10, start: 1 };
+      const answer = await askForPageSetting({
+        title: 'Page numbers', iconName: 'file-text', count: ids.length, total: plan.length, preferAll: true, removable: plan.some((e) => e.pageNumber),
+        message: 'Adds each page’s number as text. {n} is the page’s number and {total} the page count; numbers follow the pages when they’re moved.',
+        fields: [
+          { key: 'format', label: 'Text', type: 'text', value: current.format, wide: true },
+          { key: 'position', label: 'Position', type: 'select', value: current.position, options: PAGE_NUMBER_POSITIONS.map((p) => [p, label(p)]) },
+          { key: 'size', label: 'Size', type: 'number', unit: 'pt', value: current.size, min: 4, max: 72 },
+          { key: 'start', label: 'Start at', type: 'number', value: current.start, min: 0, max: 99999 },
+        ],
+        preview: (v) => `Page 1 reads “${pageNumberText({ format: v.format, start: Math.round(Number(v.start)) }, 1, plan.length)}”`,
+        check: (v) => (v.format.includes('{n}') ? checkText(v.format) : 'Include {n} where the number goes.'),
+      });
+      if (!answer) return;
+      const targets = answer.all ? plan.map((e) => e.id) : ids;
+      const { format, position, size, start } = answer.values;
+      const value = answer.remove ? null : { format, position, size: Number(size), start: Math.round(Number(start)) };
+      if (view.setPageSetting(targets, 'pageNumber', value)) toast(answer.remove ? 'Page numbers removed' : `Numbered ${plural(targets.length, 'page')}`, { action: undo(view) });
+    },
+
+    async watermark(view, ids) {
+      if (!(await allowed(view))) return;
+      const plan = view.annotations.plan;
+      const current = plan.find((e) => ids.includes(e.id) && e.watermark)?.watermark ?? { text: 'DRAFT', position: 'center', size: 60, opacity: 0.2, rotation: 45 };
+      const answer = await askForPageSetting({
+        title: 'Watermark', iconName: 'blend', count: ids.length, total: plan.length, preferAll: true, removable: plan.some((e) => e.watermark),
+        message: 'Adds text across the pages, over their content.',
+        fields: [
+          { key: 'text', label: 'Text', type: 'text', value: current.text, wide: true },
+          { key: 'position', label: 'Position', type: 'select', value: current.position, options: WATERMARK_POSITIONS.map((p) => [p, label(p)]) },
+          { key: 'size', label: 'Size', type: 'number', unit: 'pt', value: current.size, min: 6, max: 400 },
+          { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', value: Math.round(current.opacity * 100), min: 5, max: 100 },
+          { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', value: current.rotation, min: -180, max: 180 },
+        ],
+        check: (v) => (v.text.trim() ? checkText(v.text) : 'Enter the watermark text.'),
+      });
+      if (!answer) return;
+      const targets = answer.all ? plan.map((e) => e.id) : ids;
+      const { text, position, size, opacity, rotation } = answer.values;
+      const value = answer.remove ? null : { text: text.trim(), position, size: Number(size), opacity: Number(opacity) / 100, rotation: Number(rotation) };
+      if (view.setPageSetting(targets, 'watermark', value)) toast(answer.remove ? 'Watermark removed' : `Watermarked ${plural(targets.length, 'page')}`, { action: undo(view) });
+    },
+
     async duplicate(view, ids) {
       if (await allowed(view)) view.duplicatePages(ids);
     },
@@ -176,6 +249,7 @@ export function createPageActions({ onOpenFile }) {
       openMenu([
         { label: `Rotate ${which} right`, icon: 'rotate-cw', disabled: off, action: () => actions.rotate(view, ids, 90) },
         { label: `Rotate ${which} left`, icon: 'rotate-ccw', disabled: off, action: () => actions.rotate(view, ids, -90) },
+        { label: `Crop ${which}…`, icon: 'minimize-2', disabled: off, action: () => actions.crop(view, ids) },
         { label: `Duplicate ${which}`, icon: 'copy-plus', shortcut: 'Ctrl+D', disabled: off, action: () => actions.duplicate(view, ids) },
         { label: `Copy ${which}`, icon: 'copy', shortcut: 'Ctrl+C', disabled: off, action: () => actions.copy(view, ids) },
         { label: 'Paste pages after', icon: 'files', shortcut: 'Ctrl+V', disabled: off || !copied, action: () => actions.paste(view, index) },
@@ -203,11 +277,79 @@ export function createPageActions({ onOpenFile }) {
         { label: ids.length > 1 ? `Extract ${ids.length} pages…` : 'Extract this page…', icon: 'file-output', disabled: off, action: () => actions.extract(view, ids) },
         { label: 'Split into files…', icon: 'scissors', disabled: off, action: () => actions.split(view, panel?.selectedIds ?? []) },
         '-',
+        { label: ids.length > 1 ? `Crop ${ids.length} pages…` : 'Crop page…', icon: 'minimize-2', disabled: off || !ids.length, action: () => actions.crop(view, ids) },
+        { label: 'Page numbers…', icon: 'file-text', disabled: off, action: () => actions.pageNumbers(view, ids) },
+        { label: 'Watermark…', icon: 'blend', disabled: off, action: () => actions.watermark(view, ids) },
+        '-',
         { label: 'Select all pages', icon: 'list-checks', shortcut: 'Ctrl+A', disabled: !panel, action: () => panel?.selectAll() },
       ], { anchor, align: 'end' });
     },
   };
   return actions;
+}
+
+const SIDES = ['top', 'right', 'bottom', 'left']; // clockwise, as shown
+const toMm = (pt) => Math.round((pt * 25.4 / 72) * 10) / 10;
+const fromMm = (mm) => Math.max(0, Number(mm) || 0) * 72 / 25.4;
+const label = (position) => position.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+async function checkText(text) {
+  const bad = await unsupportedCharacters(await loadPdfLib(), text);
+  return bad ? `These characters can’t be written in the standard PDF font: ${bad}` : null;
+}
+
+/**
+ * The dialog for crop, page numbers and watermarks: a few fields, which pages, Apply or Remove.
+ * Resolves { all, remove, values } or null if cancelled.
+ */
+async function askForPageSetting({ title, message, iconName, count, total, preferAll = false, removable, fields, preview, check }) {
+  const inputs = new Map();
+  const rows = fields.map((f) => {
+    const input = f.type === 'select'
+      ? h('select', { class: 'field' }, ...f.options.map(([value, text]) => h('option', { value, text, selected: value === f.value })))
+      : h('input', { class: 'field', type: f.type, value: String(f.value), min: f.min, max: f.max, step: f.type === 'number' ? 'any' : null, spellcheck: 'false' });
+    input.setAttribute('aria-label', f.label);
+    inputs.set(f.key, input);
+    return h('label', { class: `page-setting${f.wide ? ' wide' : ''}` }, h('span', { text: f.label }),
+      h('span', { class: 'page-setting-input' }, input, f.unit ? h('span', { class: 'unit', text: f.unit }) : null));
+  });
+  const option = (value, text, checked) => h('label', { class: 'choice' },
+    h('input', { type: 'radio', name: 'page-scope', value, checked }), h('span', { class: 'choice-label', text }));
+  const scope = h('div', { class: 'choices' },
+    option('selected', count === 1 ? 'This page' : `Selected pages (${count})`, !preferAll),
+    option('all', `All pages (${total})`, preferAll));
+  const note = h('p', { class: 'dialog-note' });
+  const values = () => Object.fromEntries([...inputs].map(([k, el]) => [k, el.value]));
+  let primary = null;
+  let valid = true;
+  let turn = 0;
+  const update = async () => {
+    const v = values();
+    const mine = ++turn;
+    const bad = fields.find((f) => f.type === 'number' && (v[f.key] === '' || !Number.isFinite(Number(v[f.key])) || Number(v[f.key]) < f.min || (f.max != null && Number(v[f.key]) > f.max)));
+    const problem = bad ? `${bad.label}: enter a number from ${bad.min}${bad.max != null ? ` to ${bad.max}` : ' up'}.` : await check?.(v);
+    if (mine !== turn) return;
+    valid = !problem;
+    if (primary) primary.disabled = !valid;
+    note.textContent = problem ?? preview?.(v) ?? '';
+  };
+  for (const el of inputs.values()) el.addEventListener('input', update);
+
+  const buttons = [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Apply', primary: true }];
+  if (removable) buttons.unshift({ id: 'remove', label: 'Remove' });
+  const result = await showDialog({
+    title, message, iconName, className: 'page-setting-dialog',
+    content: [h('div', { class: 'page-settings' }, rows), scope, note],
+    buttons,
+    onOpen: (dialog) => {
+      primary = dialog.querySelector('.btn.primary');
+      update();
+      return dialog.querySelector('.page-settings input, .page-settings select');
+    },
+  });
+  const all = scope.querySelector('input:checked')?.value === 'all';
+  if (result === 'remove') return { all, remove: true, values: values() };
+  return result === 'ok' && valid ? { all, remove: false, values: values() } : null;
 }
 
 /** The Split dialog. Resolves with groups of page numbers, or null if cancelled. */

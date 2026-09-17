@@ -1,11 +1,13 @@
 import { newId } from '../annotations/model.js';
+import { hasPageSettings } from './stamps.js';
 
 // A page plan is the document's page list after editing. Each entry says where a page comes from:
 //   { id, src: 'base', index, rotate }        page `index` (0-based) of the file that was opened
 //   { id, src: '<sourceId>', index, rotate }  a page taken from another PDF inserted into this one
 //   { id, src: 'blank', width, height, rotate }
-// `rotate` is extra rotation (0/90/180/270) on top of the page's own. An entry keeps its id when it
-// is moved or rotated, which is how annotations follow their page around.
+// `rotate` is extra rotation (0/90/180/270) on top of the page's own. An entry may also carry `crop`,
+// `pageNumber` and `watermark` (see pages/stamps.js). An entry keeps its id when it is moved, rotated
+// or given settings, which is how annotations follow their page around.
 
 export function identityPlan(pageCount) {
   return Array.from({ length: pageCount }, (_, index) => ({ id: newId(), src: 'base', index, rotate: 0 }));
@@ -13,7 +15,19 @@ export function identityPlan(pageCount) {
 
 /** True when the plan is just the opened file, untouched. */
 export function isIdentity(plan, pageCount) {
-  return !plan || (plan.length === pageCount && plan.every((e, i) => e.src === 'base' && e.index === i && !e.rotate));
+  return !plan || (plan.length === pageCount && plan.every((e, i) => e.src === 'base' && e.index === i && !e.rotate && !hasPageSettings(e)));
+}
+
+/** Sets (or, with null, removes) one page setting — 'crop', 'pageNumber' or 'watermark' — on entries. value(entry) may vary per page. */
+export function setPageSetting(plan, ids, key, value) {
+  return plan.map((e) => {
+    if (!ids.has(e.id)) return e;
+    const next = { ...e };
+    const v = typeof value === 'function' ? value(e) : value;
+    if (v == null) delete next[key];
+    else next[key] = v;
+    return next;
+  });
 }
 
 const turn = (angle) => ((angle % 360) + 360) % 360;
