@@ -569,6 +569,11 @@ kbd {
 .sidebar-tabs.compact .seg-btn > span:last-child { display: none; }
 .structure { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
 .structure-summary { padding: 0 14px 6px; color: var(--ink-3); font-size: 11.5px; }
+.structure-search { display: flex; align-items: center; gap: 2px; padding: 0 10px 8px; }
+.structure-search .find-field { flex: 1; min-width: 0; height: 28px; }
+.structure-search .find-input { width: auto; flex: 1; min-width: 0; height: 26px; font-size: 12px; }
+.structure-search-status { overflow-wrap: anywhere; }
+.structure-kind { flex: none; color: var(--ink-3); font-size: 10.5px; }
 .structure-tree { flex: 1; min-height: 0; overflow: auto; padding: 0 8px 12px; }
 .structure-row {
   display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0;

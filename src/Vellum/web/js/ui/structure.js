@@ -1,7 +1,8 @@
-import { h, reducedMotion } from '../dom.js';
+import { debounce, h, reducedMotion } from '../dom.js';
 import { icon } from '../icons.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../semantic/inspector.js';
+import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from '../semantic/query.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
@@ -10,8 +11,15 @@ import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../sema
 // (through the editing session's analysis, which is the editor's own and done once per page). A protected
 // PDF has no editing session, so its pages are read from pdf.js alone: fields, annotations and links, no
 // text or images. A change made in Vellum reads the pages it touched again.
+//
+// Search (semantic/query.js) looks through the same models: text, or objects of a kind, matched word for
+// word — no index, nothing inferred, not the viewer's Find. Pages are read one after another as the search
+// reaches them, each read once and kept for the tree too; a query only for fields, annotations or links
+// reads what pdf.js has of a page, not its content. A new query stops the one before it. Results take the
+// tree's place; Previous and Next (Enter, Shift+Enter) select them in turn, as selecting in the tree does.
 
 const MARK_MS = 2400;
+const MAX_RESULTS = 1000;
 
 export class StructurePanel {
   #pages = new Map(); // page number → Promise of its model
@@ -20,6 +28,7 @@ export class StructurePanel {
   #readEdits = new Map(); // page number → the content edits on it when it was read
   #replan = false; // the page list changed: every page is read again
   #abort = new AbortController();
+  #search = { id: 0, query: null, results: [], index: -1, reading: false };
 
   constructor(view) {
     this.view = view;
@@ -30,6 +39,32 @@ export class StructurePanel {
     this.tree = h('div', { class: 'structure-tree', role: 'tree', 'aria-label': 'Document structure' });
     this.props = h('div', { class: 'structure-props', 'aria-live': 'polite' });
     this.summary = h('div', { class: 'structure-summary' });
+    this.searchInput = h('input', {
+      class: 'find-input structure-search-input', type: 'search', spellcheck: 'false',
+      placeholder: 'Search structure', 'aria-label': 'Search the document structure',
+      title: 'Words, or a kind: all images, all form fields, all links, editable text containing …',
+    });
+    const run = debounce(() => this.search(this.searchInput.value), 200);
+    this.searchInput.addEventListener('input', run, { signal: this.#abort.signal });
+    this.searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        this.#searchNow().then(() => this.step(e.shiftKey ? -1 : 1));
+      } else if (e.key === 'Escape' && this.searchInput.value) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.searchInput.value = '';
+        this.search('');
+      }
+    }, { signal: this.#abort.signal });
+    this.prevBtn = h('button', { class: 'tb-btn small', title: 'Previous result (Shift+Enter)', 'aria-label': 'Previous result', html: icon('chevron-up', 15), onClick: () => this.step(-1) });
+    this.nextBtn = h('button', { class: 'tb-btn small', title: 'Next result (Enter)', 'aria-label': 'Next result', html: icon('chevron-down', 15), onClick: () => this.step(1) });
+    this.searchBar = h('div', { class: 'structure-search', role: 'search' },
+      h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), this.searchInput),
+      this.prevBtn, this.nextBtn);
+    this.searchStatus = h('div', { class: 'structure-summary structure-search-status', 'aria-live': 'polite', hidden: true });
+    this.results = h('div', { class: 'structure-tree structure-results', role: 'list', 'aria-label': 'Search results', hidden: true });
+    this.#updateSteps();
     this.#build();
   }
 
@@ -48,8 +83,9 @@ export class StructurePanel {
     this.tree.replaceChildren(...pages);
     this.#summarize();
     this.props.replaceChildren(h('p', { class: 'structure-hint', text: 'Select an object to see its properties.' }));
-    this.el.replaceChildren(this.summary, this.tree, this.props);
+    this.el.replaceChildren(this.searchBar, this.searchStatus, this.summary, this.tree, this.results, this.props);
     this.#toggle(this.view.state.pageNumber, true);
+    if (this.#search.query) this.search(this.searchInput.value);
   }
 
   /** Opens the page shown now, when the tab comes up. */
@@ -60,6 +96,7 @@ export class StructurePanel {
   }
 
   destroy() {
+    this.#search.id++;
     this.#abort.abort();
     this.#clearMark();
   }
@@ -82,6 +119,7 @@ export class StructurePanel {
     });
     for (const [number] of stale) this.#reread(number);
     this.#summarize();
+    if (stale.length && this.#search.query) this.search(this.searchInput.value);
   }
 
   /** The content edits (text, pictures, redactions…) on a page as shown now. */
@@ -180,6 +218,92 @@ export class StructurePanel {
     }, h('span', { class: 'structure-label', text: row.label }));
     if (!row.children?.length) return el;
     return h('div', { class: 'structure-block' }, el, ...row.children.map((child) => this.#row(child, number, depth + 1)));
+  }
+
+  /** Searches the document's structure (semantic/query.js), page after page; an empty query shows the tree again. */
+  async search(text) {
+    const query = parseQuery(text);
+    const id = this.#search.id + 1;
+    const empty = isEmptyQuery(query);
+    this.#search = { id, text: String(text ?? ''), query: empty ? null : query, results: [], index: -1, reading: !empty };
+    this.tree.hidden = !empty;
+    this.summary.hidden = !empty;
+    this.results.hidden = empty;
+    this.searchStatus.hidden = empty;
+    this.results.replaceChildren();
+    this.#updateSteps();
+    if (empty) return;
+    const count = this.view.pdf.numPages;
+    const content = needsContent(query) || this.view.encrypted;
+    let capped = false;
+    for (let number = 1; number <= count && !capped; number++) {
+      this.searchStatus.textContent = `${describeQuery(query)} · reading page ${number} of ${count}…`;
+      let page = null;
+      try {
+        page = content || this.#pages.has(number) ? await this.#read(number) : await readPdfPage(this.view.pdf, number);
+      } catch {
+        // a page that can't be read has no results
+      }
+      if (id !== this.#search.id) return; // a newer query took over
+      for (const result of page ? matchPage(page, query) : []) {
+        if (this.#search.results.length >= MAX_RESULTS) { capped = true; break; }
+        this.#addResult(result);
+      }
+      this.#updateSteps();
+      await new Promise((resolve) => setTimeout(resolve)); // input and painting between pages
+      if (id !== this.#search.id) return;
+    }
+    this.#search.reading = false;
+    const n = this.#search.results.length;
+    if (!n) this.results.replaceChildren(h('p', { class: 'structure-hint', text: 'Nothing found.' }));
+    this.#updateSteps(capped);
+  }
+
+  /** Selects the next (1) or previous (-1) search result, wrapping around. */
+  step(delta) {
+    const { results, index } = this.#search;
+    if (!results.length) return;
+    this.#selectResult(index < 0 ? (delta > 0 ? 0 : results.length - 1) : (index + delta + results.length) % results.length);
+  }
+
+  /** Starts the typed query at once when it isn't the one searched: Enter doesn't wait for the pause in typing. */
+  async #searchNow() {
+    if (this.searchInput.value === this.#search.text) return;
+    this.search(this.searchInput.value);
+    // The first result is enough to step to; the rest follow.
+    while (this.#search.reading && !this.#search.results.length) await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+
+  #addResult(result) {
+    const index = this.#search.results.length;
+    const el = h('button', {
+      class: 'structure-row structure-item structure-result', role: 'listitem', 'data-id': result.id, 'data-kind': result.kind, title: result.label,
+      onClick: () => this.#selectResult(index),
+    },
+    h('span', { class: 'structure-kind', text: kindName(result.kind) }),
+    h('span', { class: 'structure-label', text: result.label }),
+    h('span', { class: 'structure-count', text: `p. ${result.number}` }));
+    this.#search.results.push({ result, el });
+    this.results.append(el);
+  }
+
+  #selectResult(index) {
+    const entry = this.#search.results[index];
+    if (!entry) return;
+    this.#search.index = index;
+    this.select(entry.result, entry.result.number, entry.el);
+    entry.el.scrollIntoView({ block: 'nearest' });
+    this.#updateSteps();
+  }
+
+  /** Previous and Next, and the status line: what is searched, how far, and which result is selected. */
+  #updateSteps(capped = false) {
+    const { results, index, query, reading } = this.#search;
+    this.prevBtn.disabled = this.nextBtn.disabled = !results.length;
+    if (!query || reading) return;
+    const n = results.length;
+    const total = capped ? `first ${MAX_RESULTS} results` : n === 1 ? '1 result' : `${n || 'No'} results`;
+    this.searchStatus.textContent = `${describeQuery(query)} · ${index >= 0 ? `${index + 1} of ${n}` : total}`;
   }
 
   /** Selects an object: its properties below, its page shown, its box marked on the page for a moment. */
