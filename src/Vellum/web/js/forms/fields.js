@@ -98,9 +98,9 @@ export async function writeFormValues(lib, doc, values) {
 
 /** The kinds of field that can be created, with their default size in points and base name. */
 export const FIELD_KINDS = {
-  text: { label: 'Text field', width: 160, height: 22, base: 'Text' },
+  text: { label: 'Text Field', width: 160, height: 22, base: 'Text' },
   checkbox: { label: 'Checkbox', width: 14, height: 14, base: 'Check' },
-  radio: { label: 'Radio button', width: 14, height: 14, base: 'Choice' },
+  radio: { label: 'Radio Button', width: 14, height: 14, base: 'Choice' },
   dropdown: { label: 'Dropdown', width: 160, height: 22, base: 'Dropdown' },
 };
 

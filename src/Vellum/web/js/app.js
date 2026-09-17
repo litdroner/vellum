@@ -13,6 +13,7 @@ import { TitleBar } from './ui/titlebar.js';
 import { TabStrip } from './ui/tabs.js';
 import { installDropZone } from './ui/dropzone.js';
 import { openMenu } from './ui/menu.js';
+import { FIELD_KINDS } from './forms/fields.js';
 import { promptPassword, showDialog, toast } from './ui/dialogs.js';
 import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
@@ -516,25 +517,43 @@ document.addEventListener('contextmenu', (e) => {
       { label: `Search for “${truncate(selected, 28)}”`, icon: 'search', action: () => ui.findbar.open(selected) },
       '-');
   }
+  // A Text Box (new text, written into the page) selected in Edit mode is named as one, first.
+  const boxes = view.textEditor?.active ? view.objectSelection?.current?.keys ?? [] : [];
+  if (boxes.length && boxes.every((key) => key.startsWith('text:'))) {
+    const one = boxes.length === 1;
+    items.push(
+      { heading: one ? 'Text Box' : 'Text Boxes' },
+      { label: one ? 'Copy Text Box' : 'Copy Text Boxes', icon: 'copy', shortcut: 'Ctrl+C', action: () => view.textEditor.copySelected() },
+      { label: one ? 'Cut Text Box' : 'Cut Text Boxes', icon: 'scissors', shortcut: 'Ctrl+X', action: () => view.textEditor.cutSelected() },
+      { label: one ? 'Duplicate Text Box' : 'Duplicate Text Boxes', icon: 'copy-plus', shortcut: 'Ctrl+D', action: () => view.textEditor.duplicateSelected() },
+      '-',
+    );
+  }
   if (hit) {
     layer.select(hit.id, { popover: false });
     if (hit.type === 'note') items.push({ label: 'Edit note', icon: 'sticky-note', action: () => layer.editNote(hit.id) });
-    items.push({ label: hit.type === 'field' ? 'Delete form field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
+    // A form field is named as one, so it is never taken for text on the page (a Text Box).
+    if (hit.type === 'field') items.push({ heading: `Form Field · ${FIELD_KINDS[hit.kind]?.label ?? 'Field'}` });
+    items.push({ label: hit.type === 'field' ? 'Delete Form Field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
   } else if (!selected && onPage) {
     items.push({ label: 'Add note here', icon: 'sticky-note', action: () => layer.addNoteAt(e.clientX, e.clientY) }, '-');
     if (view.canEditPages) {
+      // Form fields (AcroForm) are their own section, apart from Text Box: a Text Field is a box to fill
+      // in, not text written on the page.
       items.push(
-        { label: 'Add text field here', icon: 'text-select', action: () => layer.addFieldAt(e.clientX, e.clientY, 'text') },
-        { label: 'Add checkbox here', icon: 'check', action: () => layer.addFieldAt(e.clientX, e.clientY, 'checkbox') },
-        { label: 'Add radio button here', icon: 'list-checks', action: () => layer.addFieldAt(e.clientX, e.clientY, 'radio') },
-        { label: 'Add dropdown here', icon: 'chevron-down', action: () => layer.addFieldAt(e.clientX, e.clientY, 'dropdown') },
+        { heading: 'Form Fields' },
+        { label: 'Add Text Field here', icon: 'text-cursor-input', action: () => layer.addFieldAt(e.clientX, e.clientY, 'text') },
+        { label: 'Add Checkbox here', icon: 'check', action: () => layer.addFieldAt(e.clientX, e.clientY, 'checkbox') },
+        { label: 'Add Radio Button here', icon: 'list-checks', action: () => layer.addFieldAt(e.clientX, e.clientY, 'radio') },
+        { label: 'Add Dropdown here', icon: 'chevron-down', action: () => layer.addFieldAt(e.clientX, e.clientY, 'dropdown') },
         '-');
     }
   }
   const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;
   if (pageNumber && view.textEditor?.active) {
     items.push(
-      { label: 'Add text', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
+      { heading: 'Page Content' },
+      { label: 'Add Text Box', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
       { label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) },
       { label: 'Add signature…', icon: 'pen-line', action: () => view.textEditor.addSignature(pageNumber) },
       '-',

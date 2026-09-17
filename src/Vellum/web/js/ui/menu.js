@@ -17,6 +17,11 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
       menu.append(h('div', { class: 'menu-sep', role: 'separator' }));
       continue;
     }
+    if (item.heading) {
+      // A section's name over the items that follow it: not an item, never focused or clicked.
+      menu.append(h('div', { class: 'menu-heading', role: 'presentation', text: item.heading }));
+      continue;
+    }
     const button = h('button', {
       class: 'menu-item',
       role: item.checked != null ? 'menuitemradio' : 'menuitem',

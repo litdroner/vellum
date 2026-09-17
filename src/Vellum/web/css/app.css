@@ -817,6 +817,7 @@ kbd {
 .menu-label { flex: 1; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-shortcut { color: var(--ink-3); font-size: 12px; }
 .menu-sep { height: 1px; margin: 5px 8px; background: var(--line-2); }
+.menu-heading { padding: 6px 10px 2px; color: var(--ink-3); font-size: 11.5px; font-weight: 600; user-select: none; }
 .menu-swatch { display: block; width: 15px; height: 15px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .2); }
 /* The font menu shows each font's name in a browser font that stands in for it; a long list scrolls. */
 .font-menu { max-height: min(460px, calc(100vh - 96px)); overflow-y: auto; overscroll-behavior: contain; }

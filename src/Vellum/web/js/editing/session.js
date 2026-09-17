@@ -11,7 +11,8 @@
 import { openSource } from './source.js';
 import { analyzePage, verifyPage, REASONS } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
-import { findMatches, mayContain, nearestMatch, replaceMatches } from './find-replace.js';
+import { mayContain, nearestMatch, paragraphMatches, replaceInLines } from './find-replace.js';
+import { textBlocks } from './objects/text-block.js';
 import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
 import { planImageEdit, readPicture } from './objects/image.js';
@@ -22,7 +23,7 @@ import { remapSpans } from './objects/text-format.js';
 import { planRunFormat, runFormatError, withRunFormat } from './objects/run-format.js';
 import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, runStyleOf, styleName, withRunFace } from './objects/run-face.js';
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
-import { insertedObject, insertedTextObject } from './objects/page-objects.js';
+import { insertedObject, insertedTextObject, objectsOfKind } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
 import { checkShapes, kind as redactKind, planRedaction } from './objects/redaction.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
@@ -207,8 +208,10 @@ export class TextEditing {
   // Replacing is retyping: each line of text a match is in is planned exactly as edit() plans it — a
   // page's own run and a pasted copy of one in its font's codes, a standard font of the same style, or a
   // refusal; new text in its own font or a refusal — and all of it goes into the store as ONE undo step.
-  // Only a match inside one line is replaced; a match the engine can't change safely is left as it is,
-  // and counted with the reason.
+  // A match inside one line is replaced in that line. A match that runs on from one line of a paragraph
+  // (objects/text-block.js) to the next is replaced in both: the replacement ends the first line and
+  // the rest of the second stays where it is. A match across more lines, or one that would empty a
+  // line, isn't. A match the engine can't change safely is left as it is, and counted with the reason.
 
   /**
    * Replaces `query` with `replacement` in the document's text: its own text, pasted copies of text and
@@ -235,31 +238,84 @@ export class TextEditing {
       }
       const { entry, runs } = await this.page(n);
       const lines = runs.map((item) => ({
+        key: `run:${item.run.key}`,
         text: item.text,
         quad: transformQuad(item.run.quad, item.edit?.transform ?? null),
         pair: (text) => this.#retypePair(entry, item, text),
       }));
       if (added) lines.push(...(await this.#addedLines(n)));
-      let found = lines.map((line) => ({ line, matches: findMatches(line.text, query, options) })).filter((f) => f.matches.length);
+      // Each paragraph is matched as one text, so a match may run on from one of its lines to the next.
+      let found = (await this.#lineGroups(n, lines)).flatMap((group) => {
+        const { matches, offsets } = paragraphMatches(group.map((line) => line.text), query, options);
+        return matches.map((m) => ({ group, offsets, m, unsafe: crossLineRefusal(group, offsets, m, replacement) }));
+      });
       if (at) {
-        const one = nearestLine(found, at.point);
+        // The highlighted match is marked from the line it begins on.
+        const byLine = new Map();
+        for (const f of found) {
+          const line = f.group[f.m.first];
+          const start = f.m.start - f.offsets[f.m.first];
+          const local = { start, end: Math.min(f.m.end - f.offsets[f.m.first], line.text.length), found: f };
+          byLine.set(line, [...(byLine.get(line) ?? []), local]);
+        }
+        const one = nearestLine([...byLine].map(([line, matches]) => ({ line, matches })), at.point);
         if (!one) throw new EditError('missing', 'Vellum can’t change this match: only text on the page, pasted text and new text are replaced.');
-        found = [{ line: one.line, matches: [one.match] }];
+        if (one.match.found.unsafe) throw new EditError('cross-line', one.match.found.unsafe);
+        found = [one.match.found];
       }
-      for (const { line, matches } of found) {
+      for (const f of found.filter((f) => f.unsafe)) {
+        skipped += 1;
+        reasons.add(f.unsafe);
+      }
+      // Lines a match runs across are retyped together, or not at all.
+      for (const unit of replacementUnits(found.filter((f) => !f.unsafe))) {
+        const { group, offsets } = unit[0];
+        const texts = group.map((line) => line.text);
+        const next = replaceInLines(texts, offsets, unit.map((f) => f.m), replacement);
         try {
-          const pair = await line.pair(replaceMatches(line.text, matches, replacement));
-          if (pair) pairs.push(pair);
-          replaced += matches.length;
+          const planned = [];
+          for (let i = 0; i < group.length; i++) {
+            if (next[i] === texts[i]) continue;
+            const pair = await group[i].pair(next[i]);
+            if (pair) planned.push(pair);
+          }
+          pairs.push(...planned);
+          replaced += unit.length;
         } catch (err) {
           if (!(err instanceof EditError) || at) throw err;
-          skipped += matches.length;
+          skipped += unit.length;
           reasons.add(err.message);
         }
       }
     }
     if (pairs.length) view.annotations.applyEdits(pairs);
     return { replaced, skipped, reasons: [...reasons] };
+  }
+
+  /**
+   * replaceText's lines of a page grouped: the lines of each of the page's own paragraphs together, top
+   * line first, as grouping finds them where they are now (objects/text-block.js); every other line —
+   * pasted copies and new text among them — on its own.
+   */
+  async #lineGroups(pageNumber, lines) {
+    const byKey = new Map(lines.filter((line) => line.key).map((line) => [line.key, line]));
+    const { objects, analysis, records } = await this.objects(pageNumber);
+    const live = [];
+    for (const object of objects) {
+      if (object.ref.copy || object.ref.newText) continue;
+      const edit = records.get(object.ref.key) ?? null;
+      if (!object.geometry?.quad) live.push(object);
+      else if (!isRemoved(edit)) live.push({ ...object, geometry: { ...object.geometry, quad: transformQuad(object.geometry.quad, edit?.transform ?? null) }, edit });
+    }
+    const grouped = new Set();
+    const groups = [];
+    for (const { keys } of textBlocks([...live, ...(analysis ? objectsOfKind(analysis, 'path') : [])])) {
+      const group = keys.map((key) => byKey.get(key));
+      if (group.some((line) => !line)) continue;
+      group.forEach((line) => grouped.add(line));
+      groups.push(group);
+    }
+    return [...groups, ...lines.filter((line) => !grouped.has(line)).map((line) => [line])];
   }
 
   /**
@@ -1187,6 +1243,39 @@ function nearestLine(found, point) {
     best = { line, outside, match: nearestMatch(line.text, matches, Math.min(1, Math.max(0, along))) };
   }
   return best && { line: best.line, match: best.match };
+}
+
+/**
+ * Why a match found in a paragraph's lines (`group`, from #lineGroups) can't be replaced there, or null
+ * when it can: only a match that runs on from one line to the very next, leaving neither line empty.
+ */
+function crossLineRefusal(group, offsets, m, replacement) {
+  if (m.first === m.last) return null;
+  if (m.last - m.first > 1) return 'Vellum replaces a match across two lines of a paragraph, not more.';
+  const before = group[m.first].text.slice(0, m.start - offsets[m.first]) + replacement;
+  const after = group[m.last].text.slice(m.end - offsets[m.last]);
+  if (!before.trim() || !after.trim()) return 'A match across two lines that takes up a whole line isn’t replaced: it would leave an empty line in the paragraph.';
+  return null;
+}
+
+/**
+ * Matches (from replaceText) as the units they are retyped in: all the matches of one line, and of the
+ * lines a match runs across, together. Each unit is changed whole, or left whole.
+ */
+function replacementUnits(found) {
+  const units = [];
+  const byGroup = new Map();
+  for (const f of found) byGroup.set(f.group, [...(byGroup.get(f.group) ?? []), f]);
+  for (const list of byGroup.values()) {
+    let unit = null;
+    let last = -1;
+    for (const f of list.sort((a, b) => a.m.start - b.m.start)) {
+      if (!unit || f.m.first > last) units.push(unit = []);
+      unit.push(f);
+      last = Math.max(last, f.m.last);
+    }
+  }
+  return units;
 }
 
 /** The object of a page (`objects`) that a copy's record or clip item draws again, or null. */

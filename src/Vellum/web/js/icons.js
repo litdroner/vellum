@@ -89,7 +89,8 @@ const paths = {
  "text-align-start": "<path d=\"M21 5H3\" /><path d=\"M15 12H3\" /><path d=\"M17 19H3\" />",
  "text-align-center": "<path d=\"M21 5H3\" /><path d=\"M17 12H7\" /><path d=\"M19 19H5\" />",
  "text-align-end": "<path d=\"M21 5H3\" /><path d=\"M21 12H9\" /><path d=\"M21 19H7\" />",
- "blend": "<circle cx=\"9\" cy=\"9\" r=\"7\" /><circle cx=\"15\" cy=\"15\" r=\"7\" />"
+ "blend": "<circle cx=\"9\" cy=\"9\" r=\"7\" /><circle cx=\"15\" cy=\"15\" r=\"7\" />",
+ "text-cursor-input": "<path d=\"M12 20h-1a2 2 0 0 1-2-2 2 2 0 0 1-2 2H6\" /><path d=\"M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7\" /><path d=\"M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1\" /><path d=\"M6 4h1a2 2 0 0 1 2 2 2 2 0 0 1 2-2h1\" /><path d=\"M9 6v12\" />"
 };
 
 /** Returns an inline SVG string for a monoline icon. */

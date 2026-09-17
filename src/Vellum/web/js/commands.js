@@ -113,7 +113,7 @@ export function createCommands(app, ui, actions) {
       when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
-    'forms.addText': { group: 'Forms', icon: 'text-select', doc: true, label: 'Add text field', run: () => doc()?.annotLayer.startField('text') },
+    'forms.addText': { group: 'Forms', icon: 'text-cursor-input', doc: true, label: 'Add form text field', run: () => doc()?.annotLayer.startField('text') },
     'forms.addCheckbox': { group: 'Forms', icon: 'check', doc: true, label: 'Add checkbox', run: () => doc()?.annotLayer.startField('checkbox') },
     'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
     'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
@@ -128,7 +128,7 @@ export function createCommands(app, ui, actions) {
     'arrange.alignBottom': { group: 'Arrange', icon: 'align-end-horizontal', doc: true, label: 'Align bottom edges', run: () => arrange('bottom') },
     'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
     'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
-    'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text', run: () => doc()?.textEditor?.addText() },
+    'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text box', run: () => doc()?.textEditor?.addText() },
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },

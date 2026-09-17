@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { analyzeFile, engine, webModule, withSession } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
-const { findMatches, replaceMatches, mayContain, nearestMatch } = await engine('find-replace.js');
+const { findMatches, replaceMatches, mayContain, nearestMatch, paragraphMatches, replaceInLines } = await engine('find-replace.js');
 const { composeDocument } = await webModule('annotations/persist.js');
 
 let files;
@@ -71,6 +71,56 @@ test('Replace one: the match under the point, in that run only', async () => {
     const after = (await texts_(saved))[0];
     assert.ok(after.includes('A second row with punctuation: café, naïve — 50% off!'), JSON.stringify(after));
     assert.ok(after.includes('Third line.'));
+  });
+});
+
+test('paragraph matching: a match may run on from one line to the next', () => {
+  const lines = ['The first cat', 'sat down, a cat', 'sat again.'];
+  const { matches, offsets } = paragraphMatches(lines, 'cat sat', {});
+  assert.deepEqual(matches.map((m) => [m.first, m.last]), [[0, 1], [1, 2]]);
+  assert.deepEqual(replaceInLines(lines, offsets, matches, 'dog stood'), ['The first dog stood', ' down, a dog stood', ' again.']);
+  const inLine = paragraphMatches(lines, 'down', {});
+  assert.deepEqual(replaceInLines(lines, inLine.offsets, inLine.matches, 'up'), ['The first cat', 'sat up, a cat', 'sat again.']);
+  assert.deepEqual(paragraphMatches(['a cat', 'sat'], 'catsat', {}).matches, [], 'a line break reads as a space');
+});
+
+test('cross-line Replace All: a paragraph’s two lines, one undo step, saved; not across columns or a rule', async () => {
+  const bytes = read('paragraphs');
+  await withSession(bytes, async ({ plan, store, session, sources }) => {
+    // "plain paragraph that" / "runs on to a second line": one match per paragraph line pair, plus
+    // one inside a line; "one Left" is across columns and "rule Below" across a rule: never matched.
+    const result = await session.replaceText('that runs', 'which ran', {});
+    assert.deepEqual(result, { replaced: 1, skipped: 0, reasons: [] });
+    assert.equal((await session.replaceText('column one Left', 'x', {})).replaced, 0);
+    assert.equal((await session.replaceText('rule Below', 'x', {})).replaced, 0);
+    assert.equal(store.edits.filter((e) => e.kind === 'text').length, 2, 'two lines retyped');
+    store.undo();
+    assert.equal(store.edits.length, 0, 'one undo takes both lines back');
+    store.redo();
+    const after = (await texts_(await composeDocument({ base: bytes, plan, edits: store.edits, sources })))[0];
+    assert.ok(after.includes('The first line of a plain paragraph which ran'), JSON.stringify(after));
+    assert.ok(after.includes(' on to a second line, then a third'), JSON.stringify(after));
+  });
+});
+
+test('cross-line: Replace one at the highlighted start; unsafe matches left with the reason', async () => {
+  const bytes = read('paragraphs');
+  await withSession(bytes, async ({ store, session }) => {
+    const { runs } = await session.page(1);
+    const first = runs.find((r) => r.text.startsWith('The first line')).run;
+    const point = [first.quad[0] + (first.quad[2] - first.quad[0]) * 0.95, (first.quad[1] + first.quad[7]) / 2];
+    assert.equal((await session.replaceText('that runs on', 'which goes on', {}, { pageNumber: 1, point })).replaced, 1);
+    assert.equal(store.edits.length, 2);
+    store.undo();
+    // Across three lines, and taking up all of a line: skipped, nothing stored.
+    const across = await session.replaceText('that runs on to a second line, then a third line, and', 'x', {});
+    assert.deepEqual([across.replaced, across.skipped], [0, 1]);
+    assert.match(across.reasons[0], /two lines/);
+    const whole = await session.replaceText('which is shorter.', 'x', {});
+    assert.deepEqual([whole.replaced, whole.skipped], [0, 1]);
+    assert.match(whole.reasons[0], /empty line/);
+    await assert.rejects(session.replaceText('which is shorter.', 'x', {}, { pageNumber: 1, point: [80, 693] }), /empty line/);
+    assert.equal(store.edits.length, 0);
   });
 });
 

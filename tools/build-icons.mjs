@@ -24,6 +24,7 @@ const names = [
   'align-horizontal-space-between', 'align-vertical-space-between',
   'image', 'image-plus',
   'bold', 'italic', 'text-align-start', 'text-align-center', 'text-align-end', 'blend',
+  'text-cursor-input',
 ];
 
 const icons = {};

@@ -44,6 +44,53 @@ export function replaceMatches(text, matches, replacement) {
   return out + text.slice(at);
 }
 
+/**
+ * The places `query` occurs in a paragraph's lines (`texts`, top line first) read as one text, each
+ * line break read as a space: [{ start, end, first, last }], `start`/`end` in that joined text and
+ * `first`/`last` the lines the match begins and ends on (the same line for a match inside one line).
+ * Also returns `offsets`: where each line starts in the joined text.
+ */
+export function paragraphMatches(texts, query, options) {
+  const offsets = [];
+  let at = 0;
+  for (const text of texts) {
+    offsets.push(at);
+    at += text.length + 1;
+  }
+  const lineAt = (pos) => {
+    let i = 0;
+    while (i + 1 < offsets.length && offsets[i + 1] <= pos) i++;
+    return i;
+  };
+  const matches = findMatches(texts.join(' '), query, options)
+    .map(({ start, end }) => ({ start, end, first: lineAt(start), last: lineAt(end - 1) }));
+  return { matches, offsets };
+}
+
+/**
+ * The lines `texts` with each of `matches` (from paragraphMatches, in order) replaced by `replacement`:
+ * the replacement ends the line the match begins on, and what follows the match on its last line
+ * stays on that line. A line a match runs right across is left empty.
+ */
+export function replaceInLines(texts, offsets, matches, replacement) {
+  const out = texts.map(() => '');
+  const copy = (from, to) => {
+    texts.forEach((text, i) => {
+      const a = Math.max(from, offsets[i]);
+      const b = Math.min(to, offsets[i] + text.length);
+      if (a < b) out[i] += text.slice(a - offsets[i], b - offsets[i]);
+    });
+  };
+  let at = 0;
+  for (const m of matches) {
+    copy(at, m.start);
+    out[m.first] += replacement;
+    at = m.end;
+  }
+  copy(at, Infinity);
+  return out;
+}
+
 /** Might `text` (a page's text as pdf.js reads it) contain `query`? Loose: never says no wrongly. */
 export function mayContain(text, query) {
   const pattern = patternOf((query ?? '').replace(/\s+/g, ''), 'iu');
