@@ -154,7 +154,8 @@ intended behaviour and its rules.
 | PDF diagnostics, repair, PDF/A validation | research | §3.4 |
 | PDF → JPG / PNG | planned | §3.5 |
 | PDF ↔ Word / Excel / PowerPoint; PDF → PDF/A (needs a local conversion engine) | research | §3.5 |
-| OCR: searchable text layer, language selection, progress, per-page failure handling, local only (needs a vendored engine and language data chosen) | planned | §3.8 |
+| OCR v1: invisible searchable text layer on scanned pages (current page or whole document; pages with text skipped), progress, per-page failures reported, English only; Tesseract 5 as WebAssembly (tesseract.js 7) with the English model in `web/vendor/tesseract`, run locally (`js/ocr/`, `editing/objects/ocr-text.js`; e2e suite `ocr`) | done, unreleased | §3.8 |
+| OCR: language selection and further language data | planned | §3.8 |
 | Compare documents | planned | §3.9 |
 | Vellum Intelligence (AI): local-first, behind `AIProvider` (ARCHITECTURE_GUIDELINES.md). No AI UI until there is a real provider; no cloud provider, API keys or uploads. Summarise, ask, find, explain, translate, extract data, PDF → Markdown, Smart Split, study notes, AI difference summaries | research | §3.9 |
 | Vellum Flow: reusable local workflows composing existing operations | planned | §3.10 |

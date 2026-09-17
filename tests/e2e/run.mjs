@@ -4,7 +4,7 @@
 //
 // Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection, manipulation,
 // multi-select, page-changes, copy-paste, page-text-font by default;
-// performance only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed).
+// ocr and performance only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed).
 //
 // Safety: stops if Vellum is already running (it's single-instance, so a test would talk to that
 // copy). The app runs with a throwaway data folder (VELLUM_DATA_DIR, honoured by Debug builds only),

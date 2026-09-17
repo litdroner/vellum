@@ -89,6 +89,9 @@ export function createCommands(app, ui, actions) {
     'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
     'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
 
+    'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page (English)', run: () => actions.ocr.run(doc(), 'page') },
+    'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document (English)', run: () => actions.ocr.run(doc(), 'document') },
+
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
     'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },
     'annot.underline': { group: 'Annotate', icon: 'underline', doc: true, label: 'Underline', keys: ['U'], run: markOrTool('underline') },

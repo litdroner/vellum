@@ -1,0 +1,6 @@
+Local OCR engine for Vellum (runs inside the app; nothing is downloaded at run time).
+
+tesseract.esm.min.js, worker.min.js   tesseract.js 7.0.0, Apache-2.0 (LICENSE.md)
+tesseract-core-simd-lstm.wasm.js      tesseract.js-core 7.0.0: Tesseract 5 compiled to WebAssembly, Apache-2.0 (LICENSE-core)
+eng.traineddata.gz                    English LSTM model, tessdata_best (integer), Apache-2.0,
+                                      from @tesseract.js-data/eng 4.0.0_best_int (https://github.com/tesseract-ocr/tessdata)

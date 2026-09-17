@@ -20,6 +20,7 @@ import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
 import { TextEditor } from './ui/text-editor.js';
 import { createPageActions } from './pages/actions.js';
+import { createOcrActions } from './ocr/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -357,6 +358,7 @@ const actions = {
 };
 
 actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
+actions.ocr = createOcrActions();
 
 const commands = createCommands(app, ui, actions);
 
@@ -484,6 +486,9 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('pages.insert', null, { disabled: !app.active?.canEditPages }),
     menuItem('pages.extract', null, { disabled: !app.active?.canEditPages }),
     menuItem('pages.split', null, { disabled: !app.active?.canEditPages }),
+    '-',
+    menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
+    menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),
     '-',
     menuItem('app.palette'),
     menuItem('app.settings'),
