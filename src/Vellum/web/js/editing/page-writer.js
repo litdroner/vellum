@@ -17,6 +17,7 @@ import { PdfSource } from './source.js';
 import { analyzePage } from './runs.js';
 import { EditError } from './edits.js';
 import { handlerFor } from './objects/registry.js';
+import * as redaction from './objects/redaction.js';
 import { ascii, concat } from './content/writer.js';
 
 /**
@@ -103,19 +104,37 @@ async function readOrigins({ lib, doc, source, pages, plan, edits, sources, orig
 }
 
 function rewritePage(lib, doc, source, page, index, records, prepared, origins) {
+  // Redactions go last, over the page as every other edit leaves it (objects/redaction.js), so nothing
+  // another edit draws into a redacted area survives it.
+  const redactions = records.filter((r) => r.kind === redaction.kind);
+  const others = records.filter((r) => r.kind !== redaction.kind);
+  if (others.length) {
+    const analysis = readPage(source, page, index);
+    const patches = [];
+    const appended = [];
+    for (const [kind, list] of groupByKind(others)) {
+      const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list, prepared: prepared.get(kind), pageRecords: records, origins });
+      patches.push(...result.patches);
+      appended.push(...result.append);
+    }
+    writeContent(lib, doc, page, analysis, patches, appended);
+  }
+  if (redactions.length) {
+    const analysis = readPage(source, page, index);
+    const { patches, append } = redaction.write({ lib, doc, page, index, analysis, records: redactions });
+    writeContent(lib, doc, page, analysis, patches, append);
+  }
+}
+
+function readPage(source, page, index) {
   const analysis = analyzePage(source.pageFor(page, index));
   if (analysis.summary.kind === 'unreadable' || analysis.tainted || analysis.unbalanced) {
     throw new EditError('content', `Page ${index + 1}’s content couldn’t be read reliably, so it wasn’t changed.`);
   }
+  return analysis;
+}
 
-  const patches = [];
-  const appended = [];
-  for (const [kind, list] of groupByKind(records)) {
-    const result = handlerFor(kind).write({ lib, doc, source, page, index, analysis, records: list, prepared: prepared.get(kind), pageRecords: records, origins });
-    patches.push(...result.patches);
-    appended.push(...result.append);
-  }
-
+function writeContent(lib, doc, page, analysis, patches, appended) {
   patches.sort((a, b) => a.start - b.start);
   for (let i = 1; i < patches.length; i++) {
     if (patches[i].start < patches[i - 1].end) throw new EditError('content', 'Overlapping text operators; the page wasn’t changed.');

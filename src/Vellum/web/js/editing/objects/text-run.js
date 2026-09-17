@@ -126,9 +126,10 @@ export const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i)
 
 /**
  * The replacement for one text operator: its glyphs as a TJ array, with every edited glyph turned
- * into the exact advance it had (so later glyphs in the same text object don't move).
+ * into the exact advance it had (so later glyphs in the same text object don't move). The glyphs
+ * taken out are gone from the bytes, not hidden: redaction (objects/redaction.js) relies on that.
  */
-function neutralize(analysis, show, editedGlyphs) {
+export function neutralize(analysis, show, editedGlyphs) {
   const op = analysis.ops[show.opIndex];
   const factor = -1000 / (show.fontSize * show.th);
   if (!Number.isFinite(factor)) throw new EditError('content', 'Text with no size can’t be edited.');

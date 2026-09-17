@@ -134,6 +134,7 @@ export function createCommands(app, ui, actions) {
     'edit.textAlignRight': { group: 'Edit', icon: 'text-align-end', doc: true, label: 'Align new text right', run: () => doc()?.textEditor?.formatSelected('right') },
     'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, label: 'Insert picture…', run: () => doc()?.textEditor?.insertPicture() },
     'edit.addSignature': { group: 'Edit', icon: 'pen-line', doc: true, label: 'Add signature…', run: () => doc()?.textEditor?.addSignature() },
+    'edit.redactSelection': { group: 'Edit', icon: 'square', doc: true, label: 'Redact selection', run: () => doc()?.textEditor?.redactSelected() },
     'edit.replacePicture': { group: 'Edit', icon: 'image', doc: true, label: 'Replace picture…', run: () => doc()?.textEditor?.replacePicture() },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },

@@ -249,7 +249,9 @@ A conversion that can't be faithful says what was lost; it doesn't pretend to be
 
 Redaction rules:
 
-- **Status: research and architecture work.** Nothing is built until the method is designed and approved.
+- **Status: a first subset is built** at the owner's request (2026-09-17): text and pictures removed from
+  page content. The rest of the method (vector content, repeated information) is research and needs
+  approval before it is built (§13.2).
 - It builds on the verified object model and page writer; content is removed, not hidden.
 - Whole pages are never silently rasterised as a shortcut, and the "never rasterise merely to edit"
   principle (§2.2) is not weakened for it. If some content can't be removed safely, Vellum says so and
@@ -527,7 +529,12 @@ Recorded so they are not decided silently. Each needs the owner.
 
 1. **Liu San font file and licence** (§4.4): supplied by the owner on 2026-09-16 (SIL OFL 1.1) and added to font selection.
 2. **Redaction method** (§3.6): the requirement is settled (true removal, no covering, no silent
-   rasterising); the technical design is research and needs approval before it is built.
+   rasterising). On 2026-09-17 the owner asked for the smallest safe subset — text and pictures removed
+   from the page's content streams (`editing/objects/redaction.js`) — and it is built. Still open: whether
+   vector content in an area is removed (today it is painted over, not removed; a shape crossing the area,
+   such as a page background or table rule, can't simply be deleted), and the repeated information the
+   table in §3.6 lists (metadata, bookmarks, annotations, form values, tagged-structure text), which this
+   subset refuses or doesn't touch.
 3. **Local engines** for Office conversions (§3.5), OCR (§3.8), digital certificate signatures (§3.7) and
    local AI models (§3.9): each needs a vendored, offline, licence-compatible engine chosen before its
    feature starts.
@@ -547,5 +554,6 @@ Recorded so they are not decided silently. Each needs the owner.
 | 2026-09-16 | The bundled selectable font is renamed **Liu San** (display name, font names, files, commands), and the font selector previews it in its own bold face, its regular reading too light there; its text is written in the face chosen, as before (§4.4) |
 | 2026-09-15 | Font selection is a general system of multiple selectable fonts with compatibility checks, embedding and no silent substitution (§4.3); UI typography (Jost, Segoe UI Variable) unchanged |
 | 2026-09-15 | Redaction means true removal of content; a covering is not redaction; no silent rasterising; status research (§3.6) |
+| 2026-09-17 | Owner asked for a first redaction subset: text and pictures removed from page content, verified by re-reading the saved file; vector content and repeated information stay open (§13.2) |
 | 2026-09-15 | Themes: seven base themes, each with Light and an Obsidian-treated Dark variant; Obsidian Dark is not an eighth theme (§5) |
 | 2026-09-15 | OCR and digital certificate signatures are planned capabilities, not out of scope (README corrected) |

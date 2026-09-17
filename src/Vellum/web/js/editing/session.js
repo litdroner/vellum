@@ -23,8 +23,9 @@ import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, runStyleOf, styleN
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
+import { kind as redactKind, planRedaction } from './objects/redaction.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
-import { boxQuad, quadWithin, transformQuad, unionBox } from './objects/geometry.js';
+import { boxQuad, quadBox, quadWithin, transformQuad, unionBox } from './objects/geometry.js';
 import { IDENTITY, multiply, translate } from './matrix.js';
 import { isIdentity, isValid, quantize } from './objects/transform.js';
 import { loadPdfLib } from '../annotations/persist.js';
@@ -114,10 +115,17 @@ export class TextEditing {
         if (source) added.push(copiedObject(source, r, added.length));
       }
     }
+    // What a redaction on this page covers is gone from the page, so it is no object to select or change.
+    const redacted = this.#view.annotations.edits.filter((e) => e.entry === entry.id && e.kind === redactKind).flatMap((e) => e.rects);
+    const shown = (o) => {
+      const quad = o.geometry?.quad && records.get(o.ref.key)?.transform ? transformQuad(o.geometry.quad, records.get(o.ref.key).transform) : o.geometry?.quad;
+      const box = quad ? quadBox(quad) : o.geometry?.box;
+      return !box || !redacted.some((r) => box[0] < r[2] && r[0] < box[2] && box[1] < r[3] && r[1] < box[3]);
+    };
     return {
       entry,
       kind: analysis?.summary.kind ?? 'no-text',
-      objects: [...own, ...added],
+      objects: (redacted.length ? [...own, ...added].filter(shown) : [...own, ...added]),
       analysis,
       records,
       // The analysis each copy's run or picture belongs to: '' for this page's own, else by originKey.
@@ -565,6 +573,20 @@ export class TextEditing {
     });
     if (!pairs.length) return false;
     view.annotations.applyEdits(pairs, coalesce);
+    return true;
+  }
+
+  /**
+   * Redacts these areas of a page ([x1, y1, x2, y2] in its user space, objects/redaction.js): one undo
+   * step. When the document is composed, the text and pictures in them are taken out of the page and the
+   * areas painted black; what can't be removed for certain refuses the save instead.
+   */
+  redactAreas(pageNumber, rects) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const entry = view.shownPlan?.[pageNumber - 1];
+    if (!entry) throw new EditError('missing', 'That page isn’t in the document.');
+    view.annotations.applyEdits([[null, planRedaction({ entry: entry.id, rects })]]);
     return true;
   }
 

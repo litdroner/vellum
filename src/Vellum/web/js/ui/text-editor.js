@@ -513,6 +513,31 @@ export class TextEditor {
   }
 
   /**
+   * Redacts the selected objects (objects/redaction.js): the area each one covers now is emptied of text
+   * and pictures and painted black, one undo step, and the content is gone from the file once it is
+   * saved. Resolves true when redacted; otherwise says why.
+   */
+  async redactSelected() {
+    const current = this.#selection.current;
+    if (!current) {
+      this.#notify('Select text or pictures in Edit mode to redact them.');
+      return false;
+    }
+    const page = this.#pages.get(current.page);
+    const quads = current.keys.map((key) => (page ? this.#shownQuad(page, key) : null));
+    if (quads.some((q) => !q)) return false;
+    try {
+      this.#view.textEditing.redactAreas(current.page, quads.map(quadBox));
+    } catch (err) {
+      this.#notify(err instanceof EditError ? err.message : `That couldn’t be redacted: ${err.message}`);
+      return false;
+    }
+    this.#select(null);
+    this.#announce('Redacted. Text and pictures in the area are removed from the file when you save; drawn shapes there are covered, not removed.');
+    return true;
+  }
+
+  /**
    * Cuts the selected objects (Ctrl+X in Edit mode): copied as they are now, then deleted, one undo
    * step. Pasted anywhere — another page, another document — they land where they were, which is how
    * objects are moved to another page from the keyboard. Resolves true when cut; otherwise says why.
