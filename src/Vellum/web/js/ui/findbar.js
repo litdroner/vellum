@@ -151,8 +151,8 @@ export class FindBar {
       const { replaced, skipped, reasons } = await view.textEditing.replaceText(this.input.value, this.replaceInput.value, view.find, at);
       if (view.rebuilding) this.#researchOn = view;
       if (at) return;
-      const left = skipped ? ` ${skipped} ${skipped === 1 ? 'match was' : 'matches were'} left as they are: ${reasons.join(' ')}` : '';
-      this.#notify(view, replaced || skipped ? `Replaced ${replaced} ${replaced === 1 ? 'match' : 'matches'}.${left}` : 'No text to replace was found.');
+      const left = skipped ? ` Skipped ${skipped} ${skipped === 1 ? 'match, left' : 'matches, left'} unchanged: ${reasons.join(' ')}` : '';
+      this.#notify(view, replaced || skipped ? `Replaced ${replaced} of ${replaced + skipped} ${replaced + skipped === 1 ? 'match' : 'matches'}.${left}` : 'No text to replace was found.');
     } catch (err) {
       if (!(err instanceof EditError)) throw err;
       this.#notify(view, err.message);

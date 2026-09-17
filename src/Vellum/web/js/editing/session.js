@@ -204,16 +204,17 @@ export class TextEditing {
 
   // ---- find and replace ------------------------------------------------------------------------------
   //
-  // Replacing is retyping: each run a match is in is planned exactly as edit() plans it — its own
-  // font's codes, a standard font of the same style, or a refusal — and all of it goes into the store
-  // as ONE undo step. Only a page's own text runs are replaced, and only a match inside one run; a
-  // match the engine can't change safely is left as it is, and counted with the reason.
+  // Replacing is retyping: each line of text a match is in is planned exactly as edit() plans it — a
+  // page's own run and a pasted copy of one in its font's codes, a standard font of the same style, or a
+  // refusal; new text in its own font or a refusal — and all of it goes into the store as ONE undo step.
+  // Only a match inside one line is replaced; a match the engine can't change safely is left as it is,
+  // and counted with the reason.
 
   /**
-   * Replaces `query` with `replacement` in the document's text. With `at` ({ pageNumber, point } in
-   * that page's user space) only the match nearest that point, in the run drawn under it; otherwise
-   * every match on every page. Returns { replaced, skipped, reasons }: how many matches were replaced
-   * and left, and why they were left, each reason once.
+   * Replaces `query` with `replacement` in the document's text: its own text, pasted copies of text and
+   * new text. With `at` ({ pageNumber, point } in that page's user space) only the match nearest that
+   * point, in the line drawn under it; otherwise every match on every page. Returns { replaced, skipped,
+   * reasons }: how many matches were replaced and left, and why they were left, each reason once.
    */
   async replaceText(query, replacement, { caseSensitive = false, entireWord = false } = {}, at = null) {
     const view = this.#view;
@@ -225,21 +226,29 @@ export class TextEditing {
     let skipped = 0;
     const pageNumbers = at ? [at.pageNumber] : view.shownPlan.map((_, i) => i + 1);
     for (const n of pageNumbers) {
-      if (!at) {
+      const added = [...this.#recordsOf(view.shownPlan[n - 1]).values()]
+        .some((r) => (r.kind === textCopyKind || r.kind === newTextKind) && !isRemoved(r));
+      if (!at && !added) {
         // Only pages whose text might hold the query are analyzed: reading a page isn't free.
         const content = await (await view.pdf.getPage(n)).getTextContent();
         if (!mayContain(content.items.map((i) => i.str).join(''), query)) continue;
       }
       const { entry, runs } = await this.page(n);
-      let found = runs.map((item) => ({ item, matches: findMatches(item.text, query, options) })).filter((f) => f.matches.length);
+      const lines = runs.map((item) => ({
+        text: item.text,
+        quad: transformQuad(item.run.quad, item.edit?.transform ?? null),
+        pair: (text) => this.#retypePair(entry, item, text),
+      }));
+      if (added) lines.push(...(await this.#addedLines(n)));
+      let found = lines.map((line) => ({ line, matches: findMatches(line.text, query, options) })).filter((f) => f.matches.length);
       if (at) {
-        const one = nearestRun(found, at.point);
-        if (!one) throw new EditError('missing', 'Vellum can’t change this match: only the page’s own text is replaced.');
-        found = [{ item: one.item, matches: [one.match] }];
+        const one = nearestLine(found, at.point);
+        if (!one) throw new EditError('missing', 'Vellum can’t change this match: only text on the page, pasted text and new text are replaced.');
+        found = [{ line: one.line, matches: [one.match] }];
       }
-      for (const { item, matches } of found) {
+      for (const { line, matches } of found) {
         try {
-          const pair = await this.#retypePair(entry, item, replaceMatches(item.text, matches, replacement));
+          const pair = await line.pair(replaceMatches(line.text, matches, replacement));
           if (pair) pairs.push(pair);
           replaced += matches.length;
         } catch (err) {
@@ -251,6 +260,48 @@ export class TextEditing {
     }
     if (pairs.length) view.annotations.applyEdits(pairs);
     return { replaced, skipped, reasons: [...reasons] };
+  }
+
+  /**
+   * A page's pasted copies of text and new text, as replaceText reads its lines: { text, quad, pair },
+   * `pair(text)` planning the retyping exactly as #retypeCopy and #retypeNewText do.
+   */
+  async #addedLines(pageNumber) {
+    const { entry, objects, records } = await this.objects(pageNumber);
+    const lines = [];
+    let fonts = null;
+    let constraints = null;
+    const glyphs = new Map();
+    for (const object of objects) {
+      const record = records.get(object.ref.key);
+      if (object.kind !== 'text-run' || !record || isRemoved(record)) continue;
+      const quad = object.geometry?.quad ? transformQuad(object.geometry.quad, record.transform ?? null) : null;
+      if (object.ref.copy && record.kind === textCopyKind) {
+        lines.push({
+          text: record.text,
+          quad,
+          pair: async (text) => {
+            const next = text.replace(/[\r\n\t\f\v]+/g, ' ').normalize('NFC');
+            constraints ??= await this.#constraints();
+            const src = record.from?.src ?? entry.src;
+            if (src !== 'blank' && !glyphs.has(src)) glyphs.set(src, (await this.#source(src)).glyphs);
+            const planned = this.#retyped(object, record, next, glyphsFor(glyphs, record, entry), constraints);
+            return planned && planned.text === record.text && planned.encoding.mode === record.encoding.mode ? null : [record, planned];
+          },
+        });
+      } else if (object.ref.newText && record.kind === newTextKind) {
+        lines.push({
+          text: record.text,
+          quad,
+          pair: async (text) => {
+            fonts ??= await this.#fonts();
+            const planned = this.#retypedNewText(fonts, object, record, text);
+            return planned && planned.text === record.text ? null : [record, planned];
+          },
+        });
+      }
+    }
+    return lines;
   }
 
   // ---- retyping pasted text ------------------------------------------------------------------------
@@ -1118,24 +1169,24 @@ export class TextEditing {
 }
 
 /**
- * Of the runs with matches ([{ item, matches }]), the one drawn under `point` (where it is now, moved
- * or not), and in it the match nearest the point along the line: { item, match }, or null.
+ * Of the lines with matches ([{ line, matches }]), the one drawn under `point` (where it is now, moved
+ * or not), and in it the match nearest the point along the line: { line, match }, or null.
  */
-function nearestRun(found, point) {
+function nearestLine(found, point) {
   let best = null;
-  for (const { item, matches } of found) {
-    const quad = transformQuad(item.run.quad, item.edit?.transform ?? null);
+  for (const { line, matches } of found) {
+    const { quad } = line;
     if (!quad) continue;
     const [ux, uy, vx, vy] = [quad[2] - quad[0], quad[3] - quad[1], quad[6] - quad[0], quad[7] - quad[1]];
     const [px, py] = [point[0] - quad[0], point[1] - quad[1]];
     const along = (px * ux + py * uy) / Math.max(1e-9, ux * ux + uy * uy);
     const across = (px * vx + py * vy) / Math.max(1e-9, vx * vx + vy * vy);
-    // How far outside the run's box the point is, in line heights (0 inside it).
+    // How far outside the line's box the point is, in line heights (0 inside it).
     const outside = Math.max(0, -along, along - 1) * Math.hypot(ux, uy) / Math.max(1e-9, Math.hypot(vx, vy)) + Math.max(0, -across, across - 1);
     if (outside > 1 || (best && outside >= best.outside)) continue;
-    best = { item, outside, match: nearestMatch(item.text, matches, Math.min(1, Math.max(0, along))) };
+    best = { line, outside, match: nearestMatch(line.text, matches, Math.min(1, Math.max(0, along))) };
   }
-  return best && { item: best.item, match: best.match };
+  return best && { line: best.line, match: best.match };
 }
 
 /** The object of a page (`objects`) that a copy's record or clip item draws again, or null. */
