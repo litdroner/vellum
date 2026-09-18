@@ -270,8 +270,10 @@ test('text that can’t be written safely is refused with a reason, and nothing 
   assert.throws(() => plan(d, 0, 'Liberation Bold subset', '你好'), (e) => e instanceof EditError && e.kind === 'characters');
   const c = await open(read('constructs'));
   assert.throws(() => plan(c, 0, 'abab', 'x'), (e) => e instanceof EditError && e.kind === 'not-editable');
-  assert.throws(() => plan(c, 0, 'Inside a form', 'x'), (e) => e instanceof EditError && e.kind === 'not-editable');
   assert.throws(() => plan(c, 3, 'After a stray Q', 'x'), (e) => e instanceof EditError && e.kind === 'not-editable');
+  // Text a Form XObject draws, where the form can't be copied safely (tests/editing/form-xobject-edits).
+  const f = await open(read('form-xobjects'));
+  assert.throws(() => plan(f, 0, 'Behind a soft mask', 'x'), (e) => e instanceof EditError && e.kind === 'not-editable');
   // A record that no longer matches the file is refused at save time.
   const record = plan(d, 0, 'Courier fixed', 'Courier');
   const stale = { ...record, target: { ...record.target, text: 'Something else' } };

@@ -62,7 +62,7 @@ test('objects are built on demand, and kept once built', async () => {
 
 test('object building stays out of the writer: the compose path never imports it', () => {
   // Phase 1 keeps this cost off every save. A test, not a convention, so it can't drift back in.
-  for (const file of ['page-writer.js', 'objects/text-run.js', 'objects/registry.js', 'content/writer.js']) {
+  for (const file of ['page-writer.js', 'objects/text-run.js', 'objects/form-copy.js', 'objects/registry.js', 'content/writer.js']) {
     const source = fs.readFileSync(path.join(ROOT, 'src', 'Vellum', 'web', 'js', 'editing', file), 'utf8');
     assert.ok(!/page-objects|capabilities/.test(source), `${file} must not pull the object model into the writer`);
   }

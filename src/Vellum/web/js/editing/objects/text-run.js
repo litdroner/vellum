@@ -31,6 +31,14 @@
 // font's table in the record gives its character — the table checked here against the font object first
 // (font-set.js checkedDocumentFaces), and every glyph of the run found in it, or nothing is written.
 //
+// A record may also be for text a Form XObject draws (editing/runs.js run.formEdit). Then steps 2
+// and 3 happen inside a PRIVATE COPY of that form rather than on the page: the glyphs are
+// neutralised in the FORM's own bytes and the new text is drawn after the FORM's own content, so it
+// keeps the form's clip, its group and its place in the drawing order. What reaches the page is one
+// patch, repointing that occurrence's `Do` at the copy (objects/form-copy.js). The form the file
+// shares is never changed, and the only thing drawText needs is the form's own space instead of the
+// page's, which is the copy's `base`.
+//
 // The page writer does the rest: splicing the patches in, closing what the page leaves open, and
 // making the new content stream.
 
@@ -43,6 +51,8 @@ import { RUN_UNDERLINE, runFormatRefusal } from './run-format.js';
 import { rgbOf } from './text-format.js';
 import { checkedDocumentFaces } from './font-set.js';
 import { faceGlyphsOf, runFaceRefusal } from './run-face.js';
+import { formCopies } from './form-copy.js';
+import { DEVICE_SPACES, shownResources } from '../content/interpreter.js';
 
 const SPACE_ADVANCE = 250; // a space the font can't draw becomes a gap of ¼ em (thousandths of text space)
 
@@ -82,6 +92,13 @@ export function write({ lib, doc, source, page, index, analysis, records }) {
     if (record.transform && textTransformRefusal(record.transform)) {
       throw new EditError('content', `Text on page ${index + 1} is being moved or scaled in a way Vellum can’t write, so nothing was changed.`);
     }
+    // Text a Form XObject draws is redrawn inside a private copy of that form, exactly where the
+    // page’s own `Do` puts it: there is nowhere else to put it, so moving, scaling and turning it
+    // are refused — by the planner, by the verbs on offer, and again here, because what goes into
+    // the file must not depend on the UI having asked the right question.
+    if (run.form && record.transform) {
+      throw new EditError('content', `Text inside a graphic on page ${index + 1} can’t be moved, so nothing was changed.`);
+    }
     if (runFormatRefusal(run, record.format)) {
       throw new EditError('content', `Text on page ${index + 1} is formatted in a way Vellum can’t write, so nothing was changed.`);
     }
@@ -97,32 +114,90 @@ export function write({ lib, doc, source, page, index, analysis, records }) {
     targets.push({ record, run });
   }
 
-  const patches = [...edited].map(([si, set]) => neutralize(analysis, analysis.shows[si], set));
+  // A private copy per form occurrence edited, made on demand and written only by finish().
+  const copies = formCopies({ lib, doc, page, analysis, index });
+  const patches = [];
+  for (const [si, set] of edited) {
+    const show = analysis.shows[si];
+    const patch = neutralize(analysis, show, set);
+    // A show a form drew is patched in the FORM’s bytes, inside the copy — never in the page’s.
+    if (show.form) copies.of(show.form.occurrence).patches.push(patch);
+    else patches.push(patch);
+  }
 
   const append = [];
-  const standardFonts = new Map();
-  const states = opacityStates(lib, doc, page);
-  const faces = documentFaces(lib, doc, source, page);
+  const tools = writersFor(lib, doc, source);
   for (const { record, run } of targets) {
     if (record.encoding.mode === 'none') continue;
+    const copy = run.form ? copies.of(run.form.occurrence) : null;
+    const into = tools(copy ?? page);
     let fontName = run.fontName;
     let items = record.encoding.items;
     if (record.encoding.mode === 'standard') {
       const name = record.encoding.font;
-      if (!standardFonts.has(name)) standardFonts.set(name, addStandardFont(lib, doc, page, name));
-      fontName = standardFonts.get(name);
+      if (!into.standard.has(name)) into.standard.set(name, addStandardFont(lib, doc, copy ?? page, name));
+      fontName = into.standard.get(name);
       items = encodeStandard(lib, name, record.text);
     } else if (record.encoding.mode === 'original') {
       items = originalItems(analysis, run);
-      if (record.face) ({ fontName, items } = faces(analysis, run, record.face, items, index));
+      if (record.face) ({ fontName, items } = into.faces(analysis, run, record.face, items, index));
     }
-    const style = styleOf(record, run, states, record.encoding.mode === 'standard' ? lib.StandardFontEmbedder.for(record.encoding.font) : null);
-    append.push(drawText(analysis, run, fontName, items, record.transform ?? null, null, style));
+    const style = styleOf(record, run, into.states, record.encoding.mode === 'standard' ? lib.StandardFontEmbedder.for(record.encoding.font) : null);
+    // Inside a copy, only the form’s own resources are read: what the redraw names has to be there.
+    if (copy) checkCopyResources(copy, analysis, run, record.encoding.mode === 'standard' ? null : fontName, index);
+    // The placement drawText works out is in page user space; `base` takes it back into the form.
+    const placement = copy ? copy.base : record.transform ?? null;
+    (copy ? copy.append : append).push(drawText(analysis, run, fontName, items, placement, null, style));
   }
+  patches.push(...copies.finish());
   return { patches, append };
 }
 
+/**
+ * The writers one page’s text edits use, one set per place resources go: the page itself, and the
+ * private copy of each form edited on it. A resource name only means anything in the resources it
+ * was added to, so a standard font added to a copy must never be named on the page, or the reverse.
+ */
+function writersFor(lib, doc, source) {
+  const byTarget = new Map();
+  return (target) => {
+    let tools = byTarget.get(target);
+    if (!tools) {
+      tools = { standard: new Map(), states: opacityStates(lib, doc, target), faces: documentFaces(lib, doc, source, target) };
+      byTarget.set(target, tools);
+    }
+    return tools;
+  };
+}
+
+/**
+ * Refuses a run whose redraw inside a form copy would name a resource the form itself doesn’t hold.
+ *
+ * The page can set a font, an ExtGState or a colour space BEFORE the `Do`, and the form’s content
+ * inherits it — but a copy of the form reads only the form’s own /Resources, so replaying that name
+ * there would name something else, or nothing. Such a run is refused rather than guessed at. (A form
+ * with no /Resources of its own never reaches this: editing/runs.js refuses it outright.)
+ */
+function checkCopyResources(copy, analysis, run, fontName, index) {
+  const has = ([category, name]) => copy.has(category, name);
+  if (!run.shows.every((si) => shownResources(analysis.shows[si], fontName).every(has))) {
+    throw new EditError('content', `Text inside a graphic on page ${index + 1} is drawn with a font or colour the graphic doesn’t hold itself, so nothing was changed.`);
+  }
+}
+
 export const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i) => s === b[i][0] && g === b[i][1]);
+
+/**
+ * The operators `show` was read from, and whose byte offsets its patch is in: the page's own, or —
+ * for a show a Form XObject drew — that occurrence's, which are offsets into the FORM's stream.
+ * Patching one with the other's offsets would cut a content stream to pieces, so this never guesses.
+ */
+function opsOf(analysis, show) {
+  if (!show.form) return analysis.ops;
+  const ops = analysis.forms[show.form.occurrence]?.ops;
+  if (!ops) throw new EditError('content', 'The graphic this text is drawn by couldn’t be read, so nothing was changed.');
+  return ops;
+}
 
 /**
  * The replacement for one text operator: its glyphs as a TJ array, with every edited glyph turned
@@ -130,7 +205,8 @@ export const sameGlyphs = (a, b) => a.length === b.length && a.every(([s, g], i)
  * taken out are gone from the bytes, not hidden: redaction (objects/redaction.js) relies on that.
  */
 export function neutralize(analysis, show, editedGlyphs) {
-  const op = analysis.ops[show.opIndex];
+  const op = opsOf(analysis, show)[show.opIndex];
+  if (!op) throw new EditError('content', 'A text operator being edited couldn’t be found, so nothing was changed.');
   const factor = -1000 / (show.fontSize * show.th);
   if (!Number.isFinite(factor)) throw new EditError('content', 'Text with no size can’t be edited.');
   const byElement = new Map();
@@ -345,8 +421,6 @@ export function styleOf(record, run, states, standard = null) {
   };
 }
 
-const DEVICE_SPACES = new Set(['DeviceGray', 'DeviceRGB', 'DeviceCMYK', 'Pattern']);
-
 /**
  * The operators that set a colour (the interpreter's { space, color } state), written again. With
  * `rename(category, name)`, the resources they name — a colour space set by cs/CS, a pattern painted
@@ -385,13 +459,18 @@ export function addStandardFont(lib, doc, page, name) {
 }
 
 /**
- * `value` added to this page's resources of `category` (/Font, /ExtGState…) under a new name starting
- * `prefix`, never one the page already has (a copy of its resources: other pages are unaffected). The name.
+ * `value` added to `target`'s resources of `category` (/Font, /ExtGState…) under a new name starting
+ * `prefix`, never one it already has (a copy of its resources: nothing else is affected). The name.
+ *
+ * `target` is a pdf-lib page, or the private copy of a Form XObject, which holds /Resources of its
+ * own (objects/form-copy.js): one shape, so everything built on this writes to either without
+ * knowing which it has — and a name added for text inside a form lands in that form's copy, where
+ * the text that names it is drawn, and not on the page, where it would mean nothing.
  */
-export function addResource(lib, doc, page, category, prefix, value) {
+export function addResource(lib, doc, target, category, prefix, value) {
   const { PDFName, PDFDict } = lib;
   const ctx = doc.context;
-  const inherited = page.node.Resources();
+  const inherited = resourcesOf(target);
   const resources = inherited ? inherited.clone(ctx) : ctx.obj({});
   const current = resources.lookup(PDFName.of(category));
   const entries = current instanceof PDFDict ? current.clone(ctx) : ctx.obj({});
@@ -400,9 +479,16 @@ export function addResource(lib, doc, page, category, prefix, value) {
   const key = `${prefix}${n}`;
   entries.set(PDFName.of(key), value);
   resources.set(PDFName.of(category), entries);
-  page.node.set(PDFName.of('Resources'), resources);
+  setResourcesOf(lib, target, resources);
   return key;
 }
+
+const resourcesOf = (target) => (typeof target.resources === 'function' ? target.resources() : target.node.Resources());
+
+const setResourcesOf = (lib, target, dict) => {
+  if (typeof target.setResources === 'function') target.setResources(dict);
+  else target.node.set(lib.PDFName.of('Resources'), dict);
+};
 
 export function encodeStandard(lib, name, text) {
   const encoding = lib.StandardFontEmbedder.for(name).encoding;

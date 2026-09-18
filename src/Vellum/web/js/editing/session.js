@@ -777,6 +777,9 @@ export class TextEditing {
     for (const { object } of found) {
       if (object.kind !== 'text-run') throw new EditError('reflow', 'Only text can be reflowed.', { key: object.ref.key });
       if (object.ref.newText) throw new EditError('reflow', 'New text wraps within its own box, so it isn’t reflowed with other lines.', { key: object.ref.key, reason: 'new-text' });
+      // Text a Form XObject draws is edited line by line inside a private copy of that form
+      // (objects/form-copy.js); re-wrapping a paragraph across its lines isn't written yet.
+      if (object.record?.formEdit) throw new EditError('reflow', REASONS.form, { key: object.ref.key, reason: 'form' });
       this.#refuse(object, 'editText', found.length);
     }
     // Pasted lines are reflowed as the paragraph they were copied from, in that page's analysis, and only

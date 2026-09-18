@@ -848,7 +848,8 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
   // Form XObjects, one occurrence at a time: what the depth-1 form-text work is checked against.
   // One page draws a clean form, the same form twice, a form that borrows the page's resources, a
   // form inside a form, a form on a hidden layer, a form under a soft mask, a form whose own stream
-  // is unbalanced, and a form whose text is invisible — beside ordinary page text that stays editable.
+  // is unbalanced, a form whose text is invisible, a form holding tagged content, and a form whose
+  // text is drawn in a font the PAGE selected before the Do — beside page text that stays editable.
   await build('form-xobjects', async (b) => {
     const ctx = b.ctx;
     const H = b.std(StandardFonts.Helvetica);
@@ -873,6 +874,12 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     const Masked = form(text('H', 12, 4, 10, 'Behind a soft mask'));
     const Unbalanced = form(`q ${text('H', 12, 4, 10, 'Unbalanced form')} Q Q`);
     const Invisible = form(`BT 3 Tr /H 12 Tf 4 10 Td ${lit(ansi('Invisible in a form'))} Tj ET`);
+    // Marked content with an MCID inside it: a copy of the form would claim its place in the
+    // structure tree a second time.
+    const Tagged = form(`/P <</MCID 0>> BDC ${text('H', 12, 4, 10, 'Tagged form text')} EMC`);
+    // No font of its own: the page selects /H before the Do and the form's text inherits it, so a
+    // copy of the form — which reads only the form's own resources — could not draw it again.
+    const Outside = form(`BT 4 10 Td ${lit(ansi('Font from outside'))} Tj ET`, { Resources: {} });
     b.page(PageSizes.Letter, [
       text('H', 14, 72, 740, 'Page text stays editable'),
       'q 1 0 0 1 72 700 cm /Clean Do Q',
@@ -884,9 +891,11 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
       'q /Mask gs 1 0 0 1 72 500 cm /Masked Do Q',
       'q 1 0 0 1 72 460 cm /Unbalanced Do Q',
       'q 1 0 0 1 72 420 cm /Invisible Do Q',
+      'q 1 0 0 1 72 380 cm /Tagged Do Q',
+      'q /H 12 Tf 1 0 0 1 72 340 cm /Outside Do Q',
     ].join('\n'), {
       Font: { H },
-      XObject: { Clean, Twice, Borrowed, Nested, Layered, Masked, Unbalanced, Invisible },
+      XObject: { Clean, Twice, Borrowed, Nested, Layered, Masked, Unbalanced, Invisible, Tagged, Outside },
       Properties: { L2: off },
       ExtGState: { Mask: { Type: 'ExtGState', SMask: { Type: 'Mask', S: 'Luminosity', G: maskGroup } } },
     });

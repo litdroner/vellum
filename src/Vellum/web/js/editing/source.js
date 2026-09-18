@@ -386,11 +386,16 @@ export class PdfSource {
           ownResources: own,
           // A transparency group: the form is composited as a unit, so what it draws can't be moved out of it.
           group: this.groupOf(stream.dict),
+          // The form's own stream exactly as the analysis read it. Kept so that a private copy of
+          // the form can be written from these very bytes and these very operator offsets, and
+          // never from a second reading that might not be the same (objects/form-copy.js).
+          bytes: null,
           ops: null,
           error: null,
         };
         try {
-          result.ops = lex(this.streamBytes(stream)).ops;
+          result.bytes = this.streamBytes(stream);
+          result.ops = lex(result.bytes).ops;
         } catch (err) {
           result.error = err.message;
         }
@@ -475,6 +480,11 @@ class Resolver {
     const { PDFName, PDFDict } = this.source.lib;
     const group = this.dict ? this.source.lookup(this.dict.get(PDFName.of(category))) : null;
     return group instanceof PDFDict ? group.get(PDFName.of(name)) ?? null : null;
+  }
+
+  /** Is there a resource of this category under this name here at all? */
+  has(category, name) {
+    return this.#entry(category, name) !== null;
   }
 
   font(name) {

@@ -136,6 +136,9 @@ export function planTextEdit({ run, text, entry, glyphs, id = newId(), embeddedF
  * with it, and one object always has exactly one record. Only a move, a rotation and a uniform scale can
  * be written today; anything else raises EditError (textTransformRefusal says which).
  *
+ * Text a Form XObject draws is refused: it is written inside a private copy of that form and keeps
+ * the form's own place, clip and drawing order, so there is nowhere else for it to land.
+ *
  * A run that has not been retyped gets a record in `encoding.mode: 'original'`: its own glyph
  * bytes, redrawn somewhere else, with no font looked up, nothing re-encoded and no text reflowed.
  * A run that already has a record keeps THAT record — same id, same text, same encoding — with the
@@ -149,6 +152,10 @@ export function planTextTransform({ run = null, record = null, transform, entry,
   // Eligibility is the engine’s own verdict and nothing new: a run 0.4 already found editable.
   // Given a record and no run, that verdict is already in the record — it couldn’t exist otherwise.
   if (run && !run.editable) refuseRun(run);
+  // Text a Form XObject draws is redrawn inside a private copy of that form, which stays exactly
+  // where the page's own `Do` puts it (objects/form-copy.js): there is nowhere else to put it, so a
+  // move, a scale and a turn are refused here as capabilities.js and the writer refuse them.
+  if (run?.formEdit) throw new EditError('not-editable', REASONS.form, { reason: 'form' });
   if (!run && !record) refuseRun(null);
   const placement = placementOf(transform);
   if (record) {

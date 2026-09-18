@@ -12,7 +12,10 @@
 //
 // A verb is true only where a writer can honour it:
 //
-//   text    move, scale, rotate and delete follow `editText` exactly — the 0.4 engine's own verdict.
+//   text    move, scale, rotate and delete follow `editText` exactly — the 0.4 engine's own verdict,
+//           except for text a Form XObject draws: that is edited inside a private copy of the form
+//           (objects/form-copy.js), which stays exactly where the page's own `Do` puts it, so the
+//           verbs that would redraw it somewhere else — move, scale, rotate, copy — keep 'form'.
 //           Moved, scaled and turned text is redrawn from the file's own glyphs under one `cm`
 //           (objects/text-run.js), and deleting is what writing empty text has always done. `stretch`
 //           is not offered — nor a flip, which the UI asks as a stretch — because it would distort
@@ -90,15 +93,21 @@ export function capabilitiesFor(analysis, kind, record, ref) {
   if (kind === 'text-run') {
     // One verdict answers six verbs. Moving, scaling, turning and deleting text all go through the
     // same writer as retyping it, so text that can't be edited can't be moved either, and says so in
-    // the same words. A stretch has no writer for text, so it keeps the plain `unsupported` (or the
+    // the same words — with the one exception below, where the writer can retype but has nowhere
+    // else to draw. A stretch has no writer for text, so it keeps the plain `unsupported` (or the
     // structural reason, when there is one).
     const verdict = editTextOf(record);
+    // Retyping and deleting are written where the text already is, so both follow the verdict.
     capabilities.editText = verdict;
-    capabilities.move = verdict;
-    capabilities.scale = verdict;
-    capabilities.rotate = verdict;
     capabilities.delete = verdict;
-    capabilities.copy = verdict;
+    // The four that redraw the text somewhere else. Inside a form there is nowhere else to redraw
+    // it: the copy keeps the form's own place, clip and drawing order, and a copy pasted onto the
+    // page would be drawn by the page's resources, which are not the form's. So they stay 'form'.
+    const elsewhere = record.formEdit ? 'form' : verdict;
+    capabilities.move = elsewhere;
+    capabilities.scale = elsewhere;
+    capabilities.rotate = elsewhere;
+    capabilities.copy = elsewhere;
   } else if (kind === 'image') {
     // The handler's own gate, asked once. It repeats the structural checks and adds the two only
     // it can make — a clip that would crop the picture differently, and a placement with no

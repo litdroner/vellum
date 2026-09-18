@@ -129,7 +129,9 @@ test('unusual constructs: each is read correctly or refused for the right reason
     'Line three': true, 'Hex string': true, 'Escapes (paren) back\\slash AB': true, 'After the inline image': true,
     'Café': true, 'Hi!': true, 'Rotated text': true, 'Upside-down text': true, 'Inside a rectangle clip': true,
     'Page footer artifact': true, 'Outlined text': true, 'Filled and outlined': true,
-    OK: ['metrics'], abab: ['type3'], 'Inside a form': ['form'], 'Skewed text': ['skewed'], 'Mirrored text': ['skewed'],
+    // A clean depth-1 form with resources of its own: edited through a private copy of it.
+    'Inside a form': true,
+    OK: ['metrics'], abab: ['type3'], 'Skewed text': ['skewed'], 'Mirrored text': ['skewed'],
     'Clipped by a curve': ['clipped'], 'Cut by a rectangle clip': ['clipped'], 'Visible glyphs': ['actual-text'],
     'Invisible text': ['invisible'], 'Clip text': ['invisible'],
   };

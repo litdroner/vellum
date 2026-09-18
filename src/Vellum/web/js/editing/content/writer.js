@@ -46,3 +46,29 @@ export function concat(parts) {
   }
   return out;
 }
+
+/**
+ * One rewritten content stream: `bytes` with each patch spliced in, wrapped in q … Q (closing
+ * whatever the stream leaves open), and then everything in `appended` drawn after it.
+ *
+ * This is the only place a content stream is assembled, and both callers are the same writer: the
+ * page writer builds a page's content with it (editing/page-writer.js), and a private copy of a
+ * Form XObject builds the copy's content with it (objects/form-copy.js). Patches must not overlap
+ * — two edits reaching into the same operator can't both be honoured, so neither is.
+ */
+export function spliceContent(bytes, patches, appended = [], { openStates = 0, openText = false } = {}) {
+  const sorted = [...patches].sort((a, b) => a.start - b.start);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start < sorted[i - 1].end) throw new EditError('content', 'Overlapping text operators; the page wasn’t changed.');
+  }
+  const pieces = [ascii('q\n')];
+  let at = 0;
+  for (const p of sorted) {
+    pieces.push(bytes.subarray(at, p.start), ascii(p.text));
+    at = p.end;
+  }
+  pieces.push(bytes.subarray(at));
+  pieces.push(ascii(`\n${openText ? 'ET\n' : ''}${'Q\n'.repeat(openStates)}Q\n`));
+  for (const text of appended) pieces.push(ascii(`${text}\n`));
+  return concat(pieces);
+}

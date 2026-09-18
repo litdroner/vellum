@@ -41,6 +41,10 @@ never imports UI modules. The host knows nothing about the UI beyond named bridg
 - **PDF bytes are only written by `annotations/persist.js`** (`composeDocument`), and only the host
   touches the file system (atomic saves via `/save/{token}`, paths registered by dialogs). Text edits
   are applied inside `composeDocument` by `editing/page-writer.js`, which rewrites only edited pages.
+- **A shared object is never changed in place.** A Form XObject is drawn by any number of pages and
+  any number of `Do` operators, so editing text inside one occurrence copies that form first and
+  repoints only that one `Do` (`editing/objects/form-copy.js`). The original is only read. Hold to
+  this for anything else a file shares.
 - **Editing never guesses.** Text is only offered for editing when the engine's reading of it agrees
   glyph for glyph with pdf.js's (codes, text, widths, positions); anything else is refused with a
   reason. Keep that rule for future editors (images, forms, redaction).

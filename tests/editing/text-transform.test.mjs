@@ -375,7 +375,7 @@ test('text the engine refuses to edit cannot be moved either, and says the same 
     'Mirrored text': 'Slanted, mirrored or distorted text can’t be edited yet.',
     'Invisible text': 'This text is invisible (for example the searchable layer of a scanned page). Editing it wouldn’t change what you see.',
     abab: 'This text is drawn with a picture font (Type 3), which Vellum can’t edit.',
-    'Inside a form': 'This text is part of a reusable graphic in the file, which Vellum can’t edit yet.',
+    'Inside a form': 'This text is part of a reusable graphic in the file, and Vellum can’t make that change inside one.',
   };
   for (const [text, message] of Object.entries(refusals)) {
     assert.throws(() => move(d, 0, text, translate(5, 5)), (e) => {

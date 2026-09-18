@@ -18,7 +18,7 @@ import { analyzePage } from './runs.js';
 import { EditError } from './edits.js';
 import { handlerFor } from './objects/registry.js';
 import * as redaction from './objects/redaction.js';
-import { ascii, concat } from './content/writer.js';
+import { spliceContent } from './content/writer.js';
 
 /**
  * Applies content edits to arranged pages. pages[i] shows plan[i]. Resolves { changed } (pages
@@ -135,24 +135,12 @@ function readPage(source, page, index) {
 }
 
 function writeContent(lib, doc, page, analysis, patches, appended) {
-  patches.sort((a, b) => a.start - b.start);
-  for (let i = 1; i < patches.length; i++) {
-    if (patches[i].start < patches[i - 1].end) throw new EditError('content', 'Overlapping text operators; the page wasn’t changed.');
-  }
-
-  // The page's own content, wrapped in q … Q (closing anything it leaves open), then what follows.
-  const pieces = [ascii('q\n')];
-  let at = 0;
-  for (const p of patches) {
-    pieces.push(analysis.bytes.subarray(at, p.start), ascii(p.text));
-    at = p.end;
-  }
-  pieces.push(analysis.bytes.subarray(at));
-  pieces.push(ascii(`\n${analysis.openText ? 'ET\n' : ''}${'Q\n'.repeat(analysis.openStates)}Q\n`));
-  for (const text of appended) pieces.push(ascii(`${text}\n`));
-
+  // The page's own content, wrapped in q … Q (closing anything it leaves open), then what
+  // follows — assembled by the writer's own spliceContent(), which a private copy of a form
+  // XObject builds its content with too (objects/form-copy.js).
+  const bytes = spliceContent(analysis.bytes, patches, appended, analysis);
   const ctx = doc.context;
-  page.node.set(lib.PDFName.of('Contents'), ctx.register(ctx.flateStream(concat(pieces))));
+  page.node.set(lib.PDFName.of('Contents'), ctx.register(ctx.flateStream(bytes)));
 }
 
 /** A page's records grouped by kind, each group keeping the order the edits were made in. */

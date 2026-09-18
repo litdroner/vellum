@@ -3,10 +3,13 @@
 // from the actual glyph positions the interpreter computed, never from operators alone (one
 // operator can hold several columns; one word can be spread over many operators).
 //
-// Text drawn by a Form XObject is refused for reason 'form' and stays that way. verifyPage() still
-// cross-checks it — glyph for glyph, against what pdf.js drew inside the same form — and records
-// the result on the form occurrence and on the run, so a later phase can start from something that
-// has already been proven rather than from an assumption. Nothing here makes such text editable.
+// Text drawn by a Form XObject is refused for reason 'form', except in the one case Vellum can
+// write: a run drawn directly by a depth-1 occurrence with resources of its own, whose text came
+// through the pdf.js cross-check clean, that nothing else refuses, and whose form carries no layer,
+// soft mask, tagged content or structural trouble. Such a run gets `formEdit` — the occurrence its
+// edit would be written into — and 'form' is lifted from its reasons; the edit is then written into
+// a PRIVATE COPY of that form, made for that one occurrence (objects/form-copy.js), so the form the
+// file shares is never changed and no other occurrence of it moves. Everything else stays refused.
 //
 // Every run starts out not editable ("unverified"). verifyPage() compares each text operator,
 // glyph by glyph, with what pdf.js drew for the same page — character codes, Unicode text and
@@ -14,7 +17,7 @@
 // completely, and that have no other problem, become editable. When in doubt: not editable.
 
 import { lex } from './content/lexer.js';
-import { interpretContent, FORM_BLOCKERS, FORM_NOTES } from './content/interpreter.js';
+import { interpretContent, shownResources, FORM_BLOCKERS, FORM_NOTES } from './content/interpreter.js';
 import { boundsOf } from './matrix.js';
 
 export { FORM_BLOCKERS, FORM_NOTES };
@@ -27,7 +30,7 @@ export const REASONS = {
   metrics: 'The font’s character widths are missing, so an edit couldn’t be placed exactly.',
   decode: 'Some of these characters can’t be read as text.',
   encoding: 'This text uses a character encoding Vellum can’t edit yet.',
-  form: 'This text is part of a reusable graphic in the file, which Vellum can’t edit yet.',
+  form: 'This text is part of a reusable graphic in the file, and Vellum can’t make that change inside one.',
   type3: 'This text is drawn with a picture font (Type 3), which Vellum can’t edit.',
   vertical: 'Vertical text can’t be edited yet.',
   'symbol-font': 'This text uses a symbol font; editing it as letters wouldn’t make sense.',
@@ -202,12 +205,14 @@ function classify(analysis) {
     if (analysis.tainted) why.add('unreadable');
     // New text is drawn after the page's content from a clean state; a stray Q would break that.
     if (analysis.unbalanced) why.add('structure');
-    // Font set through ExtGState (no Tf name): there's no resource name to write with.
-    if (!run.fontName && !run.first.form) why.add('font-resource');
+    // Font set through ExtGState (no Tf name): there's no resource name to write with. Asked of
+    // text a form draws too, now that such text can be edited (through a copy of the form).
+    if (!run.fontName) why.add('font-resource');
     const font = run.font;
     for (const issue of font?.issues ?? []) if (FONT_REASONS[issue]) why.add(FONT_REASONS[issue]);
     run.form = runForm(analysis, run);
-    run.formVerdict = null; // filled by verifyPage(); 'form' stays a refusal either way
+    run.formVerdict = null; // filled by verifyPage(): what the cross-check found about this run
+    run.formEdit = null; // filled by verifyPage(): the occurrence an edit would be copied into
     for (const si of run.shows) {
       const s = shows[si];
       if (s.form) why.add('form');
@@ -313,8 +318,8 @@ function summarize(analysis) {
   return {
     kind, runs: analysis.runs.length, editable: analysis.runs.filter((r) => r.editable).length,
     visibleGlyphs: visible, invisibleGlyphs: invisible, formGlyphs: inForms, imageCoverage,
-    // Form XObjects drawn by the page itself, and how many of those hold text that has been
-    // cross-checked and could be rewritten once form editing exists. None of them is editable now.
+    // Form XObjects the page draws, and how many of those hold text that came through the
+    // cross-check clean and may be edited — each through a private copy of its own form.
     forms: analysis.forms.length,
     formCandidates: analysis.forms.filter((f) => f.verification?.candidate).length,
   };
@@ -359,6 +364,14 @@ export function verifyPage(analysis, { operatorList, textContent, OPS }) {
   // Only once every run's reasons are settled: the form verdict quotes what is left besides 'form'.
   for (const run of analysis.runs) run.formVerdict = run.form ? formVerdictOf(analysis, run, inForm) : null;
   for (const form of analysis.forms) form.verification = verificationOf(analysis, form);
+  // Last of all, because it needs every verdict above: the runs whose only refusal is 'form' and
+  // whose occurrence may be copied. For those, and only those, 'form' is lifted.
+  for (const run of analysis.runs) {
+    run.formEdit = formEditOf(analysis, run);
+    if (!run.formEdit) continue;
+    run.reasons.delete('form');
+    run.editable = run.reasons.size === 0;
+  }
   analysis.verified = true;
   analysis.summary = summarize(analysis);
   return analysis;
@@ -432,6 +445,40 @@ function formVerdictOf(analysis, run, inForm) {
     textVerified,
     verified: textVerified && Boolean(occurrence?.safety.safe),
   };
+}
+
+/**
+ * The form occurrence an edit to this run would be written into — { occurrence, key, name, uses } —
+ * or null, which is every other run a form draws. This is the ONE place 'form' stops being a
+ * refusal, and it says yes only when all of this holds:
+ *
+ *   • 'form' is the only thing against the run: its own reasons hold nothing else, and neither
+ *     does what the cross-check found for it (formVerdict.reasons), so lifting 'form' leaves a run
+ *     that every ordinary text-edit check has already passed;
+ *   • its glyphs were cross-checked against what pdf.js drew inside the same form, and agreed
+ *     (textVerified), and the run belongs to ONE occurrence, not to two draws folded into one;
+ *   • that occurrence is drawn by the page itself (depth 1), with /Resources of its own, and is a
+ *     candidate: nothing structural against it — readable, balanced, no layer, no soft mask, no
+ *     tagged content — and every run it draws, at any depth below it, verified too;
+ *   • everything redrawing the run would name — its font, the ExtGStates over it, the colour spaces
+ *     and patterns it is painted with — is in the FORM's own resources. A page can set any of those
+ *     before the `Do` and the form's content inherits it, but a copy of the form reads only the
+ *     form's own resources, so a name that was never there could not be written again.
+ *
+ * A form drawn more than once is allowed here on purpose: that is the case the private copy exists
+ * for. Nothing about how the copy is written is decided here — the writer asks the structural half
+ * of this again, from the file, before a byte is written (objects/form-copy.js).
+ */
+function formEditOf(analysis, run) {
+  const verdict = run.formVerdict;
+  if (!verdict || verdict.ambiguous || !verdict.textVerified || verdict.reasons.length) return null;
+  if (run.reasons.size !== 1 || !run.reasons.has('form')) return null;
+  const form = verdict.occurrence === null ? null : analysis.forms[verdict.occurrence] ?? null;
+  if (!form || form.depth !== 1 || form.stream !== 'page' || !form.ownResources) return null;
+  if (!form.verification?.candidate) return null;
+  const has = ([category, name]) => form.resources?.has(category, name) === true;
+  if (!run.shows.every((si) => shownResources(analysis.shows[si]).every(has))) return null;
+  return { occurrence: form.index, key: form.key, name: form.name, uses: form.uses };
 }
 
 /**
@@ -550,8 +597,8 @@ export function explainRun(run) {
 
 /**
  * Why the text a Form XObject occurrence draws couldn't be rewritten, in words a person can act on:
- * what the form itself is in the way of, then what its text is. Empty means the cross-check found
- * nothing against it — which is not the same as it being editable; it isn't, yet.
+ * what the form itself is in the way of, then what its text is. Empty means nothing was found
+ * against it; whether a particular run may then be edited is run.formEdit's answer, not this one's.
  */
 export function explainForm(form) {
   return [

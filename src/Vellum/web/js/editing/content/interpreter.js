@@ -17,8 +17,8 @@
 //             ca, CA, blend, softMask, form, mcid, artifact, actualText, oc }
 //   paths   { index, opIndex, op, stream, paint, box, lineWidth, ctm, clip, …same context }
 //   forms   { index, key, name, depth, opIndex, stream, range, ctm, box, clip, error, …same context,
-//             matrix, bbox, group, resources, ownResources, parent, ancestors, root, uses,
-//             shows, glyphs, content, safety }
+//             matrix, bbox, group, resources, ownResources, bytes, ops, tagged, parent, ancestors,
+//             root, uses, shows, glyphs, content, safety }
 // One record per *occurrence*: a form drawn twice gives two records that share `key`. `parent` is
 // the occurrence that draws it (null for the page), `ancestors` those occurrences outermost first,
 // `root` the depth-1 occurrence it belongs to, `uses` how often `key` is drawn anywhere on the page.
@@ -296,9 +296,13 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
       case 'BMC':
         marked.push(markOf(args[args.length - 1], null, resources));
         break;
-      case 'BDC':
-        marked.push(markOf(args[args.length - 2], args[args.length - 1], resources));
+      case 'BDC': {
+        const mark = markOf(args[args.length - 2], args[args.length - 1], resources);
+        marked.push(mark);
+        // Content in the document's structure tree: a form that holds any can't be copied.
+        if (mark.mcid !== null && record) record.tagged = true;
         break;
+      }
       case 'EMC':
         if (marked.length > outer) marked.pop(); // never close what was opened outside this stream
         break;
@@ -333,6 +337,12 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
           // What the form is, for a later phase that would have to copy it before changing it.
           matrix: xobject.matrix ?? IDENTITY, bbox: xobject.bbox ?? null, group: xobject.group ?? null,
           resources: xobject.resources ?? null, ownResources: xobject.ownResources === true,
+          // The form's own stream as this analysis read it, so that a private copy of it can be
+          // written from exactly these bytes and these operator offsets (objects/form-copy.js).
+          bytes: xobject.bytes ?? null, ops: xobject.ops ?? null,
+          // Marked content with an MCID drawn anywhere inside it: copying the form would copy that
+          // too, and two pieces of content would then claim one place in the structure tree.
+          tagged: false,
           // The transparency it is drawn through, which a rewrite would have to reproduce exactly.
           ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
           // Where this occurrence sits: filled in by finishForms() once the page is walked.
@@ -391,6 +401,7 @@ export const FORM_BLOCKERS = {
   'inherited-resources': 'This graphic has no resources of its own; it borrows whatever draws it.',
   layer: 'This graphic is on a layer that can be shown or hidden.',
   'soft-mask': 'This graphic is drawn through a transparency mask.',
+  tagged: 'This graphic is part of the document’s accessibility structure, which a copy of it would claim too.',
 };
 
 /**
@@ -425,6 +436,8 @@ function finishForms(out) {
     f.ancestors = chain;
     f.root = chain.length ? chain[0] : f.index;
   }
+  // A form holds whatever the forms it draws hold: tagged content below it is tagged content in it.
+  for (const f of byIndex) if (f.tagged) for (const at of f.ancestors) byIndex[at].tagged = true;
   for (const show of out.shows) {
     const f = show.form ? byIndex[show.form.occurrence] : null;
     if (!f) continue;
@@ -449,6 +462,9 @@ function safetyOf(f, children) {
   if (!f.ownResources) blockers.push('inherited-resources');
   if (f.oc) blockers.push('layer');
   if (f.softMask) blockers.push('soft-mask');
+  // Tagged content: the structure tree names the content that draws it, and a copy would be a
+  // second claim on the same place in it — where the Do stands, or anywhere inside the form.
+  if (f.mcid !== null || f.tagged) blockers.push('tagged');
   const notes = [];
   if (f.uses > 1) notes.push('shared');
   if (f.group) notes.push('group');
@@ -456,6 +472,30 @@ function safetyOf(f, children) {
   if (f.ca !== 1 || f.CA !== 1 || f.blend !== 'Normal') notes.push('transparent');
   if (children) notes.push('nested');
   return { blockers, notes, safe: blockers.length === 0 };
+}
+
+/** Colour spaces that are an operator's own name rather than a resource. */
+export const DEVICE_SPACES = new Set(['DeviceGray', 'DeviceRGB', 'DeviceCMYK', 'Pattern']);
+
+/**
+ * Every resource one show's own state names, as [category, name]: the font it selects, the
+ * ExtGStates in effect over it, and the colour spaces and patterns its fill and stroke are set with.
+ * Exactly what redrawing that show has to find again — under these names, in whichever resources the
+ * redraw is read with. `fontName` overrides the show's own, for a redraw in a font of its own.
+ */
+export function shownResources(show, fontName = show.fontName) {
+  const need = fontName ? [['Font', fontName]] : [];
+  for (const name of show.gsNames) need.push(['ExtGState', name]);
+  for (const state of [show.fill, show.stroke]) {
+    for (const part of [state?.space, state?.color]) {
+      const category = part?.op === 'cs' || part?.op === 'CS' ? 'ColorSpace' : part?.op === 'scn' || part?.op === 'SCN' ? 'Pattern' : null;
+      if (!category) continue;
+      for (const arg of part.args) {
+        if (arg instanceof PdfName && !(category === 'ColorSpace' && DEVICE_SPACES.has(arg.name))) need.push([category, arg.name]);
+      }
+    }
+  }
+  return need;
 }
 
 /**

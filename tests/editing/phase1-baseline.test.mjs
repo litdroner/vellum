@@ -287,7 +287,7 @@ const REFUSALS = {
     [['World kerned', true, []], ['Spaced and scaled words', true, []], ['Raised', true, []], ['Line one', true, []],
       ['Line two', true, []], ['Line three', true, []], ['Hex string', true, []], ['Escapes (paren) back\\slash AB', true, []],
       ['After the inline image', true, []], ['Café', true, []], ['Hi!', true, []], ['OK', false, ['metrics']],
-      ['abab', false, ['type3']], ['Inside a form', false, ['form']], ['Rotated text', true, []],
+      ['abab', false, ['type3']], ['Inside a form', true, []], ['Rotated text', true, []],
       ['Skewed text', false, ['skewed']], ['Upside-down text', true, []], ['Mirrored text', false, ['skewed']],
       ['Clipped by a curve', false, ['clipped']], ['Inside a rectangle clip', true, []],
       ['Cut by a rectangle clip', false, ['clipped']], ['Fake bold', false, ['overlap']], ['Fake bold', false, ['overlap']],

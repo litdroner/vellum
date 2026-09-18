@@ -1,10 +1,10 @@
-// Form XObject text, phase 1: the safety groundwork before any of it becomes editable.
+// Form XObject text, phase 1: the reading, the cross-check and the refusals.
 //
-// Pinned here: text drawn by a Form XObject is still refused for reason 'form', on every occurrence
-// and whatever the cross-check says about it; verifyPage() nevertheless compares that text with what
-// pdf.js drew inside the same form, glyph for glyph; each occurrence carries what a later phase
-// needs to identify it (XObject key, occurrence, depth, resources) and what stands in its way; and
-// none of this teaches the font models anything, so page text is editable exactly as it was.
+// Pinned here: verifyPage() compares the text a form draws with what pdf.js drew inside the same
+// form, glyph for glyph; each occurrence carries what identifies it (XObject key, occurrence, depth,
+// resources) and what stands in its way; every occurrence that is not plainly safe stays refused for
+// 'form'; and none of this teaches the font models anything, so page text is editable exactly as it
+// was. Which runs phase 2 lifts 'form' from, and what is then written, is in form-xobject-edits.
 // Run: node --test "tests/editing/form-xobjects.test.mjs"
 
 import test, { before } from 'node:test';
@@ -32,21 +32,25 @@ const only = (name) => {
 
 // ---- the refusal, unchanged ---------------------------------------------------------------------
 
-test('every run a form draws is still refused for "form", and only page text is editable', () => {
+test('a run a form draws keeps "form" unless its occurrence can be copied', () => {
   assert.equal(page.verified, true);
-  const editable = page.runs.filter((r) => r.editable).map((r) => r.text);
-  assert.deepEqual(editable, ['Page text stays editable'], 'the page text, and nothing a form draws');
+  // The only text a form draws that is editable is the text phase 2 writes through a private copy;
+  // 'form' is on every other run a form draws, and on none of the page's own.
   for (const r of page.runs) {
     const drawnByAForm = Boolean(r.form);
-    assert.equal(r.reasons.has('form'), drawnByAForm, `"${r.text}"`);
-    if (drawnByAForm) assert.equal(r.editable, false, `"${r.text}" stays refused`);
+    assert.equal(r.reasons.has('form'), drawnByAForm && !r.formEdit, `"${r.text}"`);
+    if (drawnByAForm && !r.formEdit) assert.equal(r.editable, false, `"${r.text}" stays refused`);
+    if (!drawnByAForm) assert.equal(r.formEdit, null, `"${r.text}" is the page's own`);
   }
-  // Text whose glyphs came through the cross-check clean is refused just the same.
   const clean = run('Clean form text');
   assert.equal(clean.formVerdict.verified, true);
-  assert.equal(clean.editable, false);
-  assert.deepEqual([...clean.reasons], ['form']);
-  assert.deepEqual(explainForm(only('Clean')), [], 'nothing against it, which is not permission');
+  assert.deepEqual(explainForm(only('Clean')), [], 'nothing against it');
+  // Text that agrees with pdf.js but whose form can't be copied stays refused, and says so.
+  const tagged = run('Tagged form text');
+  assert.equal(tagged.formVerdict.textVerified, true, 'its glyphs agree with pdf.js');
+  assert.equal(tagged.formEdit, null);
+  assert.equal(tagged.editable, false);
+  assert.deepEqual([...tagged.reasons], ['form']);
 });
 
 test('the reasons a form occurrence has are never added to the runs it draws', () => {

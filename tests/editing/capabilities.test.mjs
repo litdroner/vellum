@@ -118,12 +118,17 @@ test('only the verbs with a writer are ever true, and only on the kinds that hav
 
 test('a text run move, scale, rotate, delete and copy are its editText, exactly: one verdict', async () => {
   // They all go through the same writer, so they cannot disagree: text that cannot be edited cannot
-  // be moved, and refuses in the very same words.
+  // be moved, and refuses in the very same words. The one exception is text a Form XObject draws:
+  // it is written inside a private copy of that form and keeps the form's own place, so the verbs
+  // that would redraw it somewhere else answer 'form' however editable the text itself is.
   for await (const { name, page, o } of everyObject()) {
     if (o.kind !== 'text-run') continue;
-    for (const verb of ['move', 'scale', 'rotate', 'delete', 'copy']) {
-      assert.equal(o.capabilities[verb], o.capabilities.editText,
-        `${name} page ${page} ${JSON.stringify(o.text)}: ${verb} disagrees with editText`);
+    const elsewhere = o.record.formEdit ? 'form' : o.capabilities.editText;
+    assert.equal(o.capabilities.delete, o.capabilities.editText,
+      `${name} page ${page} ${JSON.stringify(o.text)}: delete disagrees with editText`);
+    for (const verb of ['move', 'scale', 'rotate', 'copy']) {
+      assert.equal(o.capabilities[verb], elsewhere,
+        `${name} page ${page} ${JSON.stringify(o.text)}: ${verb} disagrees`);
     }
   }
 });

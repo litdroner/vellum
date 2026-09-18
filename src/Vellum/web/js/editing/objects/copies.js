@@ -173,6 +173,12 @@ export const textCopy = Object.freeze({
       if (!run || run.text !== record.target.text || !sameGlyphs(run.glyphs, record.target.glyphs)) {
         throw new EditError('changed', `The text copied on page ${index + 1} isn’t in the file as expected any more, so nothing was changed.`);
       }
+      // Text a Form XObject draws is edited inside a private copy of that form (objects/form-copy.js),
+      // by the form's own resource names. Pasted onto the page it would be drawn by the page's, which
+      // are not the same names, so it is refused here as capabilities.js already refuses it.
+      if (run.form) {
+        throw new EditError('content', `Text copied on page ${index + 1} is drawn by a reusable graphic, which Vellum can’t paste, so nothing was changed.`);
+      }
       if (!isValid(record.transform) || textTransformRefusal(record.transform)) {
         throw new EditError('content', `Text copied on page ${index + 1} is placed in a way Vellum can’t write, so nothing was changed.`);
       }
