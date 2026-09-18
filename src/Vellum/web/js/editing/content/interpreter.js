@@ -16,7 +16,14 @@
 //   images  { index, opIndex, stream, range, name, key, inline, info, ctm, quad, box, clip,
 //             ca, CA, blend, softMask, form, mcid, artifact, actualText, oc }
 //   paths   { index, opIndex, op, stream, paint, box, lineWidth, ctm, clip, …same context }
-//   forms   { index, key, name, depth, opIndex, stream, range, ctm, box, clip, error, …same context }
+//   forms   { index, key, name, depth, opIndex, stream, range, ctm, box, clip, error, …same context,
+//             matrix, bbox, group, resources, ownResources, parent, ancestors, root, uses,
+//             shows, glyphs, content, safety }
+// One record per *occurrence*: a form drawn twice gives two records that share `key`. `parent` is
+// the occurrence that draws it (null for the page), `ancestors` those occurrences outermost first,
+// `root` the depth-1 occurrence it belongs to, `uses` how often `key` is drawn anywhere on the page.
+// `content` is the health of the form's own stream, `safety` what stands in the way of ever
+// rewriting text inside it — see safetyOf(). Nothing here makes anything editable.
 // `stream` is 'page' or the key of the form whose content holds the operator; `range` its bytes in
 // that stream; `quad` the image's unit square in user space; `oc` { keys, hidden } for content in
 // optional-content groups (layers); `mcid` / `artifact` from marked content (tagged PDFs).
@@ -33,6 +40,7 @@ export function interpretContent(ops, { resources, ctm = IDENTITY }) {
   const out = { shows: [], images: [], paths: [], forms: [], issues: [], tainted: false, unbalanced: false, openStates: 0, openText: false };
   const budget = { ops: 0 };
   run(ops, resources, initialState(ctm, null), 0, null, [], out, budget);
+  finishForms(out);
   return out;
 }
 
@@ -54,7 +62,7 @@ const copyState = (gs) => ({ ...gs, fill: { ...gs.fill }, stroke: { ...gs.stroke
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const nums = (args, count) => (args.length >= count && args.slice(-count).every(isNum) ? args.slice(-count) : null);
 
-function run(ops, resources, startState, depth, form, formKeys, out, budget, outerMarked = []) {
+function run(ops, resources, startState, depth, form, formKeys, out, budget, outerMarked = [], record = null) {
   let gs = startState;
   const stack = [];
   // Marked content open around this stream (a form inherits what's open where it's drawn).
@@ -69,6 +77,7 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
 
   const taint = (opIndex, message) => {
     out.tainted = true;
+    if (record) record.content.tainted = true;
     out.issues.push({ kind: 'syntax', opIndex, form: form?.key ?? null, message });
   };
   const moveLine = (tx, ty) => {
@@ -105,6 +114,7 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
       case 'Q':
         if (stack.length) gs = stack.pop();
         else if (depth === 0) out.unbalanced = true;
+        else if (record) record.content.unbalanced = true; // a Q that would escape the form
         break;
       case 'cm': {
         const m = nums(args, 6);
@@ -315,31 +325,45 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
         }
         if (xobject.kind !== 'form') break;
         const formCtm = multiply(xobject.matrix ?? IDENTITY, gs.ctm);
-        const record = {
+        const inner = {
           index: out.forms.length, key: xobject.key, name, depth: depth + 1, opIndex, stream: form?.key ?? 'page',
           range: [ops[opIndex].start, ops[opIndex].end], ctm: formCtm,
           box: xobject.bbox ? boxOf(xobject.bbox, formCtm) : null, clip: gs.clip, error: xobject.error ?? null,
           form: form?.key ?? null, ...markedContext(marked, xobject.oc ?? null),
+          // What the form is, for a later phase that would have to copy it before changing it.
+          matrix: xobject.matrix ?? IDENTITY, bbox: xobject.bbox ?? null, group: xobject.group ?? null,
+          resources: xobject.resources ?? null, ownResources: xobject.ownResources === true,
+          // The transparency it is drawn through, which a rewrite would have to reproduce exactly.
+          ca: gs.ca, CA: gs.CA, blend: gs.blend, softMask: gs.softMask,
+          // Where this occurrence sits: filled in by finishForms() once the page is walked.
+          parent: form?.occurrence ?? null, ancestors: [], root: null, uses: 0, shows: [], glyphs: 0,
+          // The health of the form's own content stream, and what stops it being rewritten.
+          content: { entered: false, tainted: false, unbalanced: false, openStates: 0, openText: false, recursive: false, tooDeep: false },
+          safety: null, verification: null,
         };
-        out.forms.push(record);
+        out.forms.push(inner);
         if (xobject.error) {
           out.issues.push({ kind: 'form-unreadable', key: xobject.key, message: xobject.error });
           break;
         }
         if (depth + 1 > MAX_FORM_DEPTH || formKeys.includes(xobject.key)) {
+          inner.content[formKeys.includes(xobject.key) ? 'recursive' : 'tooDeep'] = true;
           out.issues.push({ kind: 'form-depth', key: xobject.key });
           break;
         }
-        const inner = copyState(gs);
-        inner.ctm = formCtm;
+        const innerState = copyState(gs);
+        innerState.ctm = formCtm;
         if (xobject.bbox) {
           const [x1, y1, x2, y2] = xobject.bbox;
           const clipPath = newPath();
           addRect(clipPath, formCtm, x1, y1, x2 - x1, y2 - y1);
-          inner.clip = addClip(gs.clip, clipPath);
+          innerState.clip = addClip(gs.clip, clipPath);
         }
         const within = xobject.oc ? [...marked, { tag: null, mcid: null, actualText: false, oc: xobject.oc }] : marked;
-        run(xobject.ops, xobject.resources ?? resources, inner, depth + 1, { key: xobject.key, name }, [...formKeys, xobject.key], out, budget, within);
+        inner.content.entered = true;
+        // Shows drawn inside carry the occurrence, not just the key: one form drawn twice is two.
+        const context = { key: xobject.key, name, occurrence: inner.index, depth: depth + 1 };
+        run(xobject.ops, xobject.resources ?? resources, innerState, depth + 1, context, [...formKeys, xobject.key], out, budget, within, inner);
         break;
       }
 
@@ -350,7 +374,88 @@ function run(ops, resources, startState, depth, form, formKeys, out, budget, out
   if (depth === 0) {
     out.openStates = stack.length;
     out.openText = inText;
+  } else if (record) {
+    record.content.openStates = stack.length;
+    record.content.openText = inText;
   }
+}
+
+// ---- form XObject occurrences -----------------------------------------------------------------
+
+/** What stops text inside a form occurrence from ever being rewritten, in words a person can act on. */
+export const FORM_BLOCKERS = {
+  depth: 'This graphic is drawn inside another one, not by the page itself.',
+  unreadable: 'This graphic’s drawing instructions couldn’t be read.',
+  recursive: 'This graphic draws itself, so Vellum stops following it.',
+  structure: 'This graphic’s drawing instructions are unbalanced.',
+  'inherited-resources': 'This graphic has no resources of its own; it borrows whatever draws it.',
+  layer: 'This graphic is on a layer that can be shown or hidden.',
+  'soft-mask': 'This graphic is drawn through a transparency mask.',
+};
+
+/**
+ * Facts about how an occurrence is drawn that don't stop its text being read and cross-checked, but
+ * that a later phase has to carry over unchanged when it copies the form.
+ */
+export const FORM_NOTES = {
+  shared: 'This graphic is drawn more than once on the page, so a change would have to copy it first.',
+  group: 'This graphic is a transparency group, composited as one piece.',
+  clipped: 'This graphic is drawn through a clipping shape.',
+  transparent: 'This graphic is drawn with an opacity or blend mode set.',
+  nested: 'This graphic draws further graphics of its own.',
+};
+
+/**
+ * Links each form occurrence to the one that draws it, counts how often each XObject is used on the
+ * page, gathers the shows drawn directly by each occurrence, and works out what stands in the way of
+ * ever rewriting text inside it. Recording only: `safety.safe` says an occurrence is worth checking
+ * further, never that anything is editable.
+ */
+function finishForms(out) {
+  const byIndex = out.forms;
+  const uses = new Map();
+  for (const f of byIndex) uses.set(f.key, (uses.get(f.key) ?? 0) + 1);
+  for (const f of byIndex) {
+    f.uses = uses.get(f.key) ?? 1;
+    const chain = [];
+    for (let at = f.parent, guard = 0; at !== null && guard <= MAX_FORM_DEPTH; at = byIndex[at]?.parent ?? null, guard++) {
+      if (byIndex[at] === undefined) break;
+      chain.unshift(at);
+    }
+    f.ancestors = chain;
+    f.root = chain.length ? chain[0] : f.index;
+  }
+  for (const show of out.shows) {
+    const f = show.form ? byIndex[show.form.occurrence] : null;
+    if (!f) continue;
+    f.shows.push(show.index);
+    f.glyphs += show.glyphs.length;
+  }
+  const hasChildren = new Set(byIndex.map((f) => f.parent).filter((i) => i !== null));
+  for (const f of byIndex) f.safety = safetyOf(f, hasChildren.has(f.index));
+}
+
+/**
+ * The blockers and notes of one occurrence, as `{ blockers, notes, safe }`. `safe` only means the
+ * occurrence is one whose text is worth cross-checking; editability is decided elsewhere, and
+ * nothing here removes a refusal.
+ */
+function safetyOf(f, children) {
+  const blockers = [];
+  if (f.depth !== 1 || f.stream !== 'page') blockers.push('depth');
+  if (f.error || f.content.tooDeep || (!f.content.entered && !f.content.recursive)) blockers.push('unreadable');
+  if (f.content.recursive) blockers.push('recursive');
+  if (f.content.tainted || f.content.unbalanced || f.content.openStates !== 0 || f.content.openText) blockers.push('structure');
+  if (!f.ownResources) blockers.push('inherited-resources');
+  if (f.oc) blockers.push('layer');
+  if (f.softMask) blockers.push('soft-mask');
+  const notes = [];
+  if (f.uses > 1) notes.push('shared');
+  if (f.group) notes.push('group');
+  if (f.clip) notes.push('clipped');
+  if (f.ca !== 1 || f.CA !== 1 || f.blend !== 'Normal') notes.push('transparent');
+  if (children) notes.push('nested');
+  return { blockers, notes, safe: blockers.length === 0 };
 }
 
 /**

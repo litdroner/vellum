@@ -845,6 +845,53 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.doc.catalog.set(PDFName.of('Names'), ctx.obj({ Dests: { Names: [PDFString.of('report'), ctx.obj([first.ref, PDFName.of('XYZ'), 0, 792, 0])] } }));
   });
 
+  // Form XObjects, one occurrence at a time: what the depth-1 form-text work is checked against.
+  // One page draws a clean form, the same form twice, a form that borrows the page's resources, a
+  // form inside a form, a form on a hidden layer, a form under a soft mask, a form whose own stream
+  // is unbalanced, and a form whose text is invisible — beside ordinary page text that stays editable.
+  await build('form-xobjects', async (b) => {
+    const ctx = b.ctx;
+    const H = b.std(StandardFonts.Helvetica);
+    const form = (content, extra = {}) => ctx.register(ctx.flateStream(content, {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 300, 40], Resources: { Font: { H } }, ...extra,
+    }));
+    const on = ctx.register(ctx.obj({ Type: 'OCG', Name: PDFHexString.fromText('Visible layer') }));
+    const off = ctx.register(ctx.obj({ Type: 'OCG', Name: PDFHexString.fromText('Hidden layer') }));
+    b.doc.catalog.set(PDFName.of('OCProperties'), ctx.obj({ OCGs: [on, off], D: { ON: [on], OFF: [off], Order: [on, off] } }));
+    const maskGroup = ctx.register(ctx.flateStream('0.5 g 0 0 612 792 re f', {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 612, 792], Group: { S: 'Transparency', CS: 'DeviceGray' }, Resources: {},
+    }));
+    const In = form(text('H', 12, 4, 10, 'Two forms deep'));
+    const Clean = form(text('H', 12, 4, 10, 'Clean form text'));
+    const Twice = form(text('H', 12, 4, 10, 'Drawn twice'));
+    // No /Resources of its own: it reads the font off whatever draws it.
+    const Borrowed = ctx.register(ctx.flateStream(text('H', 12, 4, 10, 'Borrowed resources'), {
+      Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 300, 40],
+    }));
+    const Nested = form('q 1 0 0 1 0 0 cm /In Do Q', { Resources: { XObject: { In } } });
+    const Layered = form(text('H', 12, 4, 10, 'On a hidden layer'));
+    const Masked = form(text('H', 12, 4, 10, 'Behind a soft mask'));
+    const Unbalanced = form(`q ${text('H', 12, 4, 10, 'Unbalanced form')} Q Q`);
+    const Invisible = form(`BT 3 Tr /H 12 Tf 4 10 Td ${lit(ansi('Invisible in a form'))} Tj ET`);
+    b.page(PageSizes.Letter, [
+      text('H', 14, 72, 740, 'Page text stays editable'),
+      'q 1 0 0 1 72 700 cm /Clean Do Q',
+      'q 1 0 0 1 72 660 cm /Twice Do Q',
+      'q 1 0 0 1 320 660 cm /Twice Do Q',
+      'q 1 0 0 1 72 620 cm /Borrowed Do Q',
+      'q 1 0 0 1 72 580 cm /Nested Do Q',
+      '/OC /L2 BDC q 1 0 0 1 72 540 cm /Layered Do Q EMC',
+      'q /Mask gs 1 0 0 1 72 500 cm /Masked Do Q',
+      'q 1 0 0 1 72 460 cm /Unbalanced Do Q',
+      'q 1 0 0 1 72 420 cm /Invisible Do Q',
+    ].join('\n'), {
+      Font: { H },
+      XObject: { Clean, Twice, Borrowed, Nested, Layered, Masked, Unbalanced, Invisible },
+      Properties: { L2: off },
+      ExtGState: { Mask: { Type: 'ExtGState', SMask: { Type: 'Mask', S: 'Luminosity', G: maskGroup } } },
+    });
+  });
+
   // 10. Encrypted files (RC4 40-bit, the classic standard security handler): an empty user
   // password (opens without asking, still encrypted) and a real password.
   written['encrypted-open'] = writeEncrypted(path.join(outDir, 'encrypted-open.pdf'), '');

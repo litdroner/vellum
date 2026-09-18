@@ -373,6 +373,7 @@ export class PdfSource {
       } else if (subtype === 'Form') {
         const bbox = this.numbers(stream.dict.get(PDFName.of('BBox')));
         const resources = this.lookup(stream.dict.get(PDFName.of('Resources')));
+        const own = resources instanceof PDFDict;
         result = {
           kind: 'form',
           key,
@@ -380,7 +381,11 @@ export class PdfSource {
           matrix: this.numbers(stream.dict.get(PDFName.of('Matrix'))) ?? IDENTITY,
           bbox: bbox?.length === 4 ? [Math.min(bbox[0], bbox[2]), Math.min(bbox[1], bbox[3]), Math.max(bbox[0], bbox[2]), Math.max(bbox[1], bbox[3])] : null,
           // A form without /Resources uses the resources of whatever draws it (older files rely on this).
-          resources: resources instanceof PDFDict ? new Resolver(this, resources, key) : inheritedResources,
+          resources: own ? new Resolver(this, resources, key) : inheritedResources,
+          // Whose resources those are decides whether the form can ever be copied on its own.
+          ownResources: own,
+          // A transparency group: the form is composited as a unit, so what it draws can't be moved out of it.
+          group: this.groupOf(stream.dict),
           ops: null,
           error: null,
         };
@@ -396,6 +401,14 @@ export class PdfSource {
     // Forms without their own resources depend on the caller's, so they aren't shared by key.
     if (result?.kind !== 'form' || result.resources !== inheritedResources) this.xobjects.set(key, result);
     return result;
+  }
+
+  /** A form XObject's /Group subtype ('Transparency'), or null when it has no group at all. */
+  groupOf(dict) {
+    const { PDFName, PDFDict } = this.lib;
+    const group = this.lookup(dict.get(PDFName.of('Group')));
+    if (!(group instanceof PDFDict)) return null;
+    return this.nameOf(group.get(PDFName.of('S'))) ?? 'Transparency';
   }
 
   /** What an image XObject is: size, colour space, and whether it's a stencil mask or has its own transparency. */

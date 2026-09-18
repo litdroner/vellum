@@ -3,14 +3,21 @@
 // from the actual glyph positions the interpreter computed, never from operators alone (one
 // operator can hold several columns; one word can be spread over many operators).
 //
+// Text drawn by a Form XObject is refused for reason 'form' and stays that way. verifyPage() still
+// cross-checks it — glyph for glyph, against what pdf.js drew inside the same form — and records
+// the result on the form occurrence and on the run, so a later phase can start from something that
+// has already been proven rather than from an assumption. Nothing here makes such text editable.
+//
 // Every run starts out not editable ("unverified"). verifyPage() compares each text operator,
 // glyph by glyph, with what pdf.js drew for the same page — character codes, Unicode text and
 // widths — and checks that pdf.js's text positions land on our glyphs. Only runs that agree
 // completely, and that have no other problem, become editable. When in doubt: not editable.
 
 import { lex } from './content/lexer.js';
-import { interpretContent } from './content/interpreter.js';
+import { interpretContent, FORM_BLOCKERS, FORM_NOTES } from './content/interpreter.js';
 import { boundsOf } from './matrix.js';
+
+export { FORM_BLOCKERS, FORM_NOTES };
 
 /** Why a run (or page) can't be edited, in words a person can act on. */
 export const REASONS = {
@@ -199,6 +206,8 @@ function classify(analysis) {
     if (!run.fontName && !run.first.form) why.add('font-resource');
     const font = run.font;
     for (const issue of font?.issues ?? []) if (FONT_REASONS[issue]) why.add(FONT_REASONS[issue]);
+    run.form = runForm(analysis, run);
+    run.formVerdict = null; // filled by verifyPage(); 'form' stays a refusal either way
     for (const si of run.shows) {
       const s = shows[si];
       if (s.form) why.add('form');
@@ -227,6 +236,32 @@ function classify(analysis) {
 }
 
 const inside = (b, c, tol) => b[0] >= c[0] - tol && b[1] >= c[1] - tol && b[2] <= c[2] + tol && b[3] <= c[3] + tol;
+
+/**
+ * Which Form XObject occurrence draws a run — `null` for text the page draws itself. A run can only
+ * ever hold shows from one form (the form is part of its style key), but the same form drawn twice
+ * in the same place could still fold two occurrences into one run, and that run belongs to neither:
+ * `ambiguous` says so, and leaves `occurrence` null.
+ */
+function runForm(analysis, run) {
+  const seen = [];
+  for (const si of run.shows) {
+    const at = analysis.shows[si].form?.occurrence;
+    if (at !== undefined && at !== null && !seen.includes(at)) seen.push(at);
+  }
+  if (!seen.length) return null;
+  const record = analysis.forms[seen[0]] ?? null;
+  const single = seen.length === 1;
+  return {
+    key: record?.key ?? null,
+    name: record?.name ?? null,
+    occurrence: single ? seen[0] : null,
+    occurrences: seen,
+    root: single ? record?.root ?? null : null,
+    depth: single ? record?.depth ?? null : null,
+    ambiguous: !single,
+  };
+}
 
 /** Runs drawn twice on top of each other (fake bold, shadows): editing one copy would look wrong. */
 function markOverlaps(runs) {
@@ -278,6 +313,10 @@ function summarize(analysis) {
   return {
     kind, runs: analysis.runs.length, editable: analysis.runs.filter((r) => r.editable).length,
     visibleGlyphs: visible, invisibleGlyphs: invisible, formGlyphs: inForms, imageCoverage,
+    // Form XObjects drawn by the page itself, and how many of those hold text that has been
+    // cross-checked and could be rewritten once form editing exists. None of them is editable now.
+    forms: analysis.forms.length,
+    formCandidates: analysis.forms.filter((f) => f.verification?.candidate).length,
   };
 }
 
@@ -292,7 +331,8 @@ function summarize(analysis) {
  */
 export function verifyPage(analysis, { operatorList, textContent, OPS }) {
   if (analysis.summary.kind === 'unreadable') return analysis;
-  const theirs = topLevelShows(operatorList, OPS);
+  const drawn = pdfjsShows(operatorList, OPS);
+  const theirs = topLevelShows(drawn);
   // pdf.js skips text drawn with no font selected; so do we here.
   const ours = analysis.shows.filter((s) => !s.form && s.font);
   const verdicts = new Map();
@@ -301,6 +341,7 @@ export function verifyPage(analysis, { operatorList, textContent, OPS }) {
   } else {
     ours.forEach((s, k) => verdicts.set(s.index, compareShow(s, theirs[k])));
   }
+  const inForm = verifyInForms(analysis, drawn);
   const misplaced = positionMismatches(analysis, textContent);
 
   for (const run of analysis.runs) {
@@ -315,13 +356,16 @@ export function verifyPage(analysis, { operatorList, textContent, OPS }) {
     if (misplaced.some((p) => containsPoint(run, p))) why.add('position');
     run.editable = why.size === 0;
   }
+  // Only once every run's reasons are settled: the form verdict quotes what is left besides 'form'.
+  for (const run of analysis.runs) run.formVerdict = run.form ? formVerdictOf(analysis, run, inForm) : null;
+  for (const form of analysis.forms) form.verification = verificationOf(analysis, form);
   analysis.verified = true;
   analysis.summary = summarize(analysis);
   return analysis;
 }
 
-/** pdf.js's showText operations for the page itself (not inside forms or annotations). */
-function topLevelShows({ fnArray, argsArray }, OPS) {
+/** Every pdf.js showText operation outside an annotation, with the form nesting it was drawn at. */
+function pdfjsShows({ fnArray, argsArray }, OPS) {
   const out = [];
   let forms = 0;
   let annots = 0;
@@ -331,13 +375,93 @@ function topLevelShows({ fnArray, argsArray }, OPS) {
     else if (fn === OPS.paintFormXObjectEnd) forms--;
     else if (fn === OPS.beginAnnotation) annots++;
     else if (fn === OPS.endAnnotation) annots--;
-    else if (fn === OPS.showText && forms === 0 && annots === 0) out.push(argsArray[i][0]);
+    else if (fn === OPS.showText && annots === 0) out.push({ depth: forms, glyphs: argsArray[i][0] });
   }
   return out;
 }
 
-/** true when pdf.js drew exactly these glyphs and spacing; otherwise the reason it didn't. */
-function compareShow(show, theirs) {
+/** pdf.js's showText operations for the page itself (not inside forms or annotations). */
+const topLevelShows = (drawn) => drawn.filter((d) => d.depth === 0).map((d) => d.glyphs);
+
+/**
+ * The same glyph-for-glyph cross-check, for the text Form XObjects draw. Our interpreter follows a
+ * form where the `Do` stands and pdf.js writes the form's operators out in the same place, so the
+ * two sequences line up one to one; a form pdf.js didn't follow (or followed differently) changes
+ * the count, and then none of this page's form text is called verified.
+ *
+ * Unlike the top-level check this teaches the font models nothing. What a font may be written with
+ * decides what page text can be edited, and no proof taken from inside a form may widen that until
+ * form text is editable in its own right.
+ */
+function verifyInForms(analysis, drawn) {
+  const ours = analysis.shows.filter((s) => s.form && s.font);
+  const theirs = drawn.filter((d) => d.depth > 0);
+  const verdicts = new Map();
+  if (ours.length !== theirs.length) {
+    for (const s of ours) verdicts.set(s.index, 'mismatch');
+    return verdicts;
+  }
+  ours.forEach((s, k) => {
+    const t = theirs[k];
+    verdicts.set(s.index, t.depth === s.form.depth ? compareShow(s, t.glyphs, { teach: false }) : 'mismatch');
+  });
+  return verdicts;
+}
+
+/**
+ * What the cross-check says about one run of form text, in two parts that are worth keeping apart:
+ * `reasons` is what would still refuse this run if 'form' were lifted (its glyphs disagreeing with
+ * pdf.js, or anything else classify() found), and `blockers` is what the form it is drawn by stands
+ * in the way of. `textVerified` covers the first, `verified` both. Neither is permission to edit.
+ */
+function formVerdictOf(analysis, run, inForm) {
+  const reasons = new Set();
+  for (const r of run.reasons) if (r !== 'form') reasons.add(r);
+  for (const si of run.shows) {
+    const verdict = inForm.get(si);
+    if (verdict !== true) reasons.add(verdict ?? 'mismatch');
+  }
+  const occurrence = run.form.occurrence === null ? null : analysis.forms[run.form.occurrence] ?? null;
+  // A run folded from two draws of one form belongs to neither, so nothing about it is proven.
+  const textVerified = reasons.size === 0 && !run.form.ambiguous;
+  return {
+    occurrence: run.form.occurrence, root: run.form.root, key: run.form.key,
+    ambiguous: run.form.ambiguous,
+    blockers: occurrence ? [...occurrence.safety.blockers] : ['unreadable'],
+    reasons: [...reasons].sort(),
+    textVerified,
+    verified: textVerified && Boolean(occurrence?.safety.safe),
+  };
+}
+
+/**
+ * What one form occurrence draws, once the page has been cross-checked: the text of the occurrence
+ * itself and of every form it draws in turn, since rewriting it would have to account for all of it.
+ * `state` is 'empty', 'verified' or 'refused'; `candidate` additionally requires the occurrence to
+ * be structurally safe. A candidate is not editable — this phase only records that it could be.
+ */
+function verificationOf(analysis, form) {
+  const holds = (i) => i === form.index || Boolean(analysis.forms[i]?.ancestors.includes(form.index));
+  const within = analysis.runs.filter((r) => r.form?.occurrences.some(holds));
+  const reasons = new Set();
+  let verified = 0;
+  for (const run of within) {
+    if (run.formVerdict?.textVerified) verified++;
+    else for (const r of run.formVerdict?.reasons ?? ['unverified']) reasons.add(r);
+  }
+  const state = within.length === 0 ? 'empty' : verified === within.length ? 'verified' : 'refused';
+  return {
+    state, runs: within.length, verified, reasons: [...reasons].sort(),
+    candidate: state === 'verified' && form.safety.safe,
+  };
+}
+
+/**
+ * true when pdf.js drew exactly these glyphs and spacing; otherwise the reason it didn't. `teach`
+ * off compares just as closely but leaves the font models alone — what a font is proven to be
+ * writable with must come from page text only, until form text is editable in its own right.
+ */
+function compareShow(show, theirs, { teach = true } = {}) {
   const ourGlyphs = show.glyphs;
   const ourNumbers = show.elements.filter((e) => typeof e === 'number');
   const theirGlyphs = [];
@@ -357,16 +481,16 @@ function compareShow(show, theirs) {
       return;
     }
     if (g.unicode === null || g.unicode !== t.unicode) {
-      font.noteConflict(g.code);
+      if (teach) font.noteConflict(g.code);
       if (verdict === true) verdict = g.unicode === null ? 'decode' : 'mismatch';
       return;
     }
     if (g.width === null || Math.abs(g.width - t.width) > 0.5) {
-      font.noteConflict(g.code);
+      if (teach) font.noteConflict(g.code);
       if (verdict === true) verdict = 'metrics';
       return;
     }
-    font.noteVerified(g.code, { unicode: g.unicode, width: g.width, inFont: t.isInFont, byteLength: g.byteLength });
+    if (teach) font.noteVerified(g.code, { unicode: g.unicode, width: g.width, inFont: t.isInFont, byteLength: g.byteLength });
   });
   return verdict;
 }
@@ -422,4 +546,16 @@ export function runGlyphs(analysis, run) {
 /** Human-readable reasons a run isn't editable (empty when it is). */
 export function explainRun(run) {
   return [...run.reasons].map((r) => REASONS[r] ?? r);
+}
+
+/**
+ * Why the text a Form XObject occurrence draws couldn't be rewritten, in words a person can act on:
+ * what the form itself is in the way of, then what its text is. Empty means the cross-check found
+ * nothing against it — which is not the same as it being editable; it isn't, yet.
+ */
+export function explainForm(form) {
+  return [
+    ...(form.safety?.blockers ?? []).map((b) => FORM_BLOCKERS[b] ?? b),
+    ...(form.verification?.reasons ?? []).map((r) => REASONS[r] ?? r),
+  ];
 }
