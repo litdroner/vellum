@@ -1,5 +1,5 @@
 {
-  "comment": "OCR language packs Vellum can download (see Services/OcrLanguages.cs). English is bundled in vendor/tesseract. Each pack is the tesseract.js 4.0.0_best_int model, from the same source as the bundled English one, pinned to one commit; it is checked against its size and SHA-256 before it can be used. Only Latin-script languages whose letters the OCR text layer can write (Helvetica, WinAnsi; see editing/objects/ocr-text.js).",
+  "comment": "OCR language packs Vellum can download (see Services/OcrLanguages.cs). English is bundled in vendor/tesseract. Each pack is the tesseract.js 4.0.0_best_int model, from the same source as the bundled English one, pinned to one commit; it is checked against its size and SHA-256 before it can be used. Latin-script languages are written in the OCR text layer in Helvetica (WinAnsi); a language of another script only once editing/objects/ocr-text.js (UNICODE_FONTS) names the embedded font it is written in.",
   "source": "https://raw.githubusercontent.com/naptha/tessdata/806cd9adc8c6e8abc11c782db1818c990576bebc/4.0.0_best_int/",
   "builtIn": { "code": "eng", "name": "English" },
   "packs": [
@@ -11,6 +11,7 @@
     { "code": "ita", "name": "Italian", "size": 1660998, "sha256": "f702fcfad297ce028ede3626d1467b67939f23ff23595f9badd54681cf25a4d3" },
     { "code": "nor", "name": "Norwegian", "size": 2490241, "sha256": "6c5d91a5b684da387bfcf16b38bae8d94771812dc9ef706b413c728ca1d37c93" },
     { "code": "por", "name": "Portuguese", "size": 1392239, "sha256": "dacebc1386ddaaf8389f81094236cca0d690897cde693d48cbdaa881c86e2b4c" },
+    { "code": "rus", "name": "Russian", "size": 2679598, "sha256": "f51f5edc992249ff9b70a227b22f242dfa47b2b1bbc7ae0ea74908640c101f6a" },
     { "code": "spa", "name": "Spanish", "size": 2100190, "sha256": "40be52f97b5d4eb7460073dc1f94cd546b27150333c0bf854ed7e7132db6bceb" },
     { "code": "swe", "name": "Swedish", "size": 2503095, "sha256": "b60d9fea7e570d11d6fdf26c8d0ef1d63b49222313773ce66777ed08fa20dc5a" }
   ]

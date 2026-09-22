@@ -15,6 +15,7 @@ const L = await webModule('ocr/languages.js');
 const LETTERS = {
   dan: 'æøåÆØÅ', nld: 'ëïéèĳ', fin: 'äöåÄÖÅ', fra: 'àâæçéèêëîïôœùûüÿÀÇÉÈŒ', deu: 'äöüßÄÖÜ',
   ita: 'àèéìíîòóùú', nor: 'æøåÆØÅ', por: 'áâãàçéêíóôõúÁÇÃ', spa: 'áéíñóúüÑ¿¡', swe: 'åäöÅÄÖ',
+  rus: 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ',
 };
 
 test('the language list is pinned, well formed and leaves English to the bundle', () => {
@@ -34,8 +35,20 @@ test('the language list is pinned, well formed and leaves English to the bundle'
 
 test('every offered language can be written by the OCR text layer', async () => {
   const lib = await loadPdfLib();
-  const { encodeWord } = await webModule('editing/objects/ocr-text.js');
+  const { encodeWord, unicodeFontOf } = await webModule('editing/objects/ocr-text.js');
+  const { loadFontkit } = await webModule('editing/objects/font-set.js');
+  const { BUNDLED_FONTS } = await webModule('editing/objects/bundled-fonts.js');
+  const fontkit = await loadFontkit();
   for (const [code, letters] of Object.entries(LETTERS)) {
+    const key = unicodeFontOf(code);
+    if (key) {
+      // Written in an embedded bundled font: it has a glyph for every letter (tests/editing/ocr-text.test.mjs saves it).
+      const [, id, style] = key.match(/^bundled:([a-z0-9-]+)\/([a-z-]+)$/);
+      const file = BUNDLED_FONTS.find((f) => f.id === id).faces[style];
+      const font = fontkit.create(new Uint8Array(await readFile(new URL(`../../src/Vellum/web/fonts/document/${file}`, import.meta.url))));
+      for (const ch of letters) assert.ok(font.hasGlyphForCodePoint(ch.codePointAt(0)), `${code}: “${ch}” has a glyph`);
+      continue;
+    }
     for (const ch of letters.replace('ĳ', '')) {
       const { shown } = encodeWord(lib, ch);
       assert.equal(shown, ch, `${code}: “${ch}” survives`);

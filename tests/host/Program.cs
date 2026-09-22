@@ -108,7 +108,7 @@ Check("leftovers of an interrupted download are cleaned up", !Directory.Enumerat
 
 // The real list shipped with Vellum.
 var real = new OcrLanguages(data, Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Vellum", "web", "js", "ocr", "languages.json"), http);
-Check("the shipped list loads every pack", real.Packs.Count == 10, real.Packs.Count.ToString());
+Check("the shipped list loads every pack", real.Packs.Count == 11, real.Packs.Count.ToString());
 Check("the shipped list's GitHub source is trusted", await Throws(() => real.InstallAsync(real.Packs[0], progress, new CancellationToken(true))) is OperationCanceledException);
 
 // Each file remembers its layout (single page / continuous, two-page spread), kept across restarts.
