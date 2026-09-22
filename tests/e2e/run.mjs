@@ -11,6 +11,7 @@
 // copy). The app runs with a throwaway data folder (VELLUM_DATA_DIR, honoured by Debug builds only),
 // so a person's settings, recent files and WebView2 profile are never touched, and with automatic
 // update checks off. Everything is written to a temp folder, printed at the start.
+// Before a suite runs, its window is moved wholly onto one monitor (see window.mjs).
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -20,6 +21,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeFixtures } from '../editing/fixtures.mjs';
 import { connect, sleep } from '../../tools/cdp-client.mjs';
 import { createContext } from './lib.mjs';
+import { placeOnOneMonitor } from './window.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EXE = path.join(ROOT, 'src', 'Vellum', 'bin', 'Debug', 'net10.0-windows', 'Vellum.exe');
@@ -89,6 +91,8 @@ for (const name of suites) {
     const c = await connect({ timeoutMs: 60000 });
     const t = createContext({ c, dir, files, results });
     if (!(await t.waitFor('Boolean(window.__vellum && __vellum.app && __vellum.ui)', 30000))) throw new Error('the app didn’t start');
+    console.log(`Window: ${placeOnOneMonitor(app.pid, dir)}`);
+    await viewportSettled(c);
     await suite.run(t);
     c.close();
   } catch (err) {
@@ -104,6 +108,18 @@ for (const name of suites) {
   const failed = results.filter((r) => !r.ok).length;
   report.push({ suite: name, passed: results.length - failed, failed, results });
   console.log(`--- ${name}: ${failed ? 'FAIL' : 'PASS'} (${results.length - failed}/${results.length})`);
+}
+
+/** Waits until the page's size and pixel ratio stop changing after the window was moved (up to 5 s). */
+async function viewportSettled(c) {
+  let last = '';
+  let same = 0;
+  for (const end = Date.now() + 5000; Date.now() < end && same < 3;) {
+    const now = await c.evaluate('`${innerWidth}x${innerHeight}@${devicePixelRatio}`').catch(() => '');
+    same = now && now === last ? same + 1 : 0;
+    last = now;
+    await sleep(150);
+  }
 }
 
 fs.writeFileSync(path.join(runDir, 'report.json'), JSON.stringify(report, null, 2));
