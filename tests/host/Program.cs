@@ -3,6 +3,7 @@
 // that changed on disk is refused and removed; packs can be removed. Downloads come from a fake handler.
 // Recent files (src/Vellum/Services/RecentFiles.cs): each file remembers its reading layout across restarts.
 // Document history (src/Vellum/Services/DocumentHistory.cs): Save As moves a document's history to its new path.
+// Document collections (src/Vellum/Services/DocumentCollections.cs): named lists of paths that persist; PDFs untouched.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -129,6 +130,41 @@ reopened.UpdatePosition(A, 3, "page-width", "single", false);
 Check("changing the layout replaces the remembered one", new RecentFiles(recentFolder).Find(A) is { Spread: false, ViewMode: "single" });
 File.WriteAllText(Path.Combine(recentFolder, "recent.json"), $"[{{\"path\":{System.Text.Json.JsonSerializer.Serialize(A)},\"page\":2,\"viewMode\":\"continuous\"}}]");
 Check("a list saved before spreads were remembered loads with spread unset", new RecentFiles(recentFolder).Find(A) is { Spread: null, ViewMode: "continuous", Page: 2 });
+
+// Document collections: named lists of file paths, kept across restarts; the PDFs themselves are never touched.
+var collFolder = Path.Combine(root, "collections-data");
+var collDocs = Path.Combine(root, "collection-docs");
+Directory.CreateDirectory(collDocs);
+string P1 = Path.Combine(collDocs, "one.pdf"), P2 = Path.Combine(collDocs, "two.pdf"), Gone = Path.Combine(collDocs, "gone.pdf");
+File.WriteAllBytes(P1, [0x25, 0x50, 0x44, 0x46, 1]); File.WriteAllBytes(P2, [0x25, 0x50, 0x44, 0x46, 2]); File.WriteAllBytes(Gone, [0x25, 0x50, 0x44, 0x46, 3]);
+var colls = new DocumentCollections(collFolder);
+var work = colls.Create("  Work   papers ");
+Check("a collection is created with a clean name", colls.All is [{ Name: "Work papers" }] && work.Id.Length > 0);
+Check("a second collection with the same name is refused", Throws(() => { colls.Create("work PAPERS"); return Task.CompletedTask; }).Result is InvalidOperationException);
+Check("an empty name is refused", Throws(() => { colls.Create("   "); return Task.CompletedTask; }).Result is ArgumentException);
+Check("files are added", colls.Add(work.Id, [P1, P2, Gone]) == 3 && colls.All[0].Paths.SequenceEqual([P1, P2, Gone]));
+Check("a file already in the collection isn't added twice (any case)", colls.Add(work.Id, [P1.ToUpperInvariant(), P2]) == 0 && colls.All[0].Paths.Count == 3);
+Check("membership is looked up by path", colls.Contains(P2.ToUpperInvariant()) && !colls.Contains(Path.Combine(collDocs, "other.pdf")));
+colls.Remove(work.Id, P2);
+Check("a file is removed from the collection", colls.All[0].Paths.SequenceEqual([P1, Gone]) && !colls.Contains(P2));
+Check("… and the file itself is still there, unchanged", File.Exists(P2) && File.ReadAllBytes(P2)[4] == 2);
+File.Delete(Gone);
+var reloaded = new DocumentCollections(collFolder);
+Check("collections and membership survive a restart", reloaded.All is [{ Name: "Work papers" } c] && c.Id == work.Id && c.Paths.SequenceEqual([P1, Gone]));
+Check("a file that's gone stays listed (shown as missing), not silently removed", reloaded.Contains(Gone) && !File.Exists(Gone));
+var reading = reloaded.Create("Reading");
+reloaded.Add(reading.Id, [P1]);
+Check("one file can be in several collections", reloaded.All.Count(x => x.Paths.Contains(P1)) == 2);
+reloaded.Rename(work.Id, "Archive");
+Check("renaming keeps the documents", new DocumentCollections(collFolder).All.First(x => x.Id == work.Id) is { Name: "Archive" } r && r.Paths.SequenceEqual([P1, Gone]));
+Check("renaming to another collection's name is refused", Throws(() => { reloaded.Rename(work.Id, "reading"); return Task.CompletedTask; }).Result is InvalidOperationException);
+reloaded.Delete(work.Id);
+var afterDelete = new DocumentCollections(collFolder);
+Check("deleting a collection removes only that collection", afterDelete.All is [{ Name: "Reading" } left] && left.Paths.SequenceEqual([P1]));
+Check("… and leaves every PDF where it was, unchanged", File.ReadAllBytes(P1)[4] == 1 && File.ReadAllBytes(P2)[4] == 2 && Directory.GetFiles(collDocs).Length == 2);
+Check("a change to a deleted collection is refused", Throws(() => { afterDelete.Add(work.Id, [P2]); return Task.CompletedTask; }).Result is InvalidOperationException);
+File.WriteAllText(Path.Combine(collFolder, "collections.json"), "{ not json");
+Check("a damaged file loads as no collections and is kept aside", new DocumentCollections(collFolder).All.Count == 0 && File.Exists(Path.Combine(collFolder, "collections.json.bad")));
 
 // Document history follows the document to a new path (Save As), unchanged; conflicts are refused.
 var docs = Path.Combine(root, "docs");

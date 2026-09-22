@@ -3,7 +3,7 @@
 //   node tests/e2e/run.mjs [--no-build] [suite ...]
 //
 // Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection, manipulation,
-// multi-select, page-changes, copy-paste, page-text-font, form-text, forms, forms-import, signature, redaction, page-stamps, find-replace, compare, history, history-storage, structure, semantic-search, research, edit-flicker, spread, new-text-ux, health, accessibility by default;
+// multi-select, page-changes, copy-paste, page-text-font, form-text, forms, forms-import, signature, redaction, page-stamps, find-replace, compare, history, history-storage, collections, structure, semantic-search, research, edit-flicker, spread, new-text-ux, health, accessibility by default;
 // ocr, performance, updates and history-move (it fills in the real Save dialog) only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed;
 // updates needs Inno Setup 6). A suite may export prepare({ dir }) returning { env, exe } (extra environment, another build to start), and cleanup().
 //
@@ -25,7 +25,7 @@ import { placeOnOneMonitor } from './window.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EXE = path.join(ROOT, 'src', 'Vellum', 'bin', 'Debug', 'net10.0-windows', 'Vellum.exe');
-const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0', 'selection', 'manipulation', 'multi-select', 'page-changes', 'copy-paste', 'page-text-font', 'form-text', 'forms', 'forms-import', 'signature', 'redaction', 'page-stamps', 'find-replace', 'compare', 'history', 'history-storage', 'structure', 'semantic-search', 'research', 'edit-flicker', 'spread', 'new-text-ux', 'health', 'accessibility'];
+const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0', 'selection', 'manipulation', 'multi-select', 'page-changes', 'copy-paste', 'page-text-font', 'form-text', 'forms', 'forms-import', 'signature', 'redaction', 'page-stamps', 'find-replace', 'compare', 'history', 'history-storage', 'collections', 'structure', 'semantic-search', 'research', 'edit-flicker', 'spread', 'new-text-ux', 'health', 'accessibility'];
 
 const args = process.argv.slice(2);
 const named = args.filter((a) => !a.startsWith('--'));

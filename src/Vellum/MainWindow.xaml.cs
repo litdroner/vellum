@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private string? _updateFailed;
     private readonly RecentFiles _recent = new(DataFolder);
     private readonly DocumentHistory _history = new(DataFolder);
+    private readonly DocumentCollections _collections = new(DataFolder);
     private readonly AppSettings _settings = AppSettings.Load(DataFolder);
     private AppResourceServer? _server;
     private BridgeHost? _bridge;
@@ -299,6 +300,60 @@ public partial class MainWindow : Window
         bridge.Register("recent.clear", _ =>
         {
             _recent.Clear();
+            return Done();
+        });
+
+        // ---- collections: named lists of file paths; no PDF is copied, moved or changed ----
+
+        bridge.Register("collections.list", _ => Done(new
+        {
+            collections = _collections.All.Select(c => new
+            {
+                c.Id,
+                c.Name,
+                c.CreatedAt,
+                documents = c.Paths.Select(p =>
+                {
+                    var exists = File.Exists(p);
+                    return new { path = p, exists, pages = _recent.Find(p)?.Pages, cover = exists ? _recent.CoverDataUrl(p) : null };
+                }).ToArray(),
+            }).ToArray(),
+        }));
+        bridge.Register("collections.create", request => Done(new { id = _collections.Create(RequiredString(request, "name")).Id }));
+        bridge.Register("collections.rename", request =>
+        {
+            _collections.Rename(RequiredString(request, "id"), RequiredString(request, "name"));
+            return Done();
+        });
+        bridge.Register("collections.delete", request =>
+        {
+            _collections.Delete(RequiredString(request, "id"));
+            return Done();
+        });
+        // Adds a file the page already knows: one in the recent list or open in Vellum.
+        bridge.Register("collections.add", request =>
+        {
+            var path = RequiredString(request, "path");
+            if (_recent.Find(path) is null && !_server!.IsWritable(path)) throw new InvalidOperationException("That file isn't in the recent list or open in Vellum.");
+            return Done(new { added = _collections.Add(RequiredString(request, "id"), [path]) });
+        });
+        // Adds files chosen in the Open dialog (none are opened).
+        bridge.Register("collections.addDialog", request =>
+        {
+            var id = RequiredString(request, "id");
+            var dialog = new OpenFileDialog
+            {
+                Title = "Add PDFs to the collection",
+                Filter = "PDF documents (*.pdf)|*.pdf|All files (*.*)|*.*",
+                Multiselect = true,
+                InitialDirectory = LastFolder(),
+            };
+            if (dialog.ShowDialog(this) != true) return Done(new { added = 0, chosen = 0 });
+            return Done(new { added = _collections.Add(id, dialog.FileNames), chosen = dialog.FileNames.Length });
+        });
+        bridge.Register("collections.remove", request =>
+        {
+            _collections.Remove(RequiredString(request, "id"), RequiredString(request, "path"));
             return Done();
         });
 

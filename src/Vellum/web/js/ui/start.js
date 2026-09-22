@@ -1,9 +1,10 @@
 import { h, timeAgo } from '../dom.js';
 import { icon } from '../icons.js';
-import { showDialog } from './dialogs.js';
+import { showDialog, toast } from './dialogs.js';
 
 // The home screen, shown when no document is open: a greeting, a large Open card and the documents
-// opened recently, each with a picture of its first page (captured when it was last open).
+// opened recently, each with a picture of its first page (captured when it was last open), then the
+// person's collections: named lists of documents (only their paths; no file is copied, moved or changed).
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 const fileName = (path) => path.slice(path.lastIndexOf('\\') + 1);
@@ -77,6 +78,12 @@ export class StartScreen {
         h('h2', { text: 'Recent documents' }),
         h('button', { class: 'link-btn', onClick: () => this.#clear() }, 'Clear list')),
       this.grid);
+    this.collectionList = h('div', { class: 'collection-list' });
+    this.collections = h('section', { class: 'recent collections', 'aria-label': 'Collections' },
+      h('div', { class: 'recent-head' },
+        h('h2', { text: 'Collections' }),
+        h('button', { class: 'link-btn', onClick: () => this.#create() }, 'New collection')),
+      this.collectionList);
     this.el = h('div', { class: 'start ui' },
       h('div', { class: 'start-inner' },
         h('div', { class: 'home-top' },
@@ -91,7 +98,8 @@ export class StartScreen {
                 h('span', { class: 'open-hint', text: 'Drag and drop files anywhere, or click to browse' })),
               h('kbd', { text: 'Ctrl+O' }))),
           h('div', { class: 'home-art', html: ART })),
-        this.recent));
+        this.recent,
+        this.collections));
     root.append(this.el);
     this.#renderGreeting();
   }
@@ -107,7 +115,68 @@ export class StartScreen {
     let entries = [];
     try { ({ entries } = await this.bridge.request('recent.list')); } catch { /* no host (dev) */ }
     this.recent.hidden = entries.length === 0;
-    this.grid.replaceChildren(...entries.slice(0, 12).map((e, i) => this.#card(e, i)));
+    this.grid.replaceChildren(...entries.slice(0, 12).map((e, i) => this.#card(e, i, {
+      label: 'Remove from list', from: 'recent documents',
+      remove: async () => { await this.bridge.request('recent.remove', { path: e.path }); this.refresh(); },
+    })));
+    await this.#renderCollections();
+  }
+
+  async #renderCollections() {
+    let collections = [];
+    try { ({ collections } = await this.bridge.request('collections.list')); } catch { /* no host (dev) */ }
+    this.collectionList.replaceChildren(...(collections.length
+      ? collections.map((c) => this.#collection(c))
+      : [h('p', { class: 'collection-empty', text: 'Group the documents you use together. The files stay where they are.' })]));
+  }
+
+  #collection(c) {
+    const count = c.documents.length;
+    const missing = c.documents.filter((d) => !d.exists).length;
+    const summary = [count ? `${count} document${count === 1 ? '' : 's'}` : 'Empty', missing ? `${missing} not found` : null].filter(Boolean).join(' · ');
+    return h('div', { class: 'collection', 'data-id': c.id },
+      h('div', { class: 'collection-head' },
+        h('h3', { class: 'collection-name', text: c.name }),
+        h('span', { class: 'collection-meta', text: summary }),
+        h('button', { class: 'link-btn', 'aria-label': `Add PDFs to ${c.name}`, onClick: () => this.#add(c) }, 'Add PDFs…'),
+        h('button', { class: 'link-btn', 'aria-label': `Rename ${c.name}`, onClick: () => this.#rename(c) }, 'Rename'),
+        h('button', { class: 'link-btn danger', 'aria-label': `Delete ${c.name}`, onClick: () => this.#delete(c) }, 'Delete')),
+      count ? h('div', { class: 'recent-grid', role: 'list', 'aria-label': c.name },
+        ...c.documents.map((d, i) => this.#card(d, i, {
+          label: 'Remove from collection', from: c.name,
+          remove: () => this.#change(() => this.bridge.request('collections.remove', { id: c.id, path: d.path })),
+        }))) : null);
+  }
+
+  /** Makes a collection change, says why when it's refused, and shows the result. */
+  async #change(request) {
+    try { return await request(); } catch (err) { toast(err.message, { kind: 'error' }); return null; } finally { await this.#renderCollections(); }
+  }
+
+  async #create() {
+    const name = await askName({ title: 'New collection', action: 'Create' });
+    if (name) await this.#change(() => this.bridge.request('collections.create', { name }));
+  }
+
+  async #rename(c) {
+    const name = await askName({ title: 'Rename collection', action: 'Rename', value: c.name });
+    if (name && name !== c.name) await this.#change(() => this.bridge.request('collections.rename', { id: c.id, name }));
+  }
+
+  async #delete(c) {
+    const choice = await showDialog({
+      title: `Delete “${c.name}”?`,
+      message: 'The collection is removed. The documents in it aren’t touched.',
+      iconName: 'trash-2',
+      buttons: [{ id: 'cancel', label: 'Cancel', primary: true }, { id: 'delete', label: 'Delete collection' }],
+    });
+    if (choice === 'delete') await this.#change(() => this.bridge.request('collections.delete', { id: c.id }));
+  }
+
+  async #add(c) {
+    const result = await this.#change(() => this.bridge.request('collections.addDialog', { id: c.id }));
+    const already = result ? result.chosen - result.added : 0;
+    if (already > 0) toast(`${already === 1 ? 'One document was' : `${already} documents were`} already in “${c.name}”`);
   }
 
   #renderGreeting() {
@@ -115,10 +184,10 @@ export class StartScreen {
     this.greeting.textContent = `${greeting()}${this.name ? `, ${this.name}` : ''}.`;
   }
 
-  #card(entry, index) {
+  #card(entry, index, { label, from, remove }) {
     const name = fileName(entry.path);
     const meta = entry.exists
-      ? [entry.pages ? `${entry.pages} page${entry.pages === 1 ? '' : 's'}` : null, timeAgo(entry.openedAt, { compact: true })].filter(Boolean).join(' · ')
+      ? [entry.pages ? `${entry.pages} page${entry.pages === 1 ? '' : 's'}` : null, entry.openedAt ? timeAgo(entry.openedAt, { compact: true }) : null].filter(Boolean).join(' · ') || folderOf(entry.path)
       : 'File not found';
     const cover = entry.exists && entry.cover
       ? h('img', { src: entry.cover, alt: '', draggable: 'false' })
@@ -133,9 +202,9 @@ export class StartScreen {
         h('span', { class: 'recent-name', text: name }),
         h('span', { class: 'recent-meta', text: meta, title: folderOf(entry.path) }))),
       h('button', {
-        class: 'tb-btn small recent-remove', title: 'Remove from list', 'aria-label': `Remove ${name} from recent documents`,
+        class: 'tb-btn small recent-remove', title: label, 'aria-label': `Remove ${name} from ${from}`,
         html: icon('x', 14),
-        onClick: async () => { await this.bridge.request('recent.remove', { path: entry.path }); this.refresh(); },
+        onClick: remove,
       }));
   }
 
@@ -150,4 +219,17 @@ export class StartScreen {
     await this.bridge.request('recent.clear');
     this.refresh();
   }
+}
+
+/** Asks for a collection name. Resolves with the trimmed name, or null when cancelled or left empty. */
+async function askName({ title, action, value = '' }) {
+  const input = h('input', { class: 'field', type: 'text', maxlength: '80', spellcheck: 'false', autocomplete: 'off', placeholder: 'Collection name', 'aria-label': 'Collection name' });
+  input.value = value;
+  const choice = await showDialog({
+    title, content: [input], iconName: 'folder-open',
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: action, primary: true }],
+    onOpen: () => { requestAnimationFrame(() => input.select()); return input; },
+  });
+  const name = input.value.trim();
+  return choice === 'ok' && name ? name : null;
 }
