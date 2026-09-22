@@ -22,7 +22,9 @@ export function h(tag, props = {}, ...children) {
 
 export const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** Windows' setting, or Vellum's own Settings → Reduce motion (themes.js sets data-motion). */
+export const reducedMotion = () => document.documentElement.dataset.motion === 'reduced'
+  || matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function debounce(fn, ms) {
   let timer = 0;

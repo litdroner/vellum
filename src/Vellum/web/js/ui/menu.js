@@ -1,5 +1,6 @@
 import { h, clamp } from '../dom.js';
 import { icon } from '../icons.js';
+import { restoreFocus } from './focus.js';
 
 // Popup menus (context menu, zoom menu). One open at a time.
 // items: [{ label, icon?, swatch?, font?, weight?, italic?, shortcut?, checked?, disabled?, action }] or '-' for a
@@ -10,6 +11,7 @@ let current = null;
 
 export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', className = '' } = {}) {
   closeMenu();
+  const previousFocus = document.activeElement;
   const menu = h('div', { class: `menu ui ${className}`, role: 'menu', tabindex: '-1' });
 
   for (const item of items) {
@@ -73,6 +75,8 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
   const onKey = (e) => {
     const list = buttons();
     const index = list.indexOf(document.activeElement);
+    // Tab leaves the menu from where it was opened, so focus moves on in the page's order.
+    if (e.key === 'Tab') { closeMenu(); return; }
     if (e.key === 'Escape') closeMenu();
     else if (e.key === 'ArrowDown') list[(index + 1) % list.length]?.focus();
     else if (e.key === 'ArrowUp') list[(index - 1 + list.length) % list.length]?.focus();
@@ -94,6 +98,7 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
 
   current = {
     menu,
+    previousFocus,
     cleanup() {
       document.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('blur', onBlur);
@@ -106,7 +111,12 @@ export function openMenu(items, { x = 0, y = 0, anchor = null, align = 'start', 
 
 export function closeMenu() {
   if (!current) return;
+  const { menu, previousFocus } = current;
   current.cleanup();
-  current.menu.remove();
+  // Closed from the keyboard (Esc, Tab, an item): focus goes back to the button or view that opened it.
+  // Closed by a click elsewhere: focus stays where the click put it.
+  const hadFocus = menu.contains(document.activeElement);
+  menu.remove();
   current = null;
+  if (hadFocus) restoreFocus(previousFocus);
 }

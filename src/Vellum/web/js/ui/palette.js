@@ -1,5 +1,6 @@
 import { h, prettyKeys } from '../dom.js';
 import { icon } from '../icons.js';
+import { restoreFocus } from './focus.js';
 
 // The command palette (Ctrl+K): type a few letters of anything Vellum can do, or of a recent file,
 // and press Enter. Items come straight from the command registry (commands.js), so everything the
@@ -111,7 +112,7 @@ export class CommandPalette {
     this.backdrop = null;
     backdrop.classList.remove('open');
     setTimeout(() => backdrop.remove(), 200);
-    this.previousFocus?.focus?.({ preventScroll: true });
+    restoreFocus(this.previousFocus);
   }
 
   #items() {

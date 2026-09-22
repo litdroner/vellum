@@ -1,5 +1,6 @@
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
+import { restoreFocus } from './focus.js';
 
 // Modal dialogs and toasts.
 
@@ -28,7 +29,7 @@ export function showDialog({ title, message, content = [], buttons = [{ id: 'ok'
       backdrop.classList.remove('open');
       backdrop.addEventListener('transitionend', () => backdrop.remove(), { once: true });
       setTimeout(() => backdrop.remove(), 250);
-      previousFocus?.focus?.({ preventScroll: true });
+      restoreFocus(previousFocus);
       resolve(result);
     };
 

@@ -275,6 +275,7 @@ body.maximized #window-edges { display: none; }
 }
 .tab:hover:not(.active) { background: var(--hover); color: var(--ink-2); }
 .tab.active { background: var(--clay); box-shadow: var(--clay-shadow); color: var(--ink); }
+.tab:focus-visible { outline-offset: -2px; } /* inside the strip, which scrolls and would clip it */
 .tab-icon { flex: none; display: grid; place-items: center; width: 16px; color: var(--ink-3); }
 .tab.active .tab-icon { color: var(--accent-ink); }
 .tab-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

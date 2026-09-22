@@ -154,6 +154,7 @@ export class Sidebar {
     this.root.classList.toggle('collapsed', !this.isShown);
     this.root.classList.toggle('overlay', this.narrow.matches);
     this.root.setAttribute('aria-hidden', String(!this.isShown));
+    this.root.inert = !this.isShown; // a hidden sidebar's buttons leave the Tab order too
   }
 }
 
@@ -192,6 +193,7 @@ class OutlinePanel {
       const setOpen = (open) => {
         li.classList.toggle('open', open);
         li.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open ? 'Collapse' : 'Expand');
       };
       if (hasChildren) {
         li.append(this.#list(item.items, depth + 1));

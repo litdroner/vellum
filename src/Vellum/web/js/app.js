@@ -19,6 +19,7 @@ import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
 import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
+import { setFocusFallback } from './ui/focus.js';
 import { TextEditor } from './ui/text-editor.js';
 import { toPdfPoint } from './page-space.js';
 import { createPageActions } from './pages/actions.js';
@@ -398,6 +399,7 @@ const settingsContext = {
 
 // ---- UI --------------------------------------------------------------------------------------
 
+setFocusFallback(() => app.active?.focus());
 ui.titlebar = new TitleBar(document.getElementById('titlebar'), app, { bridge, commands });
 ui.tabs = new TabStrip(ui.titlebar.tabHost, app, { onNew: () => app.activate(null), onClose: (view) => app.requestClose(view) });
 ui.toolbar = new Toolbar(document.getElementById('toolbar'), app, commands);

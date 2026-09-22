@@ -22,6 +22,14 @@ export function comboFromEvent(e) {
   return [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift', key].filter(Boolean).join('+');
 }
 
+// Arrows, Home and End move within an open menu, and within tabs reached from the keyboard; there
+// they aren't page navigation. A tab just clicked with the mouse isn't :focus-visible and leaves them to the page.
+const WIDGET_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']);
+function widgetKeeps(e, combo) {
+  if (!WIDGET_KEYS.has(combo) || !(e.target instanceof Element)) return false;
+  return e.target.closest('.menu') !== null || (e.target.matches('[role="tab"]') && e.target.matches(':focus-visible'));
+}
+
 export function installShortcuts(commands) {
   // Several commands may share a key (Delete: a selected annotation, or the selected pages);
   // the first one whose `when` applies wins.
@@ -37,7 +45,9 @@ export function installShortcuts(commands) {
     // A window with keys of its own (Compare) is open over the documents: they aren't the target.
     if (document.querySelector('[data-own-keys]')) return;
     const editing = isEditable(e.target);
-    const command = byCombo.get(comboFromEvent(e))
+    const combo = comboFromEvent(e);
+    if (widgetKeeps(e, combo)) return;
+    const command = byCombo.get(combo)
       ?.find((c) => (!editing || c.global) && (!c.when || c.when(e)));
     if (!command) return;
     e.preventDefault();

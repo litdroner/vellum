@@ -1,8 +1,10 @@
-import { h } from '../dom.js';
+import { h, reducedMotion } from '../dom.js';
 import { icon } from '../icons.js';
 
 // Document tabs in the title bar. Click to switch, middle-click or × to close, drag to reorder.
 // A peach dot marks unsaved annotations. + shows the home screen; open tabs stay as they are.
+
+let tabIds = 0;
 
 export class TabStrip {
   #tabs = new Map(); // view → { el, icon, name, iconKey }
@@ -13,6 +15,22 @@ export class TabStrip {
     this.list = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Open documents' });
     this.newBtn = h('button', { class: 'tab-new', title: 'Home', 'aria-label': 'Home', html: icon('plus', 16), onClick: onNew });
     host.replaceChildren(this.list, this.newBtn);
+
+    // Keyboard: the strip is one Tab stop (the active tab); arrows, Home and End switch documents.
+    this.list.addEventListener('keydown', (e) => {
+      const views = this.app.views;
+      const i = views.findIndex((v) => this.#tabs.get(v)?.el === e.target);
+      if (i < 0 || e.ctrlKey || e.altKey || e.metaKey) return;
+      const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: views.length - 1 }[e.key];
+      if (to === undefined) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.app.activate(views[i]); }
+        return;
+      }
+      e.preventDefault();
+      const view = views[(to + views.length) % views.length];
+      this.app.activate(view);
+      this.#tabs.get(view)?.el.focus();
+    });
 
     // Vertical wheel scrolls a long tab strip sideways.
     this.list.addEventListener('wheel', (e) => {
@@ -46,6 +64,7 @@ export class TabStrip {
       const active = view === this.app.active;
       tab.el.classList.toggle('active', active);
       tab.el.setAttribute('aria-selected', String(active));
+      tab.el.tabIndex = active || (!this.app.active && index === 0) ? 0 : -1;
       tab.el.classList.toggle('dirty', s.dirty);
       tab.el.title = view.file.path;
       if (tab.name.textContent !== view.file.name) tab.name.textContent = view.file.name;
@@ -64,9 +83,10 @@ export class TabStrip {
 
   #create(view) {
     const iconEl = h('span', { class: 'tab-icon' });
-    const name = h('span', { class: 'tab-name' });
+    const name = h('span', { class: 'tab-name', id: `tab-name-${++tabIds}` });
     const close = h('button', { class: 'tab-close', title: 'Close (Ctrl+W)', 'aria-label': 'Close tab', tabindex: '-1', html: icon('x', 13) });
-    const el = h('div', { class: 'tab', role: 'tab' }, iconEl, name, h('span', { class: 'tab-dirty', title: 'Unsaved annotations' }), close);
+    // Named by the file name alone, not also by its Close button.
+    const el = h('div', { class: 'tab', role: 'tab', 'aria-labelledby': name.id }, iconEl, name, h('span', { class: 'tab-dirty', title: 'Unsaved annotations' }), close);
 
     close.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -77,7 +97,9 @@ export class TabStrip {
       this.app.activate(view);
       this.#dragToReorder(e, view, el);
     });
-    el.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); }); // no autoscroll cursor
+    // No autoscroll cursor on a middle click; and a click doesn't take focus, which stays with the
+    // document (its arrow keys turn pages). Tabs get focus from the keyboard.
+    el.addEventListener('mousedown', (e) => e.preventDefault());
     el.addEventListener('auxclick', (e) => {
       if (e.button !== 1) return;
       e.preventDefault();
@@ -122,7 +144,7 @@ export class TabStrip {
       el.classList.remove('dragging');
       const from = el.style.transform;
       el.style.transform = '';
-      el.animate([{ transform: from }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      if (!reducedMotion()) el.animate([{ transform: from }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
     };
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
