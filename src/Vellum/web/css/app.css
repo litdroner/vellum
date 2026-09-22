@@ -1519,6 +1519,10 @@ kbd {
 .page-bar-actions { display: flex; justify-content: space-between; }
 .page-bar .tb-btn[aria-label="Delete"]:hover:not(:disabled) { color: var(--danger); }
 .doc.rebuilding .viewer-container { cursor: progress; }
+/* The pages as they were, held over a rebuild until each renders again (document-view.js #holdPages). */
+.vl-held-pages { position: absolute; top: 0; left: 0; width: 0; height: 0; pointer-events: none; }
+.vl-held-page, .vl-held-page canvas { position: absolute; }
+.vl-held-page { overflow: hidden; }
 
 /* ---- page tone (display only) ---------------------------------------------------------- */
 /* Dark pages invert lightness but keep hues, so text turns light and colours stay recognisable.
@@ -1529,7 +1533,8 @@ kbd {
 :root[data-page-tone="dark"] #stage .pdfViewer .page,
 :root[data-page-tone="dark"] .thumb-frame canvas,
 :root[data-page-tone="dark"] .thumb-ghost canvas,
-:root[data-page-tone="dark"] .recent-thumb img { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
+:root[data-page-tone="dark"] .recent-thumb img,
+:root[data-page-tone="dark"] #stage .vl-held-page { filter: invert(.88) hue-rotate(180deg) sepia(.08); }
 :root[data-page-tone="dark"] #stage .pdfViewer .page {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, .22), 0 2px 3px rgba(255, 255, 255, .3), 0 16px 40px -8px rgba(255, 255, 255, .55);
 }
@@ -1537,7 +1542,8 @@ kbd {
 :root[data-page-tone="sepia"] #stage .pdfViewer .page,
 :root[data-page-tone="sepia"] .thumb-frame canvas,
 :root[data-page-tone="sepia"] .thumb-ghost canvas,
-:root[data-page-tone="sepia"] .recent-thumb img { filter: url(#page-tone-sepia); } /* white → paper, black → brown ink; defined in index.html */
+:root[data-page-tone="sepia"] .recent-thumb img,
+:root[data-page-tone="sepia"] #stage .vl-held-page { filter: url(#page-tone-sepia); } /* white → paper, black → brown ink; defined in index.html */
 
 /* ---- split dialog ------------------------------------------------------------------------ */
 

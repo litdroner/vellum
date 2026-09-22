@@ -736,8 +736,13 @@ export class TextEditor {
     this.#shownAt = null; // the rebuilt pages carry the change the preview was standing in for
     this.#hideTip();
     // A rebuild replaces the pages the editor sits over, so the editor goes — unless the change is
-    // the editor's own (formatting what is selected in it), which refreshes it in place instead.
-    if (this.#editor && this.#editor !== this.#keepOpen) this.#closeEditor({ refocus: false });
+    // the editor's own (formatting what is selected in it), which refreshes it in place instead. It
+    // goes once its page shows again, not before, so the text doesn't blink out: a commit closes its
+    // own editor when that page is back (#commit); any other stays on, read-only, until then.
+    const ed = this.#editor;
+    if (!ed || ed === this.#keepOpen || ed.pending) return;
+    ed.input.readOnly = true;
+    this.#view.pageShown(ed.n).then(() => { if (this.#editor === ed) this.#closeEditor({ refocus: false }); });
   }
 
   // ---- page data and outlines -------------------------------------------------------------
@@ -2551,7 +2556,8 @@ export class TextEditor {
         const changed = await this.#view.textEditing.edit(ed.n, ed.key, text);
         if (changed) {
           this.#announce('Text changed.');
-          await this.#settled(); // keep showing the new text until the page is rebuilt with it
+          await this.#settled(); // keep showing the new text until the page is rebuilt with it…
+          await this.#view.pageShown(ed.n); // …and has rendered it
         }
         if (this.#editor === ed) this.#closeEditor();
         return true;

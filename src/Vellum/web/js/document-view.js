@@ -92,6 +92,8 @@ export class DocumentView extends EventTarget {
   #shownPlan = null;
   #rebuildQueued = false;
   #restore = null;
+  /** Pictures of the pages that were on screen, held over a rebuild until each page renders again (#holdPages). */
+  #held = null;
   #resizeObserver = null;
   #refitFrame = 0;
   /** The document is to start at the very top, and hasn't been able to yet (see #toStart). */
@@ -291,6 +293,8 @@ export class DocumentView extends EventTarget {
         this.viewer.pagesRotation = restore.rotation;
         if (this.viewMode === 'single') this.viewer.scrollMode = this.#libs.viewerLib.ScrollMode.PAGE;
         this.viewer.currentPageNumber = restore.page;
+        // The same pages came back (a content edit): stay exactly where the reader was, under the held pictures.
+        if (this.#held) Object.assign(this.container, { scrollTop: this.#held.scrollTop, scrollLeft: this.#held.scrollLeft });
         return;
       }
       // Reopen where you left off (page, zoom, layout), remembered per file by the host.
@@ -311,7 +315,13 @@ export class DocumentView extends EventTarget {
     });
     eventBus.on('scalechanging', () => this.#changed());
     eventBus.on('rotationchanging', () => this.#changed());
-    eventBus.on('pagerendered', () => this.#resolveFirstRender());
+    eventBus.on('pagerendered', ({ pageNumber }) => {
+      this.#resolveFirstRender();
+      this.#releasePage(pageNumber);
+    });
+    // Restoring the zoom after a rebuild re-announces the same scale; only a real change moves the pages.
+    eventBus.on('scalechanging', ({ scale }) => { if (this.#held && Math.abs(scale - this.#held.scale) > 1e-6) this.#releaseHeld(); });
+    eventBus.on('rotationchanging', ({ pagesRotation }) => { if (this.#held && pagesRotation !== this.#held.rotation) this.#releaseHeld(); });
     eventBus.on('updatefindmatchescount', ({ matchesCount }) => {
       this.find.current = matchesCount.current;
       this.find.total = matchesCount.total;
@@ -710,15 +720,96 @@ export class DocumentView extends EventTarget {
     const pdf = await task.promise;
     const previous = this.#documentTask;
     this.#restore = { scaleValue: this.viewer.currentScaleValue, rotation: this.viewer.pagesRotation, page };
+    // The same pages in the same order come back where they were: until each renders, show it as it was.
+    const samePages = JSON.stringify(plan) === JSON.stringify(this.#shownPlan);
+    this.#releaseHeld();
+    if (samePages) this.#holdPages();
     this.pdf = pdf;
     this.#documentTask = task;
     this.#shownPlan = plan;
     Object.assign(this.find, { current: 0, total: 0, state: null });
     this.viewer.setDocument(pdf);
+    if (this.#held) this.#held.armed = true; // only the new document's renders release it
     readFields(pdf).then((fields) => { if (this.pdf === pdf) this.#fields = fields; });
     this.linkService.setDocument(pdf, null);
     previous?.destroy();
     this.dispatchEvent(new Event('documentchange'));
+  }
+
+  /**
+   * Copies the pages on screen into a layer over them, in the scroller's own coordinates, before
+   * pdf.js empties them: a rebuild then shows each page as it was until its new rendering arrives,
+   * instead of a blank page. Only visible, rendered pages are copied. The layer also keeps the
+   * scroller's height while the new pages are laid out, so the scroll position stays put.
+   */
+  #holdPages() {
+    const box = this.container.getBoundingClientRect();
+    const layer = h('div', { class: 'vl-held-pages', 'aria-hidden': 'true' });
+    const pages = new Map();
+    for (let i = 0; i < (this.pdf?.numPages ?? 0); i++) {
+      const pv = this.viewer.getPageView(i);
+      if (pv?.renderingState !== 3 /* finished */) continue;
+      const r = pv.div.getBoundingClientRect();
+      if (r.bottom <= box.top || r.top >= box.bottom || r.right <= box.left || r.left >= box.right) continue;
+      const page = h('div', { class: 'vl-held-page' });
+      Object.assign(page.style, {
+        left: `${r.left - box.left + this.container.scrollLeft}px`, top: `${r.top - box.top + this.container.scrollTop}px`,
+        width: `${r.width}px`, height: `${r.height}px`,
+      });
+      for (const src of pv.div.querySelectorAll('.canvasWrapper canvas')) {
+        if (!src.width || !src.height) continue;
+        const c = src.getBoundingClientRect();
+        const copy = h('canvas', { width: src.width, height: src.height });
+        Object.assign(copy.style, { left: `${c.left - r.left}px`, top: `${c.top - r.top}px`, width: `${c.width}px`, height: `${c.height}px` });
+        try { copy.getContext('2d').drawImage(src, 0, 0); } catch { continue; }
+        page.append(copy);
+      }
+      if (!page.childElementCount) continue;
+      pages.set(i + 1, page);
+      layer.append(page);
+    }
+    if (!pages.size) return;
+    this.viewerEl.after(layer); // over the pages, under what sits over them (the text editor)
+    this.#held = {
+      layer, pages, armed: false, scale: this.viewer.currentScale, rotation: this.viewer.pagesRotation,
+      scrollTop: this.container.scrollTop, scrollLeft: this.container.scrollLeft,
+      // A page that never renders again (it failed, or was scrolled away) mustn't keep old pixels.
+      timer: setTimeout(() => this.#releaseHeld(), 4000),
+    };
+  }
+
+  #releasePage(n) {
+    const held = this.#held;
+    if (!held?.armed) return;
+    held.pages.get(n)?.remove();
+    held.pages.delete(n);
+    if (!held.pages.size) this.#releaseHeld();
+  }
+
+  #releaseHeld() {
+    if (!this.#held) return;
+    clearTimeout(this.#held.timer);
+    this.#held.layer.remove();
+    this.#held = null;
+  }
+
+  /**
+   * Resolves once page `n` of the document now shown has rendered (at once if it has), or after
+   * `ms` at the latest: what an overlay waits for before it lets the page show itself again.
+   */
+  pageShown(n, ms = 4000) {
+    const done = () => !this.rebuilding && this.viewer.getPageView(n - 1)?.renderingState === 3;
+    if (done()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.eventBus.off('pagerendered', onRendered);
+        resolve();
+      };
+      const onRendered = () => { if (done()) finish(); };
+      const timer = setTimeout(finish, ms);
+      this.eventBus.on('pagerendered', onRendered);
+    });
   }
 
   /** After Save As, this tab now represents the new file. */
@@ -780,6 +871,7 @@ export class DocumentView extends EventTarget {
 
   destroy() {
     this.#destroyed = true;
+    this.#releaseHeld();
     this.#resizeObserver?.disconnect();
     cancelAnimationFrame(this.#refitFrame);
     this.#abort.abort();
