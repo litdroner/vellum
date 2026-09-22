@@ -1,8 +1,9 @@
-// Export Center V1 in the real app: the Export command opens the dialog from the More menu; an export to the
+// The Export Center in the real app: the Export command opens the dialog from the More menu; an export to the
 // document's own folder writes real files through the host (MainWindow.Export.cs, /export/{token}) — JPEG and
-// PNG one per page, Markdown one file, and an Excel workbook of the tables Vellum is confident about — with
-// the names the plan gives; a second export of the same pages
-// keeps both instead of overwriting when asked; and the PDF itself is byte for byte unchanged throughout.
+// PNG one per page, Markdown one file, an Excel workbook of the tables Vellum is confident about (none here,
+// so it writes nothing and says why) and an editable Word document — with the names the plan gives; a second
+// export of the same pages keeps both instead of overwriting when asked; and the PDF itself is byte for byte
+// unchanged throughout.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +38,7 @@ export async function run(t) {
   await clickAt(entry);
   check('the Export dialog opens', await waitFor(`Boolean(document.querySelector('.export-dialog'))`, 3000));
   const formats = await q(`[...document.querySelectorAll('.export-dialog input[name="export-format"]')].map((i) => i.value).join(',')`);
-  check('with the formats the Export Center offers', formats === 'jpg,png,markdown,excel', formats);
+  check('with the formats the Export Center offers', formats === 'jpg,png,markdown,excel,word', formats);
   check('and the document’s own folder to start with', await q(`document.querySelector('.export-folder-path').textContent === ${J(folder)}`));
   const note = await q(`document.querySelector('.export-dialog .dialog-note').textContent`);
   check('the note names the files it will create', note.includes(`${base} (page 001).jpg`), note);
@@ -74,6 +75,13 @@ export async function run(t) {
   check('an Excel export of a document with no confident table writes nothing', xlsx?.ok === false && xlsx.written.length === 0, JSON.stringify(xlsx));
   check('and says why', /confidently find a table/.test(xlsx?.failed.join(' ') ?? ''), JSON.stringify(xlsx?.failed));
   check('no .xlsx was left behind', !fs.existsSync(path.join(folder, `${base}.xlsx`)));
+
+  area('word');
+  const docx = await exportTo('word', [1, 2]);
+  check('Word export writes one file', docx?.ok === true && docx.written.join(', ') === `${base}.docx`, JSON.stringify(docx));
+  const word = read(`${base}.docx`);
+  check('and it is a real .docx package', word[0] === 0x50 && word[1] === 0x4b && word.includes(Buffer.from('word/document.xml')), `${word.length} bytes`);
+  check('with no picture of the page in it', !word.includes(Buffer.from('word/media/')));
 
   area('overwriting');
   const again = await exportTo('markdown', [1, 2], 'keepBoth');

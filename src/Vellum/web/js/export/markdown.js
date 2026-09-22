@@ -23,6 +23,7 @@
 //     headings  Map of page number -> Map of exact block text -> heading level (1 = top), from the outline
 
 import { documentRef } from '../semantic/provenance.js';
+import { blockTables } from '../semantic/tables.js';
 
 const MAX_HEADING = 4; // an outline deeper than this keeps the deepest Markdown heading available
 
@@ -61,17 +62,12 @@ export function pageBlocks(page, { tables = [], headings = null } = {}) {
   if (page.contentRead === false) {
     return ['*Vellum doesn’t read the text of a protected PDF, so this page has none here.*'];
   }
-  const tableOfRun = new Map();
-  for (const table of tables) {
-    for (const cell of table.rows.flat()) {
-      for (const id of cell?.runIds ?? []) tableOfRun.set(id, table);
-    }
-  }
+  const tableOfBlock = blockTables(page, tables);
   const out = [];
   const done = new Set();
   for (const block of page.blocks) {
-    const table = block.runIds.length ? tableOfRun.get(block.runIds[0]) : null;
-    if (table && block.runIds.every((id) => tableOfRun.get(id) === table)) {
+    const table = tableOfBlock.get(block.id);
+    if (table) {
       if (done.has(table.id)) continue;
       done.add(table.id);
       out.push(tableMarkdown(table));

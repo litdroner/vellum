@@ -29,6 +29,9 @@ export async function askWhatToExport({ fileName, pageCount, currentPage, folder
     pageChoice('all', `All pages (${pageCount})`, null, true),
     pageChoice('current', `This page (${currentPage})`),
     pageChoice('range', 'Pages ', rangeInput));
+  // The formats and the pages scroll together, so the folder, the note and the buttons stay in view
+  // however many formats there are (ui/collection-research.js scrolls its results the same way).
+  const choices = h('div', { class: 'export-choices' }, formatChoices, pageChoices);
 
   const folderText = h('span', { class: 'export-folder-path', text: destination });
   const folderRow = h('div', { class: 'export-destination' },
@@ -74,7 +77,7 @@ export async function askWhatToExport({ fileName, pageCount, currentPage, folder
     message: `Vellum writes new files from this document. The PDF itself isn\u2019t changed.`,
     iconName: 'file-output',
     className: 'export-dialog',
-    content: [formatChoices, pageChoices, folderRow, note],
+    content: [choices, folderRow, note],
     buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Export', primary: true }],
     onOpen: (dialog) => {
       primary = dialog.querySelector('.btn.primary');

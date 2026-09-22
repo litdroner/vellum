@@ -191,6 +191,27 @@ export function pageTables(page) {
   return Object.freeze(result);
 }
 
+/**
+ * Which confident table each block of a page belongs to: Map of block id -> table, for the blocks whose
+ * every run is a cell of one and the same table. A reader that writes a page out (export/markdown.js,
+ * export/docx.js) writes the table where the first of those blocks would have gone and skips the rest,
+ * so a table's text is never written twice.
+ */
+export function blockTables(page, tables) {
+  const ofRun = new Map();
+  for (const table of tables ?? []) {
+    for (const cell of table.rows.flat()) {
+      for (const id of cell?.runIds ?? []) ofRun.set(id, table);
+    }
+  }
+  const ofBlock = new Map();
+  for (const block of page.blocks ?? []) {
+    const table = block.runIds.length ? ofRun.get(block.runIds[0]) : null;
+    if (table && block.runIds.every((id) => ofRun.get(id) === table)) ofBlock.set(block.id, table);
+  }
+  return ofBlock;
+}
+
 /** A table as tab-separated text, one line per row: what a spreadsheet pastes as cells. */
 export function tableToTsv(table) {
   const clean = (text) => String(text ?? '').replace(/[\t\r\n]+/g, ' ');

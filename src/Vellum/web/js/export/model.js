@@ -35,6 +35,11 @@ export const EXPORT_FORMATS = Object.freeze({
     mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', kind: 'binary', perPage: false,
     note: 'One worksheet for every table Vellum is confident about, as real cells.',
   }),
+  word: Object.freeze({
+    id: 'word', label: 'Word document', extension: 'docx',
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', kind: 'binary', perPage: false,
+    note: 'One editable document: the text Vellum already reads, its confident tables, page by page.',
+  }),
 });
 
 /** The formats an export offers, in the order the dialog shows them. */

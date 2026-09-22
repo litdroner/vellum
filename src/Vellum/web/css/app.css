@@ -1645,6 +1645,7 @@ kbd {
 
 .export-dialog { width: min(480px, calc(100vw - 40px)); }
 .export-dialog .choices + .choices { margin-top: 12px; }
+.export-choices { max-height: min(46vh, 420px); overflow-y: auto; overscroll-behavior: contain; margin-inline: -3px; padding-inline: 3px; }
 .export-dialog .choice-note { flex-basis: 100%; color: var(--ink-3); font-size: 12px; }
 .export-destination {
   display: flex;

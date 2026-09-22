@@ -6,6 +6,7 @@ import { runExport } from './run.js';
 import { renderPageImage } from './images.js';
 import { documentMarkdown, outlineHeadings } from './markdown.js';
 import { tablesWorkbook } from './xlsx.js';
+import { documentDocx } from './docx.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { pageTables } from '../semantic/tables.js';
 
@@ -14,10 +15,10 @@ import { pageTables } from '../semantic/tables.js';
 // writes them one by one with progress and a Cancel that stops before the next file.
 //
 // Every format goes through the same steps; only `producerFor` differs. Images are rendered by pdf.js as
-// printing renders them (export/images.js); Markdown and the Excel workbook are written from the semantic
-// document model and the confident tables already extracted (export/markdown.js, export/xlsx.js). Nothing
-// new reads or parses the PDF, and the document on disk is never opened for writing — an export only ever
-// creates new files.
+// printing renders them (export/images.js); Markdown, the Excel workbook and the Word document are all
+// written from the semantic document model and the confident tables already extracted (export/markdown.js,
+// export/xlsx.js, export/docx.js). Nothing new reads or parses the PDF, and the document on disk is never
+// opened for writing — an export only ever creates new files.
 
 export function createExportActions({ pdfjsLib }) {
   const folderOf = (path) => path.slice(0, Math.max(0, path.lastIndexOf('\\')));
@@ -42,6 +43,18 @@ export function createExportActions({ pdfjsLib }) {
       return async (file, { signal }) => {
         const read = await readPages(view, file.pages, signal);
         return tablesWorkbook({ document: sourceOf(view), pages: read.map((r) => r.extraction) });
+      };
+    }
+    if (plan.format.id === 'word') {
+      return async (file, { signal }) => {
+        const headings = await outlineHeadings(view.pdf);
+        const read = await readPages(view, file.pages, signal);
+        return documentDocx({
+          document: sourceOf(view),
+          pages: read.map((r) => r.page),
+          tables: new Map(read.map((r) => [r.page.number, r.extraction.tables])),
+          headings,
+        });
       };
     }
     return async (file, { signal }) => {
