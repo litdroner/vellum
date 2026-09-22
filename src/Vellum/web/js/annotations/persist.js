@@ -63,7 +63,8 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   let pages = basePages;
   let dropped = null;
   let removedFields = new Set();
-  if (!isIdentity(plan, basePages.length)) ({ pages, dropped, removedFields } = await arrangePages(doc, lib, basePages, plan, sources));
+  let importedFields = new Set();
+  if (!isIdentity(plan, basePages.length)) ({ pages, dropped, removedFields, importedFields } = await arrangePages(doc, lib, basePages, plan, sources));
 
   // Text edits rewrite only their own pages' content streams.
   const { changed } = edits.length && plan ? await applyObjectEdits({ lib, doc, pages, plan, edits, sources, originals: basePages }) : { changed: 0 };
@@ -79,7 +80,10 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     // Values of fields whose every widget was on a deleted page have nowhere to go. Values go in first,
     // under the names they were typed under, then the file's own fields are changed (moved, renamed,
     // removed…), then new fields are added.
-    await writeFormValues(lib, doc, forms.filter((f) => !removedFields.has(f.name)));
+    // Nor do values typed into fields of pages from other PDFs that are no longer in the plan.
+    const form = importedFields.size ? doc.getForm() : null;
+    const gone = (f) => removedFields.has(f.name) || (importedFields.has(f.name.split('.')[0]) && !form.getFieldMaybe(f.name));
+    await writeFormValues(lib, doc, forms.filter((f) => !gone(f)));
     const fields = annotations.filter((a) => a.type === 'field');
     await writeFieldChanges(lib, doc, fields.filter((a) => a.existing));
     await writeNewFields(lib, doc, pages, fields.filter((a) => !a.existing));
@@ -133,9 +137,14 @@ async function arrangePages(doc, lib, basePages, plan, sources) {
     sourceDocs.set(e.src, await loadForWriting(lib, bytes));
   }
 
+  // Names the other PDFs' form fields take here, worked out before anything changes (importedFieldNames).
+  const baseFieldNames = topFieldNames(doc, lib);
+  const importedNames = await importedFieldNames(lib, sourceDocs, sources, baseFieldNames);
+
   const pages = new Array(plan.length);
   const batches = new Map(); // src → [[{ index, position }, ...] per repeat round]
   const seen = new Map();
+  const firsts = new Map(); // `${src}:${index}` → position of the page's first appearance
   plan.forEach((e, position) => {
     if (e.src === 'blank') {
       pages[position] = PDFPage.create(doc);
@@ -145,6 +154,7 @@ async function arrangePages(doc, lib, basePages, plan, sources) {
     const key = `${e.src}:${e.index}`;
     const round = seen.get(key) ?? 0;
     seen.set(key, round + 1);
+    if (!round) firsts.set(key, position);
     if (e.src === 'base' && round === 0) {
       pages[position] = basePages[e.index];
       return;
@@ -185,20 +195,188 @@ async function arrangePages(doc, lib, basePages, plan, sources) {
 
   const used = new Set(pages.map((p) => p.ref.toString()));
   const droppedPages = basePages.filter((p) => !used.has(p.ref.toString()));
-  const removedFields = followFormFields(doc, lib, basePages, pages, plan, droppedPages);
-  return { pages, dropped: droppedPages.map((p) => p.ref), removedFields };
+  adoptImportedFields(doc, lib, { pages, plan, firsts, sourceDocs, importedNames, baseFieldNames });
+  // Where a page first appears: the opened file's own page, or the first copy of a page from another PDF.
+  const firstOf = (e) => (e.src === 'base' ? basePages[e.index] : pages[firsts.get(`${e.src}:${e.index}`)]);
+  const removedFields = followFormFields(doc, lib, firstOf, pages, plan, droppedPages);
+  const importedFields = new Set([...importedNames.values()].flatMap((names) => [...names.values()]));
+  return { pages, dropped: droppedPages.map((p) => p.ref), removedFields, importedFields };
+}
+
+/** The names of the top-level fields of a document's form. */
+function topFieldNames(doc, { PDFName, PDFDict, PDFArray }) {
+  const names = new Set();
+  const acroForm = doc.catalog.lookup(PDFName.of('AcroForm'));
+  const fields = acroForm instanceof PDFDict ? acroForm.lookup(PDFName.of('Fields')) : null;
+  if (!(fields instanceof PDFArray)) return names;
+  for (let i = 0; i < fields.size(); i++) {
+    const t = fields.lookup(i)?.lookup?.(PDFName.of('T'));
+    if (t?.decodeText) names.add(t.decodeText());
+  }
+  return names;
+}
+
+const isPdf = (bytes) => bytes instanceof Uint8Array && new TextDecoder('latin1').decode(bytes.subarray(0, 1024)).includes('%PDF');
+
+/**
+ * The name each other PDF's top-level form fields take in this document: its own or, when the opened
+ * file (or a PDF inserted before it) already has a field of that name, "name_2", "name_3"… Every PDF
+ * in `sources` counts, in the order it was added, whether or not the plan still uses its pages, so a
+ * field keeps its name (and what was typed into it) when other pages are deleted.
+ * Returns Map sourceId → Map(original name → name here).
+ */
+async function importedFieldNames(lib, sourceDocs, sources, baseFieldNames) {
+  const taken = new Set(baseFieldNames);
+  const bySource = new Map();
+  for (const [src, bytes] of sources) {
+    const other = sourceDocs.get(src) ?? (isPdf(bytes) ? await lib.PDFDocument.load(bytes, { updateMetadata: false }).catch(() => null) : null);
+    if (!other) continue;
+    const names = new Map();
+    for (const name of topFieldNames(other, lib)) names.set(name, claimName(name, taken));
+    bySource.set(src, names);
+  }
+  return bySource;
+}
+
+function claimName(name, taken) {
+  let chosen = name;
+  for (let n = 2; taken.has(chosen); n++) chosen = `${name}_${n}`;
+  taken.add(chosen);
+  return chosen;
+}
+
+/**
+ * Makes the form fields of pages inserted from other PDFs fields of this document's own form.
+ * pdf-lib copies a page's widgets with their fields, but outside any form: each field tree is listed
+ * in this document's AcroForm, trimmed to the widgets on the pages the plan brings in (a radio group
+ * keeps the export values of the buttons it keeps), renamed when its name is taken here (see
+ * importedFieldNames; no field of this document is ever overwritten), and its widgets point at the
+ * pages they are on now. Values, flags and appearances come as they are; the other PDF's default
+ * appearance and form fonts come with them. Signature fields and push buttons stay plain annotations,
+ * as pdf-lib copied them: a signature belongs to the file it was made in, and a button only runs actions.
+ * Only a page's first appearance gets fields here; its repeats join them (followFormFields).
+ */
+function adoptImportedFields(doc, lib, { pages, plan, firsts, sourceDocs, importedNames, baseFieldNames }) {
+  const { PDFName, PDFDict, PDFRef, PDFHexString, PDFObjectCopier, PDFBool } = lib;
+  const ctx = doc.context;
+  const PARENT = PDFName.of('Parent');
+  const T = PDFName.of('T');
+  const DA = PDFName.of('DA');
+
+  const bySource = new Map(); // src → first appearances of its pages
+  for (const position of firsts.values()) {
+    const { src } = plan[position];
+    if (sourceDocs.has(src)) bySource.set(src, [...(bySource.get(src) ?? []), pages[position]]);
+  }
+  for (const [src, srcPages] of bySource) {
+    // The widgets on these pages, and the tops of their field trees in the order first met.
+    const widgets = new Map(); // widget dict → { page, root }
+    const roots = new Map(); // root dict → ref
+    for (const page of srcPages) {
+      const annots = page.node.Annots();
+      for (const ref of annots ? annots.asArray() : []) {
+        const dict = ctx.lookup(ref);
+        if (!(ref instanceof PDFRef) || !isWidget(dict, lib)) continue;
+        let root = dict;
+        let rootRef = ref;
+        for (let up = dict.get(PARENT); up instanceof PDFRef && ctx.lookup(up) instanceof PDFDict; up = root.get(PARENT)) {
+          root = ctx.lookup(up);
+          rootRef = up;
+        }
+        widgets.set(dict, { page, root });
+        if (root.has(T) && !roots.has(root)) roots.set(root, rootRef);
+      }
+    }
+    const kept = [...roots].filter(([root]) => adoptable(root, lib, ctx) && keepImported(root, widgets, lib, ctx));
+    if (!kept.length) continue;
+
+    const other = sourceDocs.get(src);
+    const otherForm = other.catalog.lookup(PDFName.of('AcroForm'));
+    const form = doc.getForm(); // gives this document an AcroForm when it has none
+    const fields = form.acroForm.dict.lookup(PDFName.of('Fields'));
+    const here = topFieldNames(doc, lib);
+    const taken = new Set([...baseFieldNames, ...here, ...[...importedNames.values()].flatMap((m) => [...m.values()])]);
+    const theirDa = otherForm instanceof PDFDict ? otherForm.lookup(DA) : null;
+    for (const [root, rootRef] of kept) {
+      const original = root.lookup(T).decodeText();
+      // The name worked out for it, unless something here has it by now (a field its own form doesn't list).
+      let name = importedNames.get(src)?.get(original);
+      if (!name || here.has(name)) name = claimName(original, taken);
+      here.add(name);
+      if (name !== original) root.set(T, PDFHexString.fromText(name));
+      if (theirDa && !hasDa(root, lib)) root.set(DA, theirDa);
+      fields.push(rootRef);
+    }
+    const adopted = new Set(kept.map(([root]) => root));
+    for (const [widget, { page, root }] of widgets) if (adopted.has(root)) widget.set(PDFName.of('P'), page.ref);
+
+    // The fonts the other PDF's default appearances name, where this form has none of that name.
+    const theirFonts = otherForm instanceof PDFDict ? otherForm.lookup(PDFName.of('DR'))?.lookup?.(PDFName.of('Font')) : null;
+    if (theirFonts instanceof PDFDict) {
+      let dr = form.acroForm.dict.lookup(PDFName.of('DR'));
+      if (!(dr instanceof PDFDict)) form.acroForm.dict.set(PDFName.of('DR'), (dr = ctx.obj({})));
+      let fonts = dr.lookup(PDFName.of('Font'));
+      if (!(fonts instanceof PDFDict)) dr.set(PDFName.of('Font'), (fonts = ctx.obj({})));
+      const copier = PDFObjectCopier.for(other.context, ctx);
+      for (const [key, value] of theirFonts.entries()) if (!fonts.has(key)) fonts.set(key, copier.copy(value));
+    }
+    if (otherForm instanceof PDFDict && otherForm.lookup(PDFName.of('NeedAppearances')) === PDFBool.True) {
+      form.acroForm.dict.set(PDFName.of('NeedAppearances'), PDFBool.True);
+    }
+  }
+}
+
+const isWidget = (dict, { PDFName, PDFDict }) => dict instanceof PDFDict && dict.get(PDFName.of('Subtype'))?.toString() === '/Widget';
+
+/** Whether a field tree holds only fields Vellum's form keeps: no signature fields or push buttons. */
+function adoptable(field, lib, ctx, ft = null, ff = 0) {
+  const { PDFName, PDFDict, PDFArray } = lib;
+  ft = field.lookup(PDFName.of('FT'))?.toString() ?? ft;
+  ff = field.lookup(PDFName.of('Ff'))?.asNumber?.() ?? ff;
+  const kids = field.lookup(PDFName.of('Kids'));
+  const fieldKids = kids instanceof PDFArray ? kids.asArray().map((r) => ctx.lookup(r)).filter((d) => d instanceof PDFDict && d.has(PDFName.of('T'))) : [];
+  if (!fieldKids.length) return ft === '/Tx' || ft === '/Ch' || (ft === '/Btn' && !(ff & (1 << 16)));
+  return fieldKids.every((kid) => adoptable(kid, lib, ctx, ft, ff));
+}
+
+/**
+ * Trims a copied field tree to the widgets on the imported pages (`widgets`); a field left with no
+ * widget goes. A radio group's /Opt (export values by widget position) loses the removed buttons'
+ * entries. Returns whether anything of the field is left.
+ */
+function keepImported(field, widgets, lib, ctx) {
+  const { PDFName, PDFDict, PDFArray } = lib;
+  const kids = field.lookup(PDFName.of('Kids'));
+  if (!(kids instanceof PDFArray)) return widgets.has(field); // a field that is its own widget
+  const opt = field.lookup(PDFName.of('Opt'));
+  const byPosition = opt instanceof PDFArray && opt.size() === kids.size() && field.lookup(PDFName.of('FT'))?.toString() === '/Btn';
+  for (let i = kids.size() - 1; i >= 0; i--) {
+    const kid = ctx.lookup(kids.get(i));
+    const keep = kid instanceof PDFDict && (kid.has(PDFName.of('T')) ? keepImported(kid, widgets, lib, ctx) : widgets.has(kid));
+    if (keep) continue;
+    kids.remove(i);
+    if (byPosition) opt.remove(i);
+  }
+  return kids.size() > 0;
+}
+
+/** Whether a field (or a field above it) sets its own default appearance. */
+function hasDa(dict, { PDFName, PDFDict }) {
+  for (let d = dict; d instanceof PDFDict; d = d.lookup(PDFName.of('Parent'))) if (d.has(PDFName.of('DA'))) return true;
+  return false;
 }
 
 // Form field keys, as opposed to a widget's own (a field and its only widget may be one dictionary).
 const FIELD_KEYS = ['FT', 'T', 'TU', 'TM', 'Ff', 'V', 'DV', 'Opt', 'TI', 'I', 'MaxLen', 'DA', 'Q', 'DS', 'RV'];
 
 /**
- * Keeps the file's own form fields true to the page plan. A repeat of a page of the opened file
- * shows the same fields (its widgets become more widgets of them, so they share one value), not
- * copies outside the form; the widgets of deleted pages leave their fields, and a field left with
- * none leaves the form. Returns the full names of the fields removed.
+ * Keeps the file's own form fields true to the page plan. A repeat of a page (of the opened file, or
+ * from another PDF, whose first appearance `firstOf(entry)` gives) shows the same fields (its widgets
+ * become more widgets of them, so they share one value), not copies outside the form; the widgets of
+ * deleted pages leave their fields, and a field left with none leaves the form. Returns the full
+ * names of the fields removed.
  */
-function followFormFields(doc, lib, basePages, pages, plan, droppedPages) {
+function followFormFields(doc, lib, firstOf, pages, plan, droppedPages) {
   const { PDFName, PDFDict, PDFArray, PDFRef } = lib;
   const ctx = doc.context;
   const acroForm = doc.catalog.lookup(PDFName.of('AcroForm'));
@@ -219,8 +397,9 @@ function followFormFields(doc, lib, basePages, pages, plan, droppedPages) {
   const indexIn = (array, ref) => array.asArray().findIndex((r) => r instanceof PDFRef && r.toString() === ref.toString());
 
   plan.forEach((e, i) => {
-    if (e.src !== 'base' || pages[i] === basePages[e.index]) return;
-    const originals = widgetsOf(basePages[e.index]);
+    const first = e.src === 'blank' ? null : firstOf(e);
+    if (!first || pages[i] === first) return;
+    const originals = widgetsOf(first);
     const copies = widgetsOf(pages[i]);
     originals.forEach(([ref, dict], k) => {
       const [copyRef, copy] = copies[k] ?? [];
