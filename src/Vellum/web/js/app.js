@@ -21,6 +21,7 @@ import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
 import { setFocusFallback } from './ui/focus.js';
 import { markPageBoxWhenReady } from './ui/page-mark.js';
+import { showKnowledgeGraph } from './ui/knowledge-graph.js';
 import { TextEditor } from './ui/text-editor.js';
 import { toPdfPoint } from './page-space.js';
 import { readSessionPage } from './semantic/model.js';
@@ -344,6 +345,28 @@ const actions = {
       ui.start.refresh();
     }
   },
+  /**
+   * The document graph of the open document (ui/knowledge-graph.js): the collections that list this file and
+   * the evidence the Structure panel's research has already quoted from it. Derived here and thrown away —
+   * nothing is stored, nothing is read from disk, and the document isn't changed.
+   */
+  async showDocumentGraph() {
+    const view = app.active;
+    if (view?.status !== 'ready') return;
+    let collections = [];
+    try { ({ collections } = await bridge.request('collections.list')); } catch { /* no host (dev) */ }
+    const research = ui.sidebar.structure?.research ?? null;
+    const path = view.file.path;
+    await showKnowledgeGraph({
+      focus: { kind: 'document', path, name: view.file.name },
+      document: { path, name: view.file.name, pages: view.pdf?.numPages ?? null, contentKey: view.docKey ?? null },
+      collections,
+      evidence: research?.sufficient ? research.evidence.map((e) => ({ ...e, path })) : [],
+      onOpen: (node) => (node.number
+        ? actions.openEvidence({ path: node.path, number: node.number, box: node.box ?? null })
+        : actions.openRecent(node.path)),
+    });
+  },
   async openDropped(files) {
     const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     const skipped = files.length - pdfs.length;
@@ -553,6 +576,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.structure', null, { disabled: !ready }),
+    menuItem('tools.graph', null, { disabled: !ready }),
     menuItem('tools.health', null, { disabled: !ready }),
     menuItem('tools.compare'),
     '-',

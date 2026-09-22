@@ -1,6 +1,7 @@
 import { h, timeAgo } from '../dom.js';
 import { icon } from '../icons.js';
 import { researchCollectionDialog } from './collection-research.js';
+import { showKnowledgeGraph } from './knowledge-graph.js';
 import { showDialog, toast } from './dialogs.js';
 
 // The home screen, shown when no document is open: a greeting, a large Open card and the documents
@@ -8,6 +9,10 @@ import { showDialog, toast } from './dialogs.js';
 // person's collections: named lists of documents (only their paths; no file is copied, moved or changed),
 // each with Research: one question asked of every document in it (ui/collection-research.js), and the
 // document a piece of evidence comes from opened at its page.
+//
+// Graph shows what Vellum can prove about one collection (ui/knowledge-graph.js): the documents it lists,
+// the pages evidence came from and that evidence — derived from the collection and the research already
+// shown in this session, and kept only while the window is open.
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 const fileName = (path) => path.slice(path.lastIndexOf('\\') + 1);
@@ -73,6 +78,9 @@ export class StartScreen {
     this.bridge = bridge;
     this.onOpenRecent = onOpenRecent;
     this.onOpenEvidence = onOpenEvidence ?? ((e) => onOpenRecent(e.path));
+    // The last research shown for a collection, by its id: what the Graph lists as evidence. In memory only.
+    this.researched = new Map();
+    this.collectionsRead = [];
     this.name = '';
     this.greeting = h('h1', { class: 'home-greeting' });
     this.date = h('p', { class: 'home-date' });
@@ -129,6 +137,7 @@ export class StartScreen {
   async #renderCollections() {
     let collections = [];
     try { ({ collections } = await this.bridge.request('collections.list')); } catch { /* no host (dev) */ }
+    this.collectionsRead = collections;
     this.collectionList.replaceChildren(...(collections.length
       ? collections.map((c) => this.#collection(c))
       : [h('p', { class: 'collection-empty', text: 'Group the documents you use together. The files stay where they are.' })]));
@@ -143,6 +152,7 @@ export class StartScreen {
         h('h3', { class: 'collection-name', text: c.name }),
         h('span', { class: 'collection-meta', text: summary }),
         count ? h('button', { class: 'link-btn', 'aria-label': `Research ${c.name}`, onClick: () => this.#research(c) }, 'Research') : null,
+        count ? h('button', { class: 'link-btn', 'aria-label': `Graph of ${c.name}`, onClick: () => this.#graph(c) }, 'Graph') : null,
         h('button', { class: 'link-btn', 'aria-label': `Add PDFs to ${c.name}`, onClick: () => this.#add(c) }, 'Add PDFs…'),
         h('button', { class: 'link-btn', 'aria-label': `Rename ${c.name}`, onClick: () => this.#rename(c) }, 'Rename'),
         h('button', { class: 'link-btn danger', 'aria-label': `Delete ${c.name}`, onClick: () => this.#delete(c) }, 'Delete')),
@@ -160,8 +170,24 @@ export class StartScreen {
 
   /** One question asked of every document in the collection; the evidence chosen opens its own document at its page. */
   async #research(c) {
-    const evidence = await researchCollectionDialog({ bridge: this.bridge, collection: c });
+    const evidence = await researchCollectionDialog({
+      bridge: this.bridge,
+      collection: c,
+      onResult: (found) => this.researched.set(c.id, found),
+    });
     if (evidence) await this.onOpenEvidence(evidence);
+  }
+
+  /** The collection's relationships, derived on the spot from what is already known. Read-only. */
+  async #graph(c) {
+    await showKnowledgeGraph({
+      focus: { kind: 'collection', id: c.id, name: c.name },
+      collections: this.collectionsRead,
+      evidence: this.researched.get(c.id)?.evidence ?? [],
+      onOpen: (node) => (node.number
+        ? this.onOpenEvidence({ path: node.path, number: node.number, box: node.box ?? null })
+        : this.onOpenRecent(node.path)),
+    });
   }
 
   async #create() {

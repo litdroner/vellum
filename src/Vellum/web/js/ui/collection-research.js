@@ -18,8 +18,10 @@ const reasonText = (skip) => SKIP_REASONS[skip.reason] ?? skip.reason;
 /**
  * Asks a question of `collection` ({ id, name }). Resolves with the chosen evidence
  * ({ path, name, number, box, text, provenance }), or null when nothing was chosen.
+ * `onResult({ question, evidence })` is told what the last question found, so a caller can show the same
+ * evidence elsewhere without asking again; it holds nothing this dialog didn't already have.
  */
-export function researchCollectionDialog({ bridge, collection }) {
+export function researchCollectionDialog({ bridge, collection, onResult = null }) {
   const input = h('input', {
     class: 'field', type: 'search', spellcheck: 'false', autocomplete: 'off',
     placeholder: 'Ask a research question', 'aria-label': `Research question about ${collection.name}`,
@@ -48,6 +50,7 @@ export function researchCollectionDialog({ bridge, collection }) {
 
   const show = (result) => {
     found = result;
+    onResult?.({ question, evidence: result.sufficient ? result.evidence : [] });
     exportBtn.hidden = !found.sufficient;
     results.replaceChildren(
       h('div', { class: 'structure-props-title research-heading', text: 'Summary · by Vellum, from the matches' }),
@@ -80,7 +83,7 @@ export function researchCollectionDialog({ bridge, collection }) {
   const ask = async () => {
     question = input.value.trim();
     abort?.abort();
-    if (!question) { found = null; exportBtn.hidden = true; results.replaceChildren(); status.textContent = ''; return; }
+    if (!question) { found = null; onResult?.({ question, evidence: [] }); exportBtn.hidden = true; results.replaceChildren(); status.textContent = ''; return; }
     const controller = new AbortController();
     abort = controller;
     askBtn.disabled = true;

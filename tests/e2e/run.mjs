@@ -25,7 +25,7 @@ import { placeOnOneMonitor } from './window.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EXE = path.join(ROOT, 'src', 'Vellum', 'bin', 'Debug', 'net10.0-windows', 'Vellum.exe');
-const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0', 'selection', 'manipulation', 'multi-select', 'page-changes', 'copy-paste', 'page-text-font', 'form-text', 'forms', 'forms-import', 'signature', 'redaction', 'page-stamps', 'find-replace', 'compare', 'history', 'history-storage', 'collections', 'collection-research', 'structure', 'semantic-search', 'research', 'edit-flicker', 'spread', 'new-text-ux', 'health', 'accessibility'];
+const DEFAULT_SUITES = ['text-editor', 'regression', 'editing-store', 'phase0', 'selection', 'manipulation', 'multi-select', 'page-changes', 'copy-paste', 'page-text-font', 'form-text', 'forms', 'forms-import', 'signature', 'redaction', 'page-stamps', 'find-replace', 'compare', 'history', 'history-storage', 'collections', 'collection-research', 'structure', 'semantic-search', 'research', 'document-graph', 'edit-flicker', 'spread', 'new-text-ux', 'health', 'accessibility'];
 
 const args = process.argv.slice(2);
 const named = args.filter((a) => !a.startsWith('--'));

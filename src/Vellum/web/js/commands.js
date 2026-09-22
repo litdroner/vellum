@@ -109,6 +109,7 @@ export function createCommands(app, ui, actions) {
     'tools.copyTables': { group: 'Tools', icon: 'copy', doc: true, label: 'Copy tables on this page', run: () => doc() && actions.copyPageTables(doc()) },
     'tools.structure': { group: 'Tools', icon: 'file-text', doc: true, label: 'Document structure', run: () => doc() && ui.sidebar.showStructure() },
     'tools.research': { group: 'Tools', icon: 'book-open', doc: true, label: 'Research this document', run: () => doc() && ui.sidebar.showResearch() },
+    'tools.graph': { group: 'Tools', icon: 'list-tree', doc: true, label: 'Document graph…', run: () => doc() && actions.showDocumentGraph() },
     'tools.health': { group: 'Tools', icon: 'list-checks', doc: true, label: 'PDF health…', run: () => doc() && actions.health.show(doc()) },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
 
