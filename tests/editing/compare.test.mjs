@@ -1,8 +1,10 @@
-// PDF Compare (compare/diff.js): page matching and text differences.
+// PDF Compare (compare/diff.js): page matching and text differences; (compare/filter.js) one type at a time.
 //
 // Pinned here: words keep their boxes and pdf.js's split words are joined; pages that stay, move, are
 // added or removed; text added, removed and changed, with boxes on the side that has the words and an
 // anchor on the side that doesn't; two real PDFs read by pdf.js give exactly the expected changes.
+// V1.1 filter: text and page changes share a type; counts per type; stepping visits only the shown
+// changes, wrapping, and with 'all' exactly as V1 did; the position counts among the shown changes.
 // Run: node --test "tests/editing/*.test.mjs"
 
 import test, { before } from 'node:test';
@@ -12,6 +14,7 @@ import { openWithPdfjs, webModule } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { pageWords, pageProfile, similarity, alignPages, diffSequence, diffWords, rowChanges } = await webModule('compare/diff.js');
+const { FILTERS, changeTone, shows, countByFilter, stepChange, positionOf } = await webModule('compare/filter.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
@@ -106,4 +109,44 @@ test('two real PDFs: every change found, and nothing else', async () => {
   const ten = changes[1];
   assert.ok(ten.aRects[0][1] > 630 && ten.aRects[0][3] < 660, `"ten" is on its line in A: ${ten.aRects[0]}`);
   assert.ok(ten.bRects[0][1] > 650 && ten.bRects[0][3] < 680, `"twelve" is on its line in B: ${ten.bRects[0]}`);
+});
+
+// The change list of the two real PDFs above, by kind.
+const listed = ['text-removed', 'text-changed', 'text-added', 'page-moved', 'page-removed', 'page-added'].map((kind, row) => ({ kind, row }));
+
+test('filter: text and page changes share a type; counts per type', () => {
+  assert.deepEqual(listed.map(changeTone), ['removed', 'changed', 'added', 'moved', 'removed', 'added']);
+  assert.deepEqual(FILTERS.map(([id]) => id), ['all', 'added', 'removed', 'changed', 'moved']);
+  assert.deepEqual(countByFilter(listed), { all: 6, added: 2, removed: 2, changed: 1, moved: 1 });
+  assert.deepEqual(countByFilter([]), { all: 0, added: 0, removed: 0, changed: 0, moved: 0 });
+  assert.ok(listed.every((c) => shows('all', c)));
+  assert.deepEqual(listed.filter((c) => shows('added', c)).map((c) => c.kind), ['text-added', 'page-added']);
+});
+
+test('filter: stepping with all is V1 stepping', () => {
+  const v1 = (index, delta, n) => ((index < 0 ? (delta > 0 ? -1 : 0) : index) + delta + n) % n;
+  for (let index = -1; index < listed.length; index++) {
+    for (const delta of [1, -1]) assert.equal(stepChange(listed, index, delta, 'all'), v1(index, delta, listed.length), `${index} ${delta}`);
+  }
+  assert.equal(stepChange([], -1, 1, 'all'), -1);
+});
+
+test('filter: stepping visits only the shown changes, wrapping', () => {
+  assert.equal(stepChange(listed, -1, 1, 'removed'), 0, 'next from none: the first shown');
+  assert.equal(stepChange(listed, 0, 1, 'removed'), 4);
+  assert.equal(stepChange(listed, 4, 1, 'removed'), 0, 'wraps to the start');
+  assert.equal(stepChange(listed, -1, -1, 'removed'), 4, 'previous from none: the last shown');
+  assert.equal(stepChange(listed, 0, -1, 'removed'), 4, 'wraps to the end');
+  assert.equal(stepChange(listed, 1, 1, 'changed'), 1, 'the only one: stays');
+  assert.equal(stepChange(listed, 1, -1, 'added'), 5, 'from a change the filter hides: the shown one before it, wrapping');
+  assert.equal(stepChange(listed, 1, 1, 'added'), 2, 'from a hidden change: the shown one after it');
+  assert.equal(stepChange(listed.slice(0, 3), -1, 1, 'moved'), -1, 'nothing shown: nowhere to go');
+});
+
+test('filter: the position counts among the shown changes', () => {
+  assert.deepEqual(positionOf(listed, 1, 'all'), { at: 2, total: 6 });
+  assert.deepEqual(positionOf(listed, -1, 'all'), { at: 0, total: 6 });
+  assert.deepEqual(positionOf(listed, 5, 'added'), { at: 2, total: 2 });
+  assert.deepEqual(positionOf(listed, 1, 'added'), { at: 0, total: 2 }, 'the selected change is hidden');
+  assert.deepEqual(positionOf([], -1, 'all'), { at: 0, total: 0 });
 });

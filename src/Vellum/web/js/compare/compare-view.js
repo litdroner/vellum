@@ -2,6 +2,7 @@ import { h, debounce, reducedMotion } from '../dom.js';
 import { icon } from '../icons.js';
 import { documentAssetOptions } from '../pdfjs.js';
 import { pageWords, pageProfile, alignPages, rowChanges } from './diff.js';
+import { FILTERS, countByFilter, stepChange, positionOf } from './filter.js';
 
 // PDF Compare: two documents side by side, their differences listed and marked on the pages.
 // Read-only: each file is read into memory with pdf.js and nothing is ever written back. Work is spread
@@ -12,6 +13,7 @@ import { pageWords, pageProfile, alignPages, rowChanges } from './diff.js';
 //   status: 'loading' | 'reading' | 'comparing' | 'ready' | 'failed'
 //   rows:    matched pages (compare/diff.js alignPages)
 //   changes: every difference, in row order (compare/diff.js rowChanges); index: the selected one
+//   filter:  the type of change listed, marked and stepped through ('all' or a tone; compare/filter.js)
 
 const KINDS = {
   'text-added': { label: 'Added', tone: 'added' },
@@ -37,6 +39,7 @@ export class CompareView {
   rows = [];
   changes = [];
   index = -1;
+  filter = 'all';
 
   #lib;
   #askPassword;
@@ -72,9 +75,14 @@ export class CompareView {
       class: 'seg-btn', role: 'radio', 'aria-checked': String(id === this.mode), dataset: { mode: id }, onClick: () => this.setMode(id),
     }, label));
     this.modeSeg = h('div', { class: 'seg cmp-modes', role: 'radiogroup', 'aria-label': 'Comparison view', style: `--seg-count:${MODES.length};--seg-index:0` }, this.modeButtons);
+    this.filterButtons = FILTERS.map(([id, label]) => h('button', {
+      class: `seg-btn cmp-filter-btn ${id}`, role: 'radio', 'aria-checked': String(id === this.filter), dataset: { filter: id },
+      disabled: id !== 'all', onClick: () => this.setFilter(id),
+    }, h('span', { class: 'cmp-filter-n', text: '0' }), h('span', { class: 'cmp-filter-label', text: label })));
+    this.filterSeg = h('div', { class: 'seg cmp-filters', role: 'radiogroup', 'aria-label': 'Show changes', style: `--seg-count:${FILTERS.length};--seg-index:0` }, this.filterButtons);
     this.list = h('ol', { class: 'cmp-list', 'aria-label': 'Changes' });
     this.pagesEl = h('div', { class: 'cmp-pages' }, h('div', { class: 'cmp-progress' }, h('span', { class: 'toast-spinner' }), h('span', { text: 'Opening documents…' })));
-    this.el = h('div', { class: 'compare ui', role: 'dialog', 'aria-label': 'Compare documents', tabindex: '-1', 'data-own-keys': '', dataset: { mode: this.mode } },
+    this.el = h('div', { class: 'compare ui', role: 'dialog', 'aria-label': 'Compare documents', tabindex: '-1', 'data-own-keys': '', dataset: { mode: this.mode, show: this.filter } },
       h('div', { class: 'cmp-bar' },
         h('span', { class: 'cmp-title', html: icon('files', 17) }, 'Compare'),
         h('div', { class: 'cmp-files' }, chip('a', files.a), h('span', { class: 'cmp-vs', text: 'with' }), chip('b', files.b)),
@@ -82,7 +90,7 @@ export class CompareView {
         h('div', { class: 'cmp-nav' }, this.prevBtn, this.positionEl, this.nextBtn),
         this.modeSeg,
         h('button', { class: 'tb-btn small', title: 'Close (Esc)', 'aria-label': 'Close comparison', html: icon('x', 16), onClick: () => this.close() })),
-      h('div', { class: 'cmp-body' }, h('aside', { class: 'cmp-side' }, this.list), this.pagesEl));
+      h('div', { class: 'cmp-body' }, h('aside', { class: 'cmp-side' }, this.filterSeg, this.list), this.pagesEl));
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !e.target.closest?.('.dialog')) { e.preventDefault(); this.close(); }
@@ -125,12 +133,20 @@ export class CompareView {
 
   get closed() { return this.#closed; }
 
-  /** Moves to the next (1) or previous (-1) change, wrapping around. */
+  /** Moves to the next (1) or previous (-1) change the filter shows, wrapping around. */
   step(delta) {
-    const n = this.changes.length;
-    if (!n) return;
-    const from = this.index < 0 ? (delta > 0 ? -1 : 0) : this.index;
-    this.select((from + delta + n) % n);
+    const next = stepChange(this.changes, this.index, delta, this.filter);
+    if (next >= 0) this.select(next);
+  }
+
+  /** Lists, marks and steps through only one type of change ('all' or a tone); nothing is compared again. */
+  setFilter(filter) {
+    if (!FILTERS.some(([id]) => id === filter) || filter === this.filter) return;
+    this.filter = filter;
+    this.el.dataset.show = filter;
+    this.filterSeg.style.setProperty('--seg-index', FILTERS.findIndex(([id]) => id === filter));
+    for (const b of this.filterButtons) b.setAttribute('aria-checked', String(b.dataset.filter === filter));
+    this.#updatePosition();
   }
 
   /** Selects a change and brings its place on the pages into view. */
@@ -457,9 +473,15 @@ export class CompareView {
   }
 
   #updatePosition() {
-    const n = this.changes.length;
-    this.prevBtn.disabled = this.nextBtn.disabled = !n;
-    this.positionEl.textContent = n ? `${this.index < 0 ? '–' : this.index + 1} / ${n}` : '';
+    const { at, total } = positionOf(this.changes, this.index, this.filter);
+    this.prevBtn.disabled = this.nextBtn.disabled = !total;
+    this.positionEl.textContent = total ? `${at || '–'} / ${total}` : '';
+    const counts = countByFilter(this.changes);
+    for (const b of this.filterButtons) {
+      const n = counts[b.dataset.filter];
+      b.querySelector('.cmp-filter-n').textContent = n;
+      b.disabled = b.dataset.filter !== 'all' && !n;
+    }
   }
 
   #fail(message) {

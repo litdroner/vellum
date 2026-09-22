@@ -1963,8 +1963,17 @@ kbd {
 .cmp-position { min-width: 52px; text-align: center; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .cmp-modes { width: 290px; flex: none; }
 .cmp-body { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
-.cmp-side { min-height: 0; overflow: auto; padding: 10px; background: var(--glass); box-shadow: inset -1px 0 0 var(--hairline); }
-.cmp-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.cmp-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 10px 10px 0; background: var(--glass); box-shadow: inset -1px 0 0 var(--hairline); }
+.cmp-list { display: flex; flex-direction: column; gap: 4px; flex: 1; min-height: 0; overflow: auto; margin: 0 -10px; padding: 0 10px 10px; list-style: none; }
+/* The type of change shown (compare/filter.js): the others leave the list and the pages. */
+.cmp-filters { flex: none; }
+.cmp-filters > .seg-btn.cmp-filter-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 40px; min-width: 0; padding: 0; }
+.cmp-filter-n { font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cmp-filter-label { font-size: 11px; }
+.compare[data-show="added"] :is(.cmp-item, .cmp-mark):not(.added),
+.compare[data-show="removed"] :is(.cmp-item, .cmp-mark):not(.removed),
+.compare[data-show="changed"] :is(.cmp-item, .cmp-mark):not(.changed),
+.compare[data-show="moved"] :is(.cmp-item, .cmp-mark):not(.moved) { display: none; }
 .cmp-item-btn {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 // Compare documents in the real app, the way a person does it: the command palette, the dialog (A is the
 // active tab, B the other one), Compare; then the change list and count, F7 / Shift+F7, clicking a change,
-// Overlay and Blink, Esc. Both files must be byte for byte the same afterwards. The comparison itself is
+// showing one type of change (V1.1), Overlay and Blink, Esc. Both files must be byte for byte the same afterwards. The comparison itself is
 // proved in tests/editing/compare.test.mjs.
 
 import fs from 'node:fs';
@@ -73,6 +73,41 @@ export async function run(t) {
   check('…and scrolls its page into view', inView);
   check('the removed page is outlined', await q(`document.querySelector('.cmp-row[data-row="3"] .cmp-page').classList.contains('current')`));
   await shot('compare-jump');
+
+  area('filter');
+  const filterCounts = await q(`Object.fromEntries([...document.querySelectorAll('.cmp-filter-btn')].map((b) => [b.dataset.filter, b.querySelector('.cmp-filter-n').textContent]))`);
+  check('each type shows its count', JSON.stringify(filterCounts) === JSON.stringify({ all: '6', added: '2', removed: '2', changed: '1', moved: '1' }), JSON.stringify(filterCounts));
+  const clickFilter = async (id) => {
+    const r = await q(`(() => { const r = document.querySelector('.cmp-filter-btn[data-filter="${id}"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await c.mouse(r.x, r.y);
+    await sleep(300);
+  };
+  const shownItems = `[...document.querySelectorAll('.cmp-item')].filter((e) => e.offsetParent).map((e) => e.dataset.change).join(',')`;
+  const shownMarks = `[...document.querySelectorAll('.cmp-row[data-row="0"] .cmp-mark')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.dataset.change)`;
+  await clickFilter('changed');
+  check('Changed: only the changed text is listed', (await q(shownItems)) === '1', await q(shownItems));
+  check('…and only its marks are on the pages', await q(`(() => { const m = ${shownMarks}; return m.length === 2 && m.every((x) => x === '1'); })()`));
+  check('…the selected change is hidden, so no position among 1', (await q(`document.querySelector('.cmp-position').textContent`)) === '– / 1');
+  await c.key('F7');
+  await sleep(300);
+  check('F7 goes to the changed text', (await q(`${CV}.index`)) === 1 && (await q(`document.querySelector('.cmp-position').textContent`)) === '1 / 1');
+  await c.key('F7');
+  await sleep(200);
+  check('F7 again: still it (the only one)', (await q(`${CV}.index`)) === 1);
+  await clickFilter('added');
+  check('Added: added text and the added page', (await q(shownItems)) === '2,5', await q(shownItems));
+  await c.key('Shift+F7');
+  await sleep(300);
+  check('Shift+F7 skips the hidden types, wrapping to the added page', (await q(`${CV}.index`)) === 5 && (await q(`document.querySelector('.cmp-position').textContent`)) === '2 / 2');
+  await q(`document.querySelector('.cmp-filter-btn[data-filter="moved"]').click()`);
+  await sleep(200);
+  check('Moved: the moved page', (await q(shownItems)) === '3');
+  await shot('compare-filter');
+  await clickFilter('all');
+  check('All: every change again', (await q(shownItems)) === '0,1,2,3,4,5' && (await q(`document.querySelector('.cmp-position').textContent`)) === '6 / 6');
+  check('the comparison itself is unchanged', (await q(`${CV}.changes.length`)) === 6);
+  await c.mouse(at.x, at.y); // back to the removed page, where the next area has always started
+  await sleep(900);
 
   area('visual');
   await q(`document.querySelector('.cmp-modes [data-mode="overlay"]').click()`);
