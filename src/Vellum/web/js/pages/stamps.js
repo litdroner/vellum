@@ -6,13 +6,19 @@
 //               rasterized, so the page's content stays whole in the file.
 //   pageNumber  { format, position, size, start }  real text drawn in the visible box; `format` holds
 //               {n} (this page's number) and {total}; the number follows the page's place in the plan.
-//   watermark   { text, position, size, opacity, rotation }  real text, drawn over the page content.
+//   watermark   { text, position, size, opacity, rotation }  real text, drawn over the page content; or
+//               { picture, position, scale, opacity, rotation }  a PNG or JPEG image, `picture` being
+//               { source, format, width, height } as editing/objects/image.js readPicture() describes it
+//               (its bytes in the document's sources) and `scale` its width in % of the shown page's.
+//               The image is embedded once however many pages carry it, its own transparency with it.
 //
-// Stamps are Helvetica (a standard PDF font, so every reader shows them), drawn upright as the page
+// Text stamps are Helvetica (a standard PDF font, so every reader shows them), drawn upright as the page
 // is displayed, inside /Artifact marked content so readers and screen readers treat them as page
 // decoration. The page's own content is wrapped in q … Q first, so nothing it leaves set changes them.
 
 export const PAGE_NUMBER_POSITIONS = ['bottom-center', 'bottom-right', 'bottom-left', 'top-center', 'top-right', 'top-left'];
+import { embedPictures } from '../editing/objects/image.js';
+
 export const WATERMARK_POSITIONS = ['center', 'top', 'bottom'];
 
 const EDGE = 28; // points between a page number and the page edge
@@ -42,12 +48,13 @@ export const hasPageSettings = (e) => Boolean(e.crop || e.pageNumber || e.waterm
 
 /**
  * Applies crop, page numbers and watermarks. pages[i] shows plan[i]; content edits have already
- * been written. Pages without settings are left alone.
+ * been written. Pages without settings are left alone. `sources` holds picture watermarks' bytes.
  */
-export async function writePageSettings({ lib, doc, pages, plan }) {
+export async function writePageSettings({ lib, doc, pages, plan, sources }) {
   const { PDFName, PDFNumber, StandardFonts } = lib;
   const ctx = doc.context;
   let font = null;
+  const { embedded } = await embedPictures(lib, doc, plan.map((e, i) => pages[i] && e.watermark?.picture), sources);
   const total = plan.length;
   for (let i = 0; i < plan.length; i++) {
     const e = plan[i];
@@ -64,23 +71,23 @@ export async function writePageSettings({ lib, doc, pages, plan }) {
       page.node.set(PDFName.of('CropBox'), ctx.obj(box.map((v) => PDFNumber.of(round(v)))));
     }
     const lines = [];
-    if (e.watermark?.text || e.pageNumber) {
-      font ??= await doc.embedFont(StandardFonts.Helvetica);
-      const fontName = page.node.newFontDictionary('VlStamp', font.ref);
+    const picture = e.watermark?.picture;
+    if (e.watermark?.text || picture || e.pageNumber) {
+      const lettered = Boolean(e.watermark?.text || e.pageNumber);
+      if (lettered) font ??= await doc.embedFont(StandardFonts.Helvetica);
+      const fontName = lettered ? page.node.newFontDictionary('VlStamp', font.ref) : null;
+      const alpha = (opacity) => (opacity < 1 ? [`${page.node.newExtGState('VlStampGS', ctx.obj({ Type: 'ExtGState', ca: opacity, CA: opacity }))} gs`] : []);
+      const turn = (rotation, x, y) => {
+        const t = (rotation * Math.PI) / 180;
+        const [c, s] = [Math.cos(t), Math.sin(t)];
+        return `${fmt(c)} ${fmt(s)} ${fmt(-s)} ${fmt(c)} ${fmt(x)} ${fmt(y)} cm`;
+      };
       const draw = (text, size, { x, y, anchor = 'center', rotation = 0, opacity = 1, gray = 0 }) => {
         const width = font.widthOfTextAtSize(text, size);
         const cap = font.heightAtSize(size, { descender: false }) * 0.72;
         const dx = anchor === 'left' ? 0 : anchor === 'right' ? -width : -width / 2;
-        const ops = [];
-        if (opacity < 1) {
-          const gs = page.node.newExtGState('VlStampGS', ctx.obj({ Type: 'ExtGState', ca: opacity, CA: opacity }));
-          ops.push(`${gs} gs`);
-        }
-        const t = (rotation * Math.PI) / 180;
-        const [c, s] = [Math.cos(t), Math.sin(t)];
-        ops.push(`${fmt(c)} ${fmt(s)} ${fmt(-s)} ${fmt(c)} ${fmt(x)} ${fmt(y)} cm`,
-          `${fmt(gray)} g BT ${fontName} ${fmt(size)} Tf ${fmt(dx)} ${fmt(-cap / 2)} Td ${font.encodeText(text).toString()} Tj ET`);
-        lines.push('q', ...ops, 'Q');
+        lines.push('q', ...alpha(opacity), turn(rotation, x, y),
+          `${fmt(gray)} g BT ${fontName} ${fmt(size)} Tf ${fmt(dx)} ${fmt(-cap / 2)} Td ${font.encodeText(text).toString()} Tj ET`, 'Q');
       };
       const rotate = ((page.getRotation().angle % 360) + 360) % 360;
       const [w, h] = rotate % 180 ? [box[3] - box[1], box[2] - box[0]] : [box[2] - box[0], box[3] - box[1]];
@@ -89,6 +96,16 @@ export async function writePageSettings({ lib, doc, pages, plan }) {
         const { text, size = 60, opacity = 0.2, rotation = 45, position = 'center' } = e.watermark;
         const y = position === 'top' ? h * 0.8 : position === 'bottom' ? h * 0.2 : h / 2;
         draw(text, size, { x: w / 2, y, rotation, opacity: clamp(opacity, 0, 1), gray: 0.5 });
+      }
+      if (picture) {
+        // The image, `scale`% of the page wide at its own aspect ratio, centred on its point and turned about it.
+        const { scale = 50, opacity = 0.3, rotation = 0, position = 'center' } = e.watermark;
+        const y = position === 'top' ? h * 0.8 : position === 'bottom' ? h * 0.2 : h / 2;
+        const iw = (w * clamp(scale, 1, 400)) / 100;
+        const ih = (iw * picture.height) / picture.width;
+        const name = page.node.newXObject('VlWatermark', embedded.get(picture.source));
+        lines.push('q', ...alpha(clamp(opacity, 0, 1)), turn(rotation, w / 2, y),
+          `${fmt(iw)} 0 0 ${fmt(ih)} ${fmt(-iw / 2)} ${fmt(-ih / 2)} cm`, `${name} Do`, 'Q');
       }
       if (e.pageNumber) {
         const { size = 10, position = 'bottom-center' } = e.pageNumber;

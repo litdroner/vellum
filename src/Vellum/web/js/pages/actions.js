@@ -3,6 +3,9 @@ import { h } from '../dom.js';
 import { openMenu } from '../ui/menu.js';
 import { showDialog, toast } from '../ui/dialogs.js';
 import { loadPdfLib } from '../annotations/persist.js';
+import { newId } from '../annotations/model.js';
+import { readPicture } from '../editing/objects/image.js';
+import { decodeBase64 } from '../ui/text-editor.js';
 import { PAGE_NUMBER_POSITIONS, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 
 // Page operations as the UI offers them: the DocumentView methods plus the dialogs, menus and
@@ -146,26 +149,55 @@ export function createPageActions({ onOpenFile }) {
       if (view.setPageSetting(targets, 'pageNumber', value)) toast(answer.remove ? 'Page numbers removed' : `Numbered ${plural(targets.length, 'page')}`, { action: undo(view) });
     },
 
+    /** Text or a picture (PNG or JPEG) over the pages; the picture's bytes go into the document's sources. */
     async watermark(view, ids) {
       if (!(await allowed(view))) return;
       const plan = view.annotations.plan;
-      const current = plan.find((e) => ids.includes(e.id) && e.watermark)?.watermark ?? { text: 'DRAFT', position: 'center', size: 60, opacity: 0.2, rotation: 45 };
+      const current = { text: 'DRAFT', position: 'center', size: 60, scale: 50, opacity: 0.2, rotation: 45, ...plan.find((e) => ids.includes(e.id) && e.watermark)?.watermark };
+      let picture = current.picture ?? null; // { source, format, width, height }
+      let bytes = picture ? view.sources.get(picture.source) : null;
+      let problem = null;
+      const chooser = picturePicker(() => ({ picture, bytes }), async () => {
+        let file;
+        try {
+          ({ file } = await bridge.request('pictureDialog', { purpose: 'watermark' }));
+          if (!file) return false;
+          const chosen = decodeBase64(file.data);
+          picture = { source: newId(), ...(await readPicture(await loadPdfLib(), chosen)) };
+          bytes = chosen;
+          problem = null;
+        } catch (err) {
+          problem = err.message;
+        }
+        return true;
+      });
       const answer = await askForPageSetting({
         title: 'Watermark', iconName: 'blend', count: ids.length, total: plan.length, preferAll: true, removable: plan.some((e) => e.watermark),
-        message: 'Adds text across the pages, over their content.',
+        message: 'Adds text or a picture across the pages, over their content.',
+        modes: { value: picture ? 'picture' : 'text', options: [['text', 'Text'], ['picture', 'Picture']], label: 'Watermark kind' },
         fields: [
-          { key: 'text', label: 'Text', type: 'text', value: current.text, wide: true },
+          { key: 'text', label: 'Text', type: 'text', value: current.text, wide: true, mode: 'text' },
+          { key: 'picture', label: 'Picture', type: 'custom', node: chooser.node, wide: true, mode: 'picture' },
           { key: 'position', label: 'Position', type: 'select', value: current.position, options: WATERMARK_POSITIONS.map((p) => [p, label(p)]) },
-          { key: 'size', label: 'Size', type: 'number', unit: 'pt', value: current.size, min: 6, max: 400 },
+          { key: 'size', label: 'Size', type: 'number', unit: 'pt', value: current.size, min: 6, max: 400, mode: 'text' },
+          { key: 'scale', label: 'Width of page', type: 'number', unit: '%', value: current.scale, min: 1, max: 400, mode: 'picture' },
           { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', value: Math.round(current.opacity * 100), min: 5, max: 100 },
           { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', value: current.rotation, min: -180, max: 180 },
         ],
-        check: (v) => (v.text.trim() ? checkText(v.text) : 'Enter the watermark text.'),
+        check: (v) => (v.mode === 'picture'
+          ? problem ?? (picture ? null : 'Choose a PNG or JPEG picture.')
+          : v.text.trim() ? checkText(v.text) : 'Enter the watermark text.'),
+        preview: (v) => (v.mode === 'picture' && picture ? `${picture.width} × ${picture.height} ${picture.format === 'png' ? 'PNG' : 'JPEG'}; a PNG’s transparency is kept.` : null),
       });
+      chooser.close();
       if (!answer) return;
       const targets = answer.all ? plan.map((e) => e.id) : ids;
-      const { text, position, size, opacity, rotation } = answer.values;
-      const value = answer.remove ? null : { text: text.trim(), position, size: Number(size), opacity: Number(opacity) / 100, rotation: Number(rotation) };
+      const { mode, text, position, size, scale, opacity, rotation } = answer.values;
+      const shared = { position, opacity: Number(opacity) / 100, rotation: Number(rotation) };
+      if (!answer.remove && mode === 'picture') view.sources.set(picture.source, bytes);
+      const value = answer.remove ? null
+        : mode === 'picture' ? { picture, ...shared, scale: Number(scale) }
+          : { text: text.trim(), ...shared, size: Number(size) };
       if (view.setPageSetting(targets, 'watermark', value)) toast(answer.remove ? 'Watermark removed' : `Watermarked ${plural(targets.length, 'page')}`, { action: undo(view) });
     },
 
@@ -299,18 +331,50 @@ async function checkText(text) {
 }
 
 /**
+ * The picture row of the Watermark dialog: a thumbnail of the chosen picture and a Choose button.
+ * choose() asks for a file and resolves true when something changed; the row then asks the dialog to
+ * check it again. close() lets the thumbnail go.
+ */
+function picturePicker(current, choose) {
+  let url = null;
+  const thumb = h('img', { class: 'watermark-thumb', alt: '' });
+  const name = h('span', { class: 'watermark-picture-name' });
+  const button = h('button', { class: 'btn', type: 'button', text: 'Choose picture…' });
+  const node = h('div', { class: 'watermark-picture' }, thumb, name, button);
+  const show = () => {
+    const { picture, bytes } = current();
+    if (url) URL.revokeObjectURL(url);
+    url = picture && bytes ? URL.createObjectURL(new Blob([bytes], { type: picture.format === 'png' ? 'image/png' : 'image/jpeg' })) : null;
+    thumb.hidden = !url;
+    if (url) thumb.src = url;
+    name.textContent = picture ? '' : 'No picture chosen';
+  };
+  button.addEventListener('click', async () => {
+    if (!(await choose())) return;
+    show();
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  show();
+  return { node, close: () => url && URL.revokeObjectURL(url) };
+}
+
+/**
  * The dialog for crop, page numbers and watermarks: a few fields, which pages, Apply or Remove.
+ * `modes` ({ value, options, label }) adds a segmented choice above the fields; a field with a `mode`
+ * shows only in that mode, and values.mode says which was chosen. A 'custom' field is its own `node`.
  * Resolves { all, remove, values } or null if cancelled.
  */
-async function askForPageSetting({ title, message, iconName, count, total, preferAll = false, removable, fields, preview, check }) {
+async function askForPageSetting({ title, message, iconName, count, total, preferAll = false, removable, modes, fields, preview, check }) {
   const inputs = new Map();
+  let mode = modes?.value;
   const rows = fields.map((f) => {
+    if (f.type === 'custom') return h('div', { class: `page-setting${f.wide ? ' wide' : ''}`, 'data-mode': f.mode }, h('span', { text: f.label }), f.node);
     const input = f.type === 'select'
       ? h('select', { class: 'field' }, ...f.options.map(([value, text]) => h('option', { value, text, selected: value === f.value })))
       : h('input', { class: 'field', type: f.type, value: String(f.value), min: f.min, max: f.max, step: f.type === 'number' ? 'any' : null, spellcheck: 'false' });
     input.setAttribute('aria-label', f.label);
     inputs.set(f.key, input);
-    return h('label', { class: `page-setting${f.wide ? ' wide' : ''}` }, h('span', { text: f.label }),
+    return h('label', { class: `page-setting${f.wide ? ' wide' : ''}`, 'data-mode': f.mode }, h('span', { text: f.label }),
       h('span', { class: 'page-setting-input' }, input, f.unit ? h('span', { class: 'unit', text: f.unit }) : null));
   });
   const option = (value, text, checked) => h('label', { class: 'choice' },
@@ -319,27 +383,45 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
     option('selected', count === 1 ? 'This page' : `Selected pages (${count})`, !preferAll),
     option('all', `All pages (${total})`, preferAll));
   const note = h('p', { class: 'dialog-note' });
-  const values = () => Object.fromEntries([...inputs].map(([k, el]) => [k, el.value]));
+  const settings = h('div', { class: 'page-settings' }, rows);
+  const values = () => ({ ...Object.fromEntries([...inputs].map(([k, el]) => [k, el.value])), mode });
+  const shown = (f) => !f.mode || f.mode === mode;
+  let switcher = null;
+  if (modes) {
+    const buttons = modes.options.map(([id, text]) => h('button', { class: 'seg-btn', type: 'button', role: 'radio', 'data-mode': id, text }));
+    switcher = h('div', { class: 'seg page-setting-modes', role: 'radiogroup', 'aria-label': modes.label }, ...buttons);
+    switcher.style.setProperty('--seg-count', String(buttons.length));
+    const pick = (id) => {
+      mode = id;
+      buttons.forEach((b, i) => {
+        b.setAttribute('aria-checked', String(b.dataset.mode === id));
+        if (b.dataset.mode === id) switcher.style.setProperty('--seg-index', String(i));
+      });
+      for (const row of rows) if (row.dataset.mode) row.hidden = row.dataset.mode !== id;
+    };
+    for (const b of buttons) b.addEventListener('click', () => { pick(b.dataset.mode); update(); });
+    pick(mode);
+  }
   let primary = null;
   let valid = true;
   let turn = 0;
   const update = async () => {
     const v = values();
     const mine = ++turn;
-    const bad = fields.find((f) => f.type === 'number' && (v[f.key] === '' || !Number.isFinite(Number(v[f.key])) || Number(v[f.key]) < f.min || (f.max != null && Number(v[f.key]) > f.max)));
+    const bad = fields.find((f) => f.type === 'number' && shown(f) && (v[f.key] === '' || !Number.isFinite(Number(v[f.key])) || Number(v[f.key]) < f.min || (f.max != null && Number(v[f.key]) > f.max)));
     const problem = bad ? `${bad.label}: enter a number from ${bad.min}${bad.max != null ? ` to ${bad.max}` : ' up'}.` : await check?.(v);
     if (mine !== turn) return;
     valid = !problem;
     if (primary) primary.disabled = !valid;
     note.textContent = problem ?? preview?.(v) ?? '';
   };
-  for (const el of inputs.values()) el.addEventListener('input', update);
+  settings.addEventListener('input', update);
 
   const buttons = [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Apply', primary: true }];
   if (removable) buttons.unshift({ id: 'remove', label: 'Remove' });
   const result = await showDialog({
     title, message, iconName, className: 'page-setting-dialog',
-    content: [h('div', { class: 'page-settings' }, rows), scope, note],
+    content: [switcher, settings, scope, note],
     buttons,
     onOpen: (dialog) => {
       primary = dialog.querySelector('.btn.primary');

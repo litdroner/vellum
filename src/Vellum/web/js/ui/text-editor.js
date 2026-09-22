@@ -156,7 +156,7 @@ const sameKeys = (a, b) => a.length === b.length && a.every((key) => b.includes(
 const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 /** A file's bytes as the host sends them (base64). */
-function decodeBase64(data) {
+export function decodeBase64(data) {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

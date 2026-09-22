@@ -7,13 +7,16 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { loadPdfLib, openWithPdfjs, webModule } from './harness.mjs';
+import zlib from 'node:zlib';
+import { engine, loadPdfLib, openWithPdfjs, webModule } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { composeDocument } = await webModule('annotations/persist.js');
 const { AnnotationStore } = await webModule('annotations/model.js');
 const { identityPlan, isIdentity, setPageSetting, moveEntries, duplicateEntries } = await webModule('pages/plan.js');
 const { pageNumberText, unsupportedCharacters } = await webModule('pages/stamps.js');
+const { openSource } = await engine('source.js');
+const { readPicture } = await engine('objects/image.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
@@ -138,4 +141,127 @@ test('saved stamps reopen as ordinary content; unsupported characters are report
   const lib = await loadPdfLib();
   assert.equal(await unsupportedCharacters(lib, 'Confidential – café'), '');
   assert.equal(await unsupportedCharacters(lib, 'Draft ₹ 草'), '₹草');
+});
+
+// ---- picture watermarks ---------------------------------------------------------------------------
+
+/** A PNG of `width` × `height` pixels, RGBA (half transparent) when `alpha`, else RGB. */
+function png(width, height, alpha = false) {
+  const chunk = (type, data) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const out = Buffer.alloc(body.length + 8);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(zlib.crc32(body), body.length + 4);
+    return out;
+  };
+  const px = alpha ? 4 : 3;
+  const rows = Buffer.alloc((1 + width * px) * height, alpha ? 128 : 90);
+  for (let y = 0; y < height; y++) rows[y * (1 + width * px)] = 0;
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, alpha ? 6 : 2, 0, 0, 0], 8);
+  return new Uint8Array(Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header), chunk('IDAT', zlib.deflateSync(rows)), chunk('IEND', Buffer.alloc(0)),
+  ]));
+}
+
+/** A 4 × 2 baseline JPEG (the one picture-replace.test.mjs uses). */
+const JPEG = new Uint8Array(Buffer.from('/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAACAAQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDn/h74l1f/AIRe1/4mt7/4EP6D3ooor+ZMX/Hn6s93If8AkVYb/BH8j//Z', 'base64'));
+
+/** A picture watermark setting for `bytes`, registered in `sources` under `source`. */
+async function pictureMark(sources, source, bytes, settings = {}) {
+  const picture = { source, ...(await readPicture(await loadPdfLib(), bytes)) };
+  sources.set(source, bytes);
+  return { picture, position: 'center', scale: 50, opacity: 0.3, rotation: 0, ...settings };
+}
+
+/** Each page's content (latin1) and its image XObjects ({ name, ref, stream }). */
+async function imagesOf(bytes) {
+  const lib = await loadPdfLib();
+  const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
+  const source = await openSource(lib, bytes);
+  return doc.getPages().map((page) => {
+    const content = Buffer.from(source.contentBytes(page.node)).toString('latin1');
+    const xobjects = page.node.Resources()?.lookup(lib.PDFName.of('XObject'));
+    const images = xobjects ? xobjects.entries().map(([name, ref]) => ({ name: name.decodeText(), ref, stream: doc.context.lookup(ref) })) : [];
+    return { content, images, lib, doc };
+  });
+}
+
+test('picture watermark: a PNG, its transparency kept, placed by position, width, opacity and rotation', async () => {
+  const sources = new Map();
+  const bytes = read('simple');
+  let plan = identityPlan(1);
+  plan = setPageSetting(plan, new Set([plan[0].id]), 'watermark', await pictureMark(sources, 'p1', png(40, 20, true), { position: 'top', scale: 50, opacity: 0.35, rotation: 30 }));
+  const out = await composeDocument({ base: bytes, plan, sources });
+  const [{ content, images, lib, doc }] = await imagesOf(out);
+  assert.equal(images.length, 1, 'one image, and nothing rasterized');
+  const [image] = images;
+  assert.equal(image.stream.dict.get(lib.PDFName.of('Subtype')).decodeText(), 'Image');
+  assert.ok(image.stream.dict.get(lib.PDFName.of('SMask')), 'the PNG’s alpha is its soft mask');
+  // Drawn at the top point of the shown page, turned 30°, half the page wide at the image's aspect ratio.
+  const [, , w, h] = doc.getPage(0).node.MediaBox().asArray().map((v) => v.asNumber());
+  const turn = `0.866 0.5 -0.5 0.866 ${w / 2} ${h * 0.8} cm`;
+  const size = `${w / 2} 0 0 ${w / 4} ${-w / 4} ${-w / 8} cm`;
+  assert.ok(content.includes(`${turn}\n${size}\n/${image.name} Do`), content.slice(-400));
+  const states = doc.getPage(0).node.Resources().lookup(lib.PDFName.of('ExtGState'));
+  assert.ok(states.values().some((v) => doc.context.lookup(v).get(lib.PDFName.of('ca'))?.asNumber() === 0.35), 'opacity written');
+  const [page] = await pagesOf(out);
+  assert.ok(find(page, 'Hello, world'), 'page text kept');
+});
+
+test('picture watermark: a JPEG goes in as it is, once for every page that carries it', async () => {
+  const sources = new Map();
+  let plan = identityPlan(5);
+  plan = setPageSetting(plan, new Set(plan.map((e) => e.id)), 'watermark', await pictureMark(sources, 'j1', JPEG));
+  const pages = await imagesOf(await composeDocument({ base: read('multipage'), plan, sources }));
+  const refs = new Set(pages.map((p) => p.images.find((i) => i.name.startsWith('VlWatermark')).ref.toString()));
+  assert.equal(refs.size, 1, 'embedded once');
+  const { stream } = pages[0].images.find((i) => i.name.startsWith('VlWatermark'));
+  assert.equal(stream.dict.get(pages[0].lib.PDFName.of('Filter')).asString(), '/DCTDecode');
+  assert.deepEqual(Buffer.from(stream.getContents()), Buffer.from(JPEG), 'byte for byte');
+  assert.ok(pages.every((p) => p.content.includes(`/${p.images.find((i) => i.name.startsWith('VlWatermark')).name} Do`)));
+});
+
+test('picture watermark follows duplicates and moves, undo and redo, and is removed', async () => {
+  const sources = new Map();
+  const store = new AnnotationStore();
+  store.initPlan(identityPlan(5));
+  const first = store.plan[0].id;
+  store.applyPlan(setPageSetting(store.plan, new Set([first]), 'watermark', await pictureMark(sources, 'p1', png(8, 8))));
+  store.applyPlan(duplicateEntries(store.plan, new Set([first])).plan);
+  store.applyPlan(moveEntries(store.plan, new Set([first]), 6));
+  const marked = async () => (await imagesOf(await composeDocument({ base: read('multipage'), plan: store.plan, sources })))
+    .map((p) => p.images.some((i) => i.name.startsWith('VlWatermark')));
+  assert.deepEqual(await marked(), [true, false, false, false, false, true], 'the copy stays first, the original moved last');
+  store.undo();
+  store.undo();
+  store.undo();
+  assert.equal(isIdentity(store.plan, 5), true);
+  store.redo();
+  assert.equal(store.plan[0].watermark.picture.source, 'p1');
+  store.applyPlan(setPageSetting(store.plan, new Set([first]), 'watermark', null));
+  assert.deepEqual(await marked(), [false, false, false, false, false]);
+});
+
+test('picture watermark: saved and reopened it stays; a text watermark on other pages is unchanged; bad files are refused', async () => {
+  const sources = new Map();
+  let plan = identityPlan(2);
+  plan = setPageSetting(plan, new Set([plan[0].id]), 'watermark', await pictureMark(sources, 'p1', png(10, 10, true)));
+  plan = setPageSetting(plan, new Set([plan[1].id]), 'watermark', { text: 'DRAFT', position: 'center', size: 60, opacity: 0.2, rotation: 45 });
+  const saved = await composeDocument({ base: read('multipage'), plan: [...plan, ...identityPlan(5).slice(2)], sources });
+  const again = await composeDocument({ base: saved, plan: identityPlan(5) });
+  const pages = await imagesOf(again);
+  assert.ok(pages[0].images.some((i) => i.name.startsWith('VlWatermark')), 'picture kept after reopening');
+  assert.equal(pages[1].images.length, 0, 'the text watermark page has no image');
+  assert.ok(find((await pagesOf(again))[1], 'DRAFT'), 'text watermark kept');
+  // A picture whose bytes are gone refuses the save, rather than dropping the watermark silently.
+  await assert.rejects(composeDocument({ base: read('multipage'), plan, sources: new Map() }), /isn’t available/);
+  const lib = await loadPdfLib();
+  await assert.rejects(readPicture(lib, new Uint8Array([1, 2, 3, 4])), /PNG or JPEG/);
+  const broken = png(10, 10).slice(0, 40);
+  await assert.rejects(readPicture(lib, broken), /couldn’t be read/);
 });

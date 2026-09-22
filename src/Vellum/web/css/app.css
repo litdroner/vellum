@@ -1580,6 +1580,16 @@ kbd {
 .page-setting-input { position: relative; display: flex; align-items: center; }
 .page-setting .field { height: 32px; }
 .page-setting .unit { position: absolute; right: 12px; color: var(--ink-3); pointer-events: none; }
+.page-setting-modes { width: 200px; margin-bottom: 12px; }
+.watermark-picture { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.watermark-picture-name { flex: 1; color: var(--ink-3); }
+.watermark-thumb {
+  flex: 1;
+  min-width: 0;
+  max-height: 72px;
+  object-fit: contain;
+  object-position: left center;
+}
 
 /* ---- signature (ui/signature.js) ----------------------------------------------------------- */
 
