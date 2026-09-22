@@ -1641,6 +1641,34 @@ kbd {
   object-position: left center;
 }
 
+/* ---- export (ui/export.js) ------------------------------------------------------------------ */
+
+.export-dialog { width: min(480px, calc(100vw - 40px)); }
+.export-dialog .choices + .choices { margin-top: 12px; }
+.export-dialog .choice-note { flex-basis: 100%; color: var(--ink-3); font-size: 12px; }
+.export-destination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 9px 13px;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.export-folder-label { color: var(--ink-3); font-size: 12px; }
+.export-folder-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
 /* ---- signature (ui/signature.js) ----------------------------------------------------------- */
 
 .dialog.signature-dialog { width: min(540px, calc(100vw - 40px)); }

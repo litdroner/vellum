@@ -606,6 +606,7 @@ public partial class MainWindow : Window
 
         RegisterUpdateHandlers(bridge);
         RegisterOcrLanguageHandlers(bridge);
+        RegisterExportHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------

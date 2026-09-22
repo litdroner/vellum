@@ -49,6 +49,7 @@ export function createCommands(app, ui, actions) {
     'file.save': { group: 'File', icon: 'save', doc: true, label: 'Save changes', keys: ['Ctrl+S'], global: true, run: () => actions.save() },
     'file.saveAs': { group: 'File', icon: 'save-all', doc: true, label: 'Save as…', keys: ['Ctrl+Shift+S'], global: true, run: () => actions.saveAs() },
     'file.print': { group: 'File', icon: 'printer', doc: true, label: 'Print…', keys: ['Ctrl+P'], global: true, run: () => actions.print() },
+    'file.export': { group: 'File', icon: 'file-output', doc: true, label: 'Export…', keys: ['Ctrl+Shift+E'], global: true, run: () => actions.export.run(doc()) },
     'file.close': { group: 'File', icon: 'x', doc: true, label: 'Close document', keys: ['Ctrl+W', 'Ctrl+F4'], global: true, run: () => actions.close() },
     'file.history': { group: 'File', icon: 'clock', doc: true, label: 'Document history…', run: () => actions.history.show(doc()) },
     'file.showInFolder': { group: 'File', icon: 'folder-open', doc: true, label: 'Show in folder', run: () => actions.showInFolder() },

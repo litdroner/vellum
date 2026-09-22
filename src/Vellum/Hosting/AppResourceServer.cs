@@ -13,6 +13,7 @@ namespace Vellum.Hosting;
 /// of a PDF the user opened. Only files we registered can be read or written, never arbitrary disk paths.
 ///   GET  /doc/{token}   the PDF's bytes
 ///   POST /save/{token}  new bytes for that PDF (annotations saved); written atomically
+///   POST /export/{token} the bytes of one file an export writes (Export Center); written atomically
 ///   GET  /ocr-lang/{code}.traineddata.gz  a downloaded OCR language pack, only once verified (see OcrLanguages)
 /// </summary>
 public sealed class AppResourceServer
@@ -45,6 +46,8 @@ public sealed class AppResourceServer
     private readonly ConcurrentDictionary<string, string> _documents = new();
     /// <summary>Tokens the page may read but never write (document history snapshots).</summary>
     private readonly ConcurrentDictionary<string, bool> _readOnly = new();
+    /// <summary>Tokens an export may write one file to. Never readable, and never a document the page opened.</summary>
+    private readonly ConcurrentDictionary<string, string> _exports = new();
 
     public AppResourceServer(CoreWebView2 core, CoreWebView2Environment env, string webRoot)
     {
@@ -80,6 +83,24 @@ public sealed class AppResourceServer
         return newToken;
     }
 
+    /// <summary>
+    /// Lets the page write one exported file to <paramref name="path"/> (Export Center); returns the token used
+    /// in its URL. The file is written as it is given: it is not a PDF Vellum opened and is never served back.
+    /// </summary>
+    public string RegisterExportFile(string path)
+    {
+        var token = Guid.NewGuid().ToString("N");
+        _exports[token] = Path.GetFullPath(path);
+        return token;
+    }
+
+    /// <summary>True when a document the page was given to open or save lives in this folder.</summary>
+    public bool IsKnownFolder(string folder)
+    {
+        var full = Path.GetFullPath(folder);
+        return _documents.Values.Any(p => string.Equals(Path.GetDirectoryName(p), full, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>A downloaded OCR language pack's verified bytes by language code, or null (set by the window).</summary>
     public Func<string, byte[]?>? OcrLanguage { get; set; }
 
@@ -102,6 +123,13 @@ public sealed class AppResourceServer
             if (path.StartsWith("/save/", StringComparison.Ordinal))
             {
                 if (e.Request.Method == "POST") HandleSave(e, path["/save/".Length..]);
+                else e.Response = Error(405, "Method Not Allowed");
+                return;
+            }
+
+            if (path.StartsWith("/export/", StringComparison.Ordinal))
+            {
+                if (e.Request.Method == "POST") HandleWrite(e, _exports.TryGetValue(path["/export/".Length..], out var target) ? target : null, requirePdf: false);
                 else e.Response = Error(405, "Method Not Allowed");
                 return;
             }
@@ -159,16 +187,22 @@ public sealed class AppResourceServer
             e.Response = JsonResponse(403, new { ok = false, error = "This is a snapshot from the document’s history. It can’t be changed; use Save As to keep a copy." });
             return;
         }
+        HandleWrite(e, file, requirePdf: true);
+    }
+
+    /// <summary>Writes a request's body to a registered file on a background thread; the file is replaced atomically.</summary>
+    private void HandleWrite(CoreWebView2WebResourceRequestedEventArgs e, string? file, bool requirePdf)
+    {
         if (file is null)
         {
-            e.Response = JsonResponse(404, new { ok = false, error = "That document isn't open in Vellum." });
+            e.Response = JsonResponse(404, new { ok = false, error = requirePdf ? "That document isn't open in Vellum." : "That file isn't one this export may write." });
             return;
         }
         var body = new MemoryStream();
         e.Request.Content?.CopyTo(body);
 
         var deferral = e.GetDeferral();
-        Task.Run(() => WriteAtomically(file, body)).ContinueWith(task => _dispatcher.BeginInvoke(() =>
+        Task.Run(() => WriteAtomically(file, body, requirePdf)).ContinueWith(task => _dispatcher.BeginInvoke(() =>
         {
             e.Response = task.Exception is null
                 ? JsonResponse(200, new { ok = true })
@@ -181,10 +215,10 @@ public sealed class AppResourceServer
     /// Writes to a temporary file next to the target, then swaps it in. If anything fails part-way,
     /// the original file is untouched.
     /// </summary>
-    private static void WriteAtomically(string path, MemoryStream data)
+    private static void WriteAtomically(string path, MemoryStream data, bool requirePdf)
     {
         var bytes = data.GetBuffer().AsSpan(0, (int)data.Length);
-        if (bytes.Length < 8 || bytes[..Math.Min(1024, bytes.Length)].IndexOf("%PDF-"u8) < 0)
+        if (requirePdf && (bytes.Length < 8 || bytes[..Math.Min(1024, bytes.Length)].IndexOf("%PDF-"u8) < 0))
             throw new InvalidDataException("The data to save isn't a valid PDF, so nothing was written.");
 
         var directory = Path.GetDirectoryName(path)!;
@@ -196,6 +230,7 @@ public sealed class AppResourceServer
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
             }
+            Directory.CreateDirectory(directory);
             if (File.Exists(path)) File.Replace(temp, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
             else File.Move(temp, path);
         }
