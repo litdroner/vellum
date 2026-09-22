@@ -1,5 +1,6 @@
-import { debounce, h, reducedMotion } from '../dom.js';
+import { debounce, h } from '../dom.js';
 import { icon } from '../icons.js';
+import { itemBox, markPageBox } from './page-mark.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../semantic/inspector.js';
 import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from '../semantic/query.js';
@@ -425,41 +426,14 @@ export class StructurePanel {
   /** A brief outline over the object's box, in the page element so it follows zoom; the page stays the same. */
   #markBox(number, item) {
     this.#clearMark();
-    const pageView = this.view.viewer.getPageView(number - 1);
-    const rect = item.box ?? quadBox(item.quad);
-    if (!pageView?.div || !rect) return;
-    const vp = pageView.viewport;
-    const [ax, ay] = vp.convertToViewportPoint(rect[0], rect[1]);
-    const [bx, by] = vp.convertToViewportPoint(rect[2], rect[3]);
-    const pad = 2;
-    const mark = h('div', {
-      class: 'structure-mark', 'aria-hidden': 'true',
-      style: {
-        left: `${((Math.min(ax, bx) - pad) / vp.width) * 100}%`,
-        top: `${((Math.min(ay, by) - pad) / vp.height) * 100}%`,
-        width: `${((Math.abs(bx - ax) + pad * 2) / vp.width) * 100}%`,
-        height: `${((Math.abs(by - ay) + pad * 2) / vp.height) * 100}%`,
-      },
-    });
-    pageView.div.append(mark);
-    requestAnimationFrame(() => mark.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reducedMotion() ? 'auto' : 'smooth' }));
-    this.#mark = { el: mark, timer: setTimeout(() => this.#clearMark(), MARK_MS) };
+    this.#mark = markPageBox(this.view, number, itemBox(item), { ms: MARK_MS });
   }
 
   #clearMark() {
-    if (!this.#mark) return;
-    clearTimeout(this.#mark.timer);
-    this.#mark.el.remove();
+    this.#mark?.clear();
     this.#mark = null;
   }
 }
 
 const KIND_NAMES = { block: 'Paragraph', run: 'Text run', image: 'Image', field: 'Form field', annotation: 'Annotation', link: 'Link' };
 const kindName = (kind) => KIND_NAMES[kind] ?? 'Object';
-
-function quadBox(quad) {
-  if (!quad || quad.length < 8) return null;
-  const xs = [quad[0], quad[2], quad[4], quad[6]];
-  const ys = [quad[1], quad[3], quad[5], quad[7]];
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-}

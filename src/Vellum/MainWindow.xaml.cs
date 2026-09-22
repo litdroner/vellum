@@ -254,11 +254,11 @@ public partial class MainWindow : Window
             return Done(new { files = paths.Select(DescribeFile).ToArray() });
         });
 
-        // Reopen from the recent list. Only paths already in that list are accepted.
+        // Reopen a document the page already knows: one in the recent list, or one a collection lists.
         bridge.Register("openPath", request =>
         {
             var path = RequiredString(request, "path");
-            if (_recent.Find(path) is null) throw new InvalidOperationException("That file isn't in the recent list.");
+            if (_recent.Find(path) is null && !_collections.Contains(path)) throw new InvalidOperationException("That file isn't in the recent list or a collection.");
             if (!File.Exists(path)) throw new FileNotFoundException("The file is no longer there.");
             return Done(new { file = DescribeFile(path) });
         });
@@ -350,6 +350,28 @@ public partial class MainWindow : Window
             };
             if (dialog.ShowDialog(this) != true) return Done(new { added = 0, chosen = 0 });
             return Done(new { added = _collections.Add(id, dialog.FileNames), chosen = dialog.FileNames.Length });
+        });
+        // The documents of one collection as read-only URLs, for Collection research: the page reads their text
+        // and can never write to them (POST /save/{token} is refused for a read-only token).
+        bridge.Register("collections.documents", request =>
+        {
+            var id = RequiredString(request, "id");
+            var collection = _collections.All.FirstOrDefault(c => c.Id == id) ?? throw new InvalidOperationException("That collection no longer exists.");
+            return Done(new
+            {
+                collection.Name,
+                documents = collection.Paths.Select(p =>
+                {
+                    var exists = File.Exists(p);
+                    return new
+                    {
+                        path = p,
+                        name = Path.GetFileName(p),
+                        exists,
+                        url = exists ? $"{AppResourceServer.Origin}/doc/{_server!.RegisterReadOnlyDocument(p)}" : null,
+                    };
+                }).ToArray(),
+            });
         });
         bridge.Register("collections.remove", request =>
         {

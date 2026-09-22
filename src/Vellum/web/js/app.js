@@ -20,6 +20,7 @@ import { showAbout } from './ui/about.js';
 import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
 import { setFocusFallback } from './ui/focus.js';
+import { markPageBoxWhenReady } from './ui/page-mark.js';
 import { TextEditor } from './ui/text-editor.js';
 import { toPdfPoint } from './page-space.js';
 import { readSessionPage } from './semantic/model.js';
@@ -329,6 +330,20 @@ const actions = {
       ui.start.refresh();
     }
   },
+  /** A piece of Collection research evidence: its document opens (as a recent one does) at its page, with its box marked. */
+  async openEvidence({ path, number, box }) {
+    try {
+      const { file } = await bridge.request('openPath', { path });
+      const view = await app.open(file);
+      if (view?.status !== 'ready') return;
+      view.goToPage(number);
+      // The page has to be laid out before its box can be outlined.
+      await markPageBoxWhenReady(view, number, box);
+    } catch (err) {
+      toast(err.message, { kind: 'error' });
+      ui.start.refresh();
+    }
+  },
   async openDropped(files) {
     const pdfs = files.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     const skipped = files.length - pdfs.length;
@@ -425,7 +440,12 @@ ui.toolbar.onPageTone = setPageTone;
 ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages);
 ui.findbar = new FindBar(stage, app);
 ui.viewbar = new ViewBar(stage, app, commands);
-ui.start = new StartScreen(stage, { bridge, onOpenDialog: () => actions.openDialog(), onOpenRecent: (p) => actions.openRecent(p) });
+ui.start = new StartScreen(stage, {
+  bridge,
+  onOpenDialog: () => actions.openDialog(),
+  onOpenRecent: (p) => actions.openRecent(p),
+  onOpenEvidence: (e) => actions.openEvidence(e),
+});
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
 ui.palette = new CommandPalette({ app, commands, bridge, onOpenRecent: (p) => actions.openRecent(p) });
 installShortcuts(commands);

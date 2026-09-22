@@ -55,6 +55,8 @@ export function pageCandidates(page, terms) {
  * Evidence for a question from the candidates of every page read: { terms, evidence, missing, sufficient, summary }.
  * Evidence holds at least needed(terms) of the terms, most terms first, then in page and reading order; at most
  * `limit`. Each item: { id, kind, number, item, text (clipped), box, matched }. `missing`: terms found nowhere.
+ * A candidate may carry `docOrder` (its document's place in a collection); those from earlier documents come
+ * first, so candidates from several documents stay in document and page order. One document leaves it unset.
  */
 export function rankEvidence(terms, candidates, { limit = MAX_EVIDENCE } = {}) {
   if (!terms.length) return { terms, evidence: [], missing: [], sufficient: false, summary: 'Ask about something the document may contain: the question has no key terms.' };
@@ -64,7 +66,7 @@ export function rankEvidence(terms, candidates, { limit = MAX_EVIDENCE } = {}) {
   const evidence = candidates
     .map((c, i) => ({ c, i }))
     .filter(({ c }) => c.matched.length >= min)
-    .sort((a, b) => b.c.matched.length - a.c.matched.length || a.c.number - b.c.number || a.i - b.i)
+    .sort((a, b) => b.c.matched.length - a.c.matched.length || (a.c.docOrder ?? 0) - (b.c.docOrder ?? 0) || a.c.number - b.c.number || a.i - b.i)
     .slice(0, limit)
     .map(({ c }) => ({ ...c, text: clip(c.text) }));
   return { terms, evidence, missing, sufficient: evidence.length > 0, summary: summarize(terms, evidence, missing) };

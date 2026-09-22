@@ -1,10 +1,13 @@
 import { h, timeAgo } from '../dom.js';
 import { icon } from '../icons.js';
+import { researchCollectionDialog } from './collection-research.js';
 import { showDialog, toast } from './dialogs.js';
 
 // The home screen, shown when no document is open: a greeting, a large Open card and the documents
 // opened recently, each with a picture of its first page (captured when it was last open), then the
-// person's collections: named lists of documents (only their paths; no file is copied, moved or changed).
+// person's collections: named lists of documents (only their paths; no file is copied, moved or changed),
+// each with Research: one question asked of every document in it (ui/collection-research.js), and the
+// document a piece of evidence comes from opened at its page.
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 const fileName = (path) => path.slice(path.lastIndexOf('\\') + 1);
@@ -66,9 +69,10 @@ const ART = `<svg viewBox="0 0 420 320" fill="none" aria-hidden="true">
 </svg>`;
 
 export class StartScreen {
-  constructor(root, { bridge, onOpenDialog, onOpenRecent }) {
+  constructor(root, { bridge, onOpenDialog, onOpenRecent, onOpenEvidence }) {
     this.bridge = bridge;
     this.onOpenRecent = onOpenRecent;
+    this.onOpenEvidence = onOpenEvidence ?? ((e) => onOpenRecent(e.path));
     this.name = '';
     this.greeting = h('h1', { class: 'home-greeting' });
     this.date = h('p', { class: 'home-date' });
@@ -138,6 +142,7 @@ export class StartScreen {
       h('div', { class: 'collection-head' },
         h('h3', { class: 'collection-name', text: c.name }),
         h('span', { class: 'collection-meta', text: summary }),
+        count ? h('button', { class: 'link-btn', 'aria-label': `Research ${c.name}`, onClick: () => this.#research(c) }, 'Research') : null,
         h('button', { class: 'link-btn', 'aria-label': `Add PDFs to ${c.name}`, onClick: () => this.#add(c) }, 'Add PDFs…'),
         h('button', { class: 'link-btn', 'aria-label': `Rename ${c.name}`, onClick: () => this.#rename(c) }, 'Rename'),
         h('button', { class: 'link-btn danger', 'aria-label': `Delete ${c.name}`, onClick: () => this.#delete(c) }, 'Delete')),
@@ -151,6 +156,12 @@ export class StartScreen {
   /** Makes a collection change, says why when it's refused, and shows the result. */
   async #change(request) {
     try { return await request(); } catch (err) { toast(err.message, { kind: 'error' }); return null; } finally { await this.#renderCollections(); }
+  }
+
+  /** One question asked of every document in the collection; the evidence chosen opens its own document at its page. */
+  async #research(c) {
+    const evidence = await researchCollectionDialog({ bridge: this.bridge, collection: c });
+    if (evidence) await this.onOpenEvidence(evidence);
   }
 
   async #create() {
