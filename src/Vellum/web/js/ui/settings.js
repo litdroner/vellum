@@ -4,6 +4,8 @@ import { appIconSvg, iconColors } from '../brand.js';
 import { showDialog } from './dialogs.js';
 import { aboutContent } from './about.js';
 import { formatSize, missingDocuments, storedLine, storedSummary, totalSize } from '../history/model.js';
+import { availableLanguages, formatMB, installedLanguages } from '../ocr/languages.js';
+import { languagePacks } from '../ocr/language-packs.js';
 import { THEMES, MODES, seedsFor, resolveMode, comfort, setReducedMotion, setReducedTransparency, originOf } from '../themes.js';
 
 // Settings. Every control applies immediately; there is nothing to save.
@@ -13,6 +15,7 @@ import { THEMES, MODES, seedsFor, resolveMode, comfort, setReducedMotion, setRed
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'reading', label: 'Reading', icon: 'book-open' },
+  { id: 'ocr', label: 'OCR', icon: 'text-select' },
   { id: 'history', label: 'History', icon: 'clock' },
   { id: 'updates', label: 'Updates', icon: 'refresh-cw' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
@@ -173,6 +176,81 @@ const BUILDERS = {
           h('div', { class: 'setting-text' }, h('span', { text: 'Document history on this PC' }), summary),
           removeMissingBtn)),
       group('Documents', list),
+    ];
+  },
+
+  // The language OCR reads in. English is built in; other languages are downloaded only on request, checked
+  // by the host before they can be used, and can be removed again (ocr/languages.js, Services/OcrLanguages.cs).
+  ocr() {
+    const status = h('small', { 'aria-live': 'polite', text: 'Reading…' });
+    const installed = h('div', { class: 'stored-list', 'data-list': 'installed' });
+    const available = h('div', { class: 'stored-list', 'data-list': 'available' });
+    const bars = new Map();
+    let list = null;
+    const fail = (err) => showDialog({ title: 'OCR languages', message: err.message, iconName: 'triangle-alert' });
+
+    const act = (label, name, run, extra = {}) => h('button', { class: 'btn small', 'data-act': name, onClick: run, ...extra }, label);
+    const langRow = (l) => {
+      const chosen = l.code === list.selected;
+      const busy = list.downloading === l.code;
+      const note = h('small', {
+        text: l.builtIn ? 'Built in'
+          : l.installed ? `Installed · ${formatMB(l.size)}`
+            : busy ? 'Downloading…'
+              : `Available · ${formatMB(l.size)} download${chosen ? ' · chosen for OCR, download it to use it' : ''}`,
+      });
+      const fill = h('div', { class: 'progress-fill' });
+      if (busy) bars.set(l.code, { fill, note });
+      return h('div', { class: 'setting-row stored-row ocr-lang', dataset: { code: l.code, state: l.installed ? 'installed' : busy ? 'downloading' : 'available', chosen: String(chosen) } },
+        h('div', { class: 'setting-text' }, h('span', { text: l.name }), note,
+          busy ? h('div', { class: 'progress ocr-lang-progress' }, fill) : null),
+        h('div', { class: 'stored-actions' },
+          l.installed && chosen ? h('span', { class: 'ocr-lang-current' }, h('span', { html: icon('check', 14) }), 'Used for OCR') : null,
+          l.installed && !chosen ? act('Use', 'use', () => change(() => languagePacks.select(l.code))) : null,
+          l.installed && !l.builtIn ? act('Remove', 'remove', () => change(async () => {
+            const next = await languagePacks.remove(l.code);
+            return chosen ? languagePacks.select('eng') : next;
+          })) : null,
+          !l.installed && busy ? act('Cancel', 'cancel', () => languagePacks.cancel().catch(() => {})) : null,
+          !l.installed && !busy ? act('Download', 'download', () => download(l), { disabled: Boolean(list.downloading) }) : null));
+    };
+    const render = () => {
+      bars.clear();
+      const chosen = list.languages.find((l) => l.code === list.selected);
+      status.textContent = `OCR reads in ${chosen.name}.`;
+      installed.replaceChildren(...installedLanguages(list).map(langRow));
+      const rest = availableLanguages(list);
+      available.replaceChildren(...(rest.length ? rest.map(langRow) : [h('small', { class: 'dialog-note', text: 'Every language is installed.' })]));
+    };
+    const change = async (run) => {
+      try { list = await run(); } catch (err) { await fail(err); list = await languagePacks.list().catch(() => list); }
+      render();
+    };
+    const download = (l) => change(async () => {
+      list = { ...list, downloading: l.code };
+      render();
+      const result = await languagePacks.download(l.code);
+      return result.list;
+    });
+    const off = languagePacks.onProgress((p) => {
+      if (!installed.isConnected) { off(); return; }
+      const bar = bars.get(p.code);
+      if (!bar) return;
+      if (p.verifying) bar.note.textContent = 'Checking the download…';
+      else {
+        const pct = p.total ? Math.round((p.received / p.total) * 100) : 0;
+        bar.fill.style.width = `${pct}%`;
+        bar.note.textContent = `Downloading… ${pct}% of ${formatMB(p.total)}`;
+      }
+    });
+    languagePacks.list().then((l) => { list = l; render(); }).catch((err) => { status.textContent = err.message; });
+
+    return [
+      group('Language',
+        row('Language for OCR', null, status),
+        h('p', { class: 'dialog-note', text: 'English is built in. Other languages are downloaded only when you click Download, from Tesseract’s language data on GitHub, and checked before OCR can use them. Your documents never leave this PC.' })),
+      group('Installed', installed),
+      group('Available to download', available),
     ];
   },
 

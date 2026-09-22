@@ -67,7 +67,8 @@ helps understand documents — every document feature running on the user's own 
 - Vellum processes documents locally and does not upload document data.
 - Every PDF feature — today's and every future one in this document — runs locally and works with the
   network off.
-- Vellum's own network code is limited to the GitHub updater.
+- Vellum's own network code is limited to the GitHub updater and to OCR language packs the user explicitly
+  downloads (from GitHub, verified before use).
 - The Microsoft WebView2 runtime makes its own Microsoft connections (SmartScreen, configuration,
   component updates and others). It stays as it is: SmartScreen on, no unsupported switches, no Windows
   settings changed. WebView2 is never modified for the convenience of a feature.
@@ -555,5 +556,6 @@ Recorded so they are not decided silently. Each needs the owner.
 | 2026-09-15 | Font selection is a general system of multiple selectable fonts with compatibility checks, embedding and no silent substitution (§4.3); UI typography (Jost, Segoe UI Variable) unchanged |
 | 2026-09-15 | Redaction means true removal of content; a covering is not redaction; no silent rasterising; status research (§3.6) |
 | 2026-09-17 | Owner asked for a first redaction subset: text and pictures removed from page content, verified by re-reading the saved file; vector content and repeated information stay open (§13.2) |
+| 2026-09-22 | Owner asked for downloadable OCR language packs: downloaded only on the user's click, from GitHub, verified before use, stored outside the install; this is the second kind of network activity Vellum itself has, after the updater (§3.8) |
 | 2026-09-15 | Themes: seven base themes, each with Light and an Obsidian-treated Dark variant; Obsidian Dark is not an eighth theme (§5) |
 | 2026-09-15 | OCR and digital certificate signatures are planned capabilities, not out of scope (README corrected) |

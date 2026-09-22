@@ -22,6 +22,9 @@ public sealed class AppSettings
     /// <summary>A version the user chose to skip: automatic checks stay quiet about it.</summary>
     public string? SkippedVersion { get; set; }
 
+    /// <summary>The language OCR reads in: "eng" (bundled) or a downloaded pack's code (see OcrLanguages).</summary>
+    public string OcrLanguage { get; set; } = "eng";
+
     public double? Left { get; set; }
     public double? Top { get; set; }
     public double? Width { get; set; }

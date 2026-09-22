@@ -55,13 +55,15 @@ never imports UI modules. The host knows nothing about the UI beyond named bridg
 ## Offline and privacy
 
 Vellum is local-first: PDF documents are processed locally and Vellum does not upload document data.
-Vellum's own network activity is limited to the GitHub update service, while the Microsoft WebView2
+Vellum's own network activity is limited to the GitHub update service and to OCR language packs the user
+chooses to download (from GitHub, only on a click in Settings → OCR), while the Microsoft WebView2
 runtime may make independent Microsoft connections.
 
 User-facing wording (use this, or wording with exactly the same meaning):
 
 > Vellum processes your documents entirely on your computer: no document, file name or document content
-> leaves your PC. Vellum itself goes online only to check for updates, from GitHub. Its display engine,
+> leaves your PC. Vellum itself goes online only to check for updates and, when you ask for one, to download
+> an OCR language pack, both from GitHub. Its display engine,
 > Microsoft Edge WebView2 (part of Windows), makes its own connections to Microsoft, such as SmartScreen
 > security checks and component updates, as it does in every app that uses it.
 

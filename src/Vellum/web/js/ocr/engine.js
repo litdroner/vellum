@@ -1,12 +1,15 @@
 import { newId } from '../annotations/model.js';
 
 // Local OCR: Tesseract 5 compiled to WebAssembly (tesseract.js), run in a worker inside Vellum with
-// the English model bundled in vendor/tesseract. Nothing is downloaded and no page leaves the machine.
+// the English model bundled in vendor/tesseract. Other languages are packs the user downloaded in Settings,
+// served by the host from its data folder once verified (/ocr-lang/…). OCR itself downloads nothing, and no
+// page leaves the machine.
 //
 // A page is rendered by pdf.js as it is shown, read by Tesseract, and each word it finds is turned
 // into page coordinates: the record editing/objects/ocr-text.js writes as invisible text.
 
 const VENDOR = new URL('../../vendor/tesseract/', import.meta.url).href;
+const PACKS = new URL('/ocr-lang', import.meta.url).href;
 /** Tesseract reads best at about 300 dpi; the longer side stays within MAX_SIDE pixels. */
 const DPI = 300;
 const MAX_SIDE = 5000;
@@ -29,15 +32,16 @@ export async function hasUsableText(pdfPage) {
 }
 
 /**
- * Starts the OCR engine. `onProgress(fraction)` follows the page being read. Resolves with
- * { recognize(pdfPage, entryId) → record or null when no text was found, terminate() }.
+ * Starts the OCR engine for `language` (a Tesseract code: 'eng', or a downloaded pack). `onProgress(fraction)`
+ * follows the page being read. Resolves with { recognize(pdfPage, entryId) → record or null when no text was
+ * found, terminate() }.
  */
-export async function createRecognizer({ onProgress = null } = {}) {
+export async function createRecognizer({ language = LANGUAGE, onProgress = null } = {}) {
   const { default: Tesseract } = await import('../../vendor/tesseract/tesseract.esm.min.js');
-  const worker = await Tesseract.createWorker(LANGUAGE, Tesseract.OEM.LSTM_ONLY, {
+  const worker = await Tesseract.createWorker(language, Tesseract.OEM.LSTM_ONLY, {
     workerPath: `${VENDOR}worker.min.js`,
     corePath: `${VENDOR}tesseract-core-simd-lstm.wasm.js`,
-    langPath: VENDOR.replace(/\/$/, ''),
+    langPath: language === LANGUAGE ? VENDOR.replace(/\/$/, '') : PACKS,
     gzip: true,
     cacheMethod: 'none',
     workerBlobURL: false,
@@ -58,7 +62,7 @@ export async function createRecognizer({ onProgress = null } = {}) {
       const { data } = await worker.recognize(canvas, {}, { text: false, blocks: true });
       canvas.width = canvas.height = 0;
       const words = wordsOf(data.blocks ?? [], viewport);
-      return words.length ? { id: newId(), kind: 'ocr', entry: entryId, lang: LANGUAGE, words } : null;
+      return words.length ? { id: newId(), kind: 'ocr', entry: entryId, lang: language, words } : null;
     },
     terminate: () => worker.terminate(),
   };

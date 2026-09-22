@@ -102,8 +102,8 @@ export function createCommands(app, ui, actions) {
     'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
     'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
 
-    'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page (English)', run: () => actions.ocr.run(doc(), 'page') },
-    'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document (English)', run: () => actions.ocr.run(doc(), 'document') },
+    'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page', run: () => actions.ocr.run(doc(), 'page') },
+    'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document', run: () => actions.ocr.run(doc(), 'document') },
 
     'tools.structure': { group: 'Tools', icon: 'file-text', doc: true, label: 'Document structure', run: () => doc() && ui.sidebar.showStructure() },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },

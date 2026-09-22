@@ -1,15 +1,43 @@
 import { h } from '../dom.js';
 import { showDialog, toast } from '../ui/dialogs.js';
 import { createRecognizer, hasUsableText } from './engine.js';
+import { ENGLISH, ocrReadiness, selectedLanguage } from './languages.js';
+import { languagePacks } from './language-packs.js';
 
 // OCR as the UI offers it (Tools in the "More" menu and the palette): the current page or the whole
-// document, in English. Pages that already have a text layer are left alone. The recognised text is
+// document, in the language chosen in Settings → OCR (English unless another pack is chosen). Pages that already have a text layer are left alone. The recognised text is
 // one content edit per page (editing/objects/ocr-text.js), all of them one undo step, and nothing
 // changes on disk until the document is saved.
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-export function createOcrActions() {
+/**
+ * The language to read in, or null when the user chose not to go on. A chosen pack that isn't downloaded
+ * (or failed its check) is explained, with the choice of English instead or opening Settings → OCR.
+ */
+async function chooseLanguage(openSettings) {
+  let language = ENGLISH;
+  let check = { ready: true };
+  try {
+    language = selectedLanguage(await languagePacks.list());
+    check = await languagePacks.prepare(language.code);
+  } catch {
+    return ENGLISH; // the host couldn't answer: English always works
+  }
+  const readiness = ocrReadiness(language, check);
+  if (readiness.ready) return language;
+  const choice = await showDialog({
+    title: readiness.title,
+    message: readiness.message,
+    iconName: 'text-select',
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'eng', label: 'Use English' }, { id: 'settings', label: 'Open OCR settings', primary: true }],
+  });
+  if (choice === 'eng') return ENGLISH;
+  if (choice === 'settings') openSettings?.('ocr');
+  return null;
+}
+
+export function createOcrActions({ openSettings = null } = {}) {
   let running = false;
 
   return {
@@ -24,6 +52,8 @@ export function createOcrActions() {
         return;
       }
       if (!(await view.confirmChanges())) return;
+      const language = await chooseLanguage(openSettings);
+      if (!language || running) return;
 
       const pdf = view.pdf;
       const plan = view.shownPlan;
@@ -36,7 +66,7 @@ export function createOcrActions() {
       let cancelled = false;
       const dialog = showDialog({
         title: scope === 'page' ? 'Recognising text on this page' : 'Recognising text in the document',
-        message: 'Vellum is reading the scanned pages on this computer. The pages themselves stay exactly as they are.',
+        message: `Vellum is reading the scanned pages in ${language.name}, on this computer. The pages themselves stay exactly as they are.`,
         iconName: 'text-select',
         className: 'ocr-dialog',
         content: [h('div', { class: 'progress update-progress' }, fill), note],
@@ -52,7 +82,7 @@ export function createOcrActions() {
       let empty = 0;
       let failed = 0;
       try {
-        recognizer = await createRecognizer({ onProgress: show });
+        recognizer = await createRecognizer({ language: language.code, onProgress: show });
         for (const n of numbers) {
           if (cancelled) break;
           note.textContent = numbers.length === 1 ? 'Reading the page…' : `Reading page ${n} of ${plan.length}…`;

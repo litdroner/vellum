@@ -39,7 +39,8 @@ node tests\e2e\run.mjs                       # the app itself over DevTools (Deb
 - Don't fake features (AI, cloud, signatures, OCR…): only real functionality gets UI.
 - Local-first: every PDF feature runs locally and works with no network; document data is never
   uploaded. No cloud processing, cloud storage, online AI, API keys, telemetry or analytics. Vellum's
-  own network activity is only the GitHub updater. The WebView2 runtime makes its own Microsoft
+  own network activity is only the GitHub updater and OCR language packs the user downloads (from GitHub,
+  on a click, verified before use). The WebView2 runtime makes its own Microsoft
   connections: leave it as it is (SmartScreen on, no unsupported switches, no Windows settings changed).
   Never claim zero traffic or an offline WebView2. Use the privacy wording in "Offline and privacy" in
   ARCHITECTURE_GUIDELINES.md. AI, when it comes, goes behind `AIProvider` (local first; cloud interface only).

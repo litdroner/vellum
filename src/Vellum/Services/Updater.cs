@@ -35,7 +35,8 @@ public sealed partial class Updater
 
     public static Version Current { get; } = ThreeParts(typeof(Updater).Assembly.GetName().Version ?? new Version(0, 0, 0));
 
-    private static readonly HttpClient Http = CreateClient();
+    /// <summary>Shared with OCR language downloads (see OcrLanguages).</summary>
+    internal static readonly HttpClient Http = CreateClient();
 
     private readonly string _folder;
 
@@ -348,7 +349,7 @@ public sealed partial class Updater
     private static Uri? Loopback(string? url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttp && u.IsLoopback ? u : null;
 
-    private static async Task<string> HashAsync(string path, CancellationToken ct)
+    internal static async Task<string> HashAsync(string path, CancellationToken ct)
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, useAsync: true);
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false));

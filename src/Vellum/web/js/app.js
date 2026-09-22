@@ -365,7 +365,7 @@ const actions = {
 };
 
 actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
-actions.ocr = createOcrActions();
+actions.ocr = createOcrActions({ openSettings: (section) => actions.settings(section) });
 actions.compare = createCompareActions({ app, pdfjsLib: libs.pdfjsLib });
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 

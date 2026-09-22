@@ -158,6 +158,7 @@ public partial class MainWindow : Window
         core.Profile.PreferredColorScheme = PreferredScheme;
 
         _server = new AppResourceServer(core, env, Path.Combine(AppContext.BaseDirectory, "web"));
+        _server.OcrLanguage = code => _ocrLanguages.Find(code) is { } pack ? _ocrLanguages.ReadVerified(pack) : null;
         _bridge = new BridgeHost(core);
         RegisterBridgeHandlers(_bridge);
 
@@ -487,6 +488,7 @@ public partial class MainWindow : Window
         });
 
         RegisterUpdateHandlers(bridge);
+        RegisterOcrLanguageHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------

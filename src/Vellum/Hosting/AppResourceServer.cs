@@ -13,6 +13,7 @@ namespace Vellum.Hosting;
 /// of a PDF the user opened. Only files we registered can be read or written, never arbitrary disk paths.
 ///   GET  /doc/{token}   the PDF's bytes
 ///   POST /save/{token}  new bytes for that PDF (annotations saved); written atomically
+///   GET  /ocr-lang/{code}.traineddata.gz  a downloaded OCR language pack, only once verified (see OcrLanguages)
 /// </summary>
 public sealed class AppResourceServer
 {
@@ -79,6 +80,9 @@ public sealed class AppResourceServer
         return newToken;
     }
 
+    /// <summary>A downloaded OCR language pack's verified bytes by language code, or null (set by the window).</summary>
+    public Func<string, byte[]?>? OcrLanguage { get; set; }
+
     public string? ResolveDocument(string token) => _documents.TryGetValue(token, out var p) ? p : null;
 
     /// <summary>True if the page was given this file to open or save to (writable).</summary>
@@ -117,6 +121,14 @@ public sealed class AppResourceServer
                 var headers = $"X-Vellum-Doc-Key: {Convert.ToHexString(SHA256.HashData(span))}";
                 if (span.IndexOf(VellumMarker) >= 0) headers += "\r\nX-Vellum-Annotations: 1";
                 e.Response = FileResponse(bytes, ".pdf", headers);
+                return;
+            }
+
+            if (path.StartsWith("/ocr-lang/", StringComparison.Ordinal))
+            {
+                var name = path["/ocr-lang/".Length..];
+                var bytes = name.EndsWith(".traineddata.gz", StringComparison.Ordinal) ? OcrLanguage?.Invoke(name[..^".traineddata.gz".Length]) : null;
+                e.Response = bytes is null ? Error(404, "Not Found") : FileResponse(new MemoryStream(bytes, writable: false), ".gz");
                 return;
             }
 

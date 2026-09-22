@@ -2108,3 +2108,6 @@ kbd {
   }
   .print-page img { display: block; max-width: 100%; max-height: 100%; }
 }
+/* Settings → OCR: installed and downloadable OCR languages (ui/settings.js) */
+.ocr-lang-progress { margin-top: 6px; }
+.ocr-lang-current { display: inline-flex; gap: 4px; align-items: center; color: var(--ink-3); font-size: 12px; }
