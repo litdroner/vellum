@@ -8,6 +8,7 @@
     { "code": "fin", "name": "Finnish", "size": 3795323, "sha256": "138c59f6a0bef68fd98d8baf565477f5cdb5198bfc4a68e558efd3b6a57acadd" },
     { "code": "fra", "name": "French", "size": 707406, "sha256": "d611139672b3752c7097e671e4a1d9209dfd37f2aeb081ef6487fba3351e9255" },
     { "code": "deu", "name": "German", "size": 1333102, "sha256": "306c4280d0cbed46fbff727486bd43b92730181bae80f56941a091f363bdf28b" },
+    { "code": "hin", "name": "Hindi", "size": 1389692, "sha256": "f3b6a0d320df38d886178cdd727b90dbf9df3db053adb32bd9cf73f0463cda07" },
     { "code": "ita", "name": "Italian", "size": 1660998, "sha256": "f702fcfad297ce028ede3626d1467b67939f23ff23595f9badd54681cf25a4d3" },
     { "code": "nor", "name": "Norwegian", "size": 2490241, "sha256": "6c5d91a5b684da387bfcf16b38bae8d94771812dc9ef706b413c728ca1d37c93" },
     { "code": "por", "name": "Portuguese", "size": 1392239, "sha256": "dacebc1386ddaaf8389f81094236cca0d690897cde693d48cbdaa881c86e2b4c" },

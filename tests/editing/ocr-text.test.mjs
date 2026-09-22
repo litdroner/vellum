@@ -1,6 +1,6 @@
 // The OCR text layer (editing/objects/ocr-text.js), saved: Latin-script languages in Helvetica (WinAnsi),
-// as before; Russian in the bundled Noto Sans, embedded as a subset whose ToUnicode map gives readers the
-// Cyrillic letters. Checked the way another reader sees the file: pdf.js's text of the saved page, and of
+// as before; Russian and Hindi in the bundled Noto Sans, embedded as a subset whose ToUnicode map gives
+// readers the Cyrillic and Devanagari letters. Checked the way another reader sees the file: pdf.js's text of the saved page, and of
 // that file saved again. Run: node --test "tests/editing/*.test.mjs"
 
 import test, { before } from 'node:test';
@@ -50,9 +50,10 @@ async function ocrSaved(lang, words) {
   });
 }
 
-test('only Russian is written in a Unicode font so far; every other language stays in Helvetica', () => {
-  assert.deepEqual(Object.keys(UNICODE_FONTS), ['rus']);
+test('only Russian and Hindi are written in a Unicode font so far; every other language stays in Helvetica', () => {
+  assert.deepEqual(Object.keys(UNICODE_FONTS), ['rus', 'hin']);
   assert.equal(unicodeFontOf('rus'), 'bundled:notosans/regular');
+  assert.equal(unicodeFontOf('hin'), 'bundled:notosans/regular');
   for (const code of ['eng', 'fra', 'deu', 'toString', undefined]) assert.equal(unicodeFontOf(code), null, String(code));
 });
 
@@ -68,6 +69,40 @@ test('Russian OCR is saved as real, selectable Cyrillic text in an embedded Noto
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
   assert.equal(norm(await pageText(saved)), expected);
   assert.equal(norm(await pageText(again)), expected, 'reopened and saved again, the text is unchanged');
+});
+
+test('Hindi OCR is saved as real Devanagari text, in reading order, in an embedded Noto Sans subset, and survives saving again', async () => {
+  // Pre-base vowel signs (ि), conjuncts (क्ष, त्र, प्र), reph (र्), nukta (ज़), anusvara and candrabindu: a
+  // shaper would reorder or merge their glyphs, so the layer writes them one per character, as read.
+  const words = line(['हिंदी', 'किताब', 'क्षेत्र', 'प्रधानमंत्री', 'कर्म', 'ज़िला', 'चाँद', 'पृष्ठ', '२०२६', '।']);
+  const { saved, again } = await ocrSaved('hin', words);
+  const raw = Buffer.from(saved).toString('latin1');
+  assert.match(raw, /NotoSans/, 'the font is Noto Sans');
+  assert.match(raw, /\/FontFile2/, 'embedded');
+  assert.match(raw, /\/ToUnicode/, 'with the letters it stands for');
+  assert.ok(saved.length < fs.statSync(files.scanned).size + 80000, 'a subset, not the whole font');
+  const expected = 'हिंदी किताब क्षेत्र प्रधानमंत्री कर्म ज़िला चाँद पृष्ठ २०२६ ।'.normalize('NFC');
+  const norm = (s) => s.normalize('NFC').replace(/\s+/g, ' ').trim();
+  const text = norm(await pageText(saved));
+  assert.equal(text, expected);
+  assert.match(text, /[ऀ-ॿ]/u, 'real Devanagari code points');
+  assert.ok(text.includes('प्रधानमंत्री'), 'a conjunct word can be found as typed');
+  assert.equal(norm(await pageText(again)), expected, 'reopened and saved again, the text is unchanged');
+});
+
+test('Hindi and Russian on one page share the one embedded Noto Sans', async () => {
+  const bytes = new Uint8Array(fs.readFileSync(files.scanned));
+  const saved = await withSession(bytes, ({ plan, sources }) => composeDocument({
+    base: bytes, plan, sources,
+    edits: [
+      { id: 'o1', kind: 'ocr', entry: plan[0].id, lang: 'rus', words: line(['Привет'], 700) },
+      { id: 'o2', kind: 'ocr', entry: plan[0].id, lang: 'hin', words: line(['नमस्ते'], 650) },
+    ],
+  }));
+  const raw = Buffer.from(saved).toString('latin1');
+  assert.equal(raw.match(/\/FontFile2/g).length, 1, 'one font file');
+  const text = (await pageText(saved)).normalize('NFC');
+  assert.ok(text.includes('Привет') && text.includes('नमस्ते'), text);
 });
 
 test('English OCR is still written in Helvetica, not embedded', async () => {

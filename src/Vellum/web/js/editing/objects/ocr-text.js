@@ -13,6 +13,8 @@
 // shows its shapes, and every reader has the font's metrics. Helvetica's WinAnsi encoding has no letters
 // of other scripts, so a language in UNICODE_FONTS is written in a bundled font (objects/font-set.js)
 // embedded as a subset of the glyphs its words use, whose ToUnicode map gives readers the real letters.
+// Those words are laid out one glyph per character, never shaped: the text is invisible, so only the
+// letters matter, and a shaped script (Devanagari) keeps them in their order rather than as drawn.
 // Each word is stretched (Tz) to cover the width it has on the page and turned to run along its
 // baseline, so a selection lands on the word the scan shows.
 
@@ -26,10 +28,12 @@ export const kind = 'ocr';
 const FONT = 'Helvetica';
 
 /**
- * Languages whose letters Helvetica can't write, and the bundled font their text layer is embedded in.
- * Only scripts written glyph by glyph, left to right, belong here (objects/font-set.js: NEEDS_SHAPING).
+ * Languages whose letters Helvetica can't write, and the bundled font their text layer is embedded in: one
+ * with a glyph for every letter of the script (tests/editing/ocr-languages.test.mjs checks). Only left-to-
+ * right scripts belong here; one that needs shaping (Hindi) is written unshaped (below), as visible text
+ * never is (objects/font-set.js: NEEDS_SHAPING).
  */
-export const UNICODE_FONTS = Object.freeze({ rus: 'bundled:notosans/regular' });
+export const UNICODE_FONTS = Object.freeze({ rus: 'bundled:notosans/regular', hin: 'bundled:notosans/regular' });
 
 /** The bundled font key the words of `lang` are written in, or null for Helvetica. */
 export const unicodeFontOf = (lang) => (Object.hasOwn(UNICODE_FONTS, lang) ? UNICODE_FONTS[lang] : null);
@@ -54,6 +58,15 @@ export function encodeWord(lib, text) {
 /** `text` as an embedded font writes it: the characters the font has a glyph for (anything else dropped). */
 const unicodeWord = (font, text) => [...String(text).normalize('NFC')].filter((ch) => font.embedder.font.hasGlyphForCodePoint(ch.codePointAt(0))).join('');
 
+/**
+ * The embedded font's embedder, laying text out as each character's own glyph (the font's cmap), in order:
+ * no substitution, reordering or ligatures, so its ToUnicode map gives back exactly the characters written.
+ * Everything else (the subset, the glyphs it includes) is the embedder's own.
+ */
+const unshaped = (font) => Object.create(font.embedder, {
+  font: { value: { layout: (text) => ({ glyphs: [...text].map((ch) => font.embedder.font.glyphForCodePoint(ch.codePointAt(0))) }) } },
+});
+
 /** The bundled fonts the records' languages need, embedded once for the whole document. */
 export function prepare({ lib, doc, records }) {
   return embedBundledFonts(lib, doc, records.map((r) => unicodeFontOf(r.lang)).filter(Boolean));
@@ -70,6 +83,7 @@ export function write({ lib, doc, page, index, records, prepared = null }) {
     const key = unicodeFontOf(record.lang);
     const embedded = key ? prepared?.get(key)?.font : null;
     if (key && !embedded) throw unusable();
+    const layout = embedded ? unshaped(embedded) : null;
     let font;
     if (embedded) {
       if (!names.has(key)) names.set(key, pdfName(addResource(lib, doc, page, 'Font', 'VlF', embedded.ref)));
@@ -84,14 +98,15 @@ export function write({ lib, doc, page, index, records, prepared = null }) {
       let shows;
       if (embedded) {
         shown = unicodeWord(embedded, text);
-        shows = `${embedded.encodeText(shown).toString()} Tj`;
+        shows = `${layout.encodeText(shown).toString()} Tj`;
+        embedded.modified = true; // re-embedded with these glyphs when the document is saved
       } else {
         const encoded = encodeWord(lib, text);
         shown = encoded.shown;
         shows = `${hexString(encoded.codes)} Tj`;
       }
       // The width is the word's own: a space after it runs on past its end, into the gap before the next.
-      const width = (embedded ?? embedder).widthOfTextAtSize(shown.trimEnd(), size);
+      const width = (layout ?? embedder).widthOfTextAtSize(shown.trimEnd(), size);
       if (!(length > 0) || !(width > 0)) continue;
       const [ux, uy] = [(ex - ox) / length, (ey - oy) / length];
       out.push(
