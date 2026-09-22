@@ -36,7 +36,7 @@ import { neutralize } from './text-run.js';
 export const kind = 'redact';
 
 /** Show issues that mean a glyph's position isn't known, so whether it is in an area can't be said. */
-const UNCERTAIN = new Set(['position', 'metrics', 'no-font', 'vertical', 'outside-text-object']);
+export const UNCERTAIN = new Set(['position', 'metrics', 'no-font', 'vertical', 'outside-text-object']);
 
 /** Strictly: a line whose box only touches an area's edge (tight leading) isn't in it. */
 const overlaps = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];

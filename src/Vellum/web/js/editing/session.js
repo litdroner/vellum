@@ -11,7 +11,7 @@
 import { openSource } from './source.js';
 import { analyzePage, verifyPage, REASONS } from './runs.js';
 import { planTextEdit, planTextTransform, EditError } from './edits.js';
-import { mayContain, nearestMatch, paragraphMatches, replaceInLines } from './find-replace.js';
+import { findMatches, mayContain, nearestMatch, paragraphMatches, replaceInLines } from './find-replace.js';
 import { textBlocks } from './objects/text-block.js';
 import { selectableObjects } from './objects/selection.js';
 import { refusalMessage } from './objects/capabilities.js';
@@ -25,7 +25,7 @@ import { drawnQuadOf, planRunFace, runFaceError, runFamilyOf, runStyleOf, styleN
 import { newOverlaps, overlapDepth } from './objects/overlap.js';
 import { insertedObject, insertedTextObject, objectsOfKind } from './objects/page-objects.js';
 import { planReflow } from './objects/reflow.js';
-import { checkShapes, kind as redactKind, planRedaction } from './objects/redaction.js';
+import { checkShapes, kind as redactKind, planRedaction, UNCERTAIN as UNCERTAIN_TEXT } from './objects/redaction.js';
 import { copiedObject, isCopy, keyOf as copyKey, originKey, planCopy, snapshotOf, TEXT as textCopyKind } from './objects/copies.js';
 import { boxQuad, quadBox, quadWithin, transformQuad, unionBox } from './objects/geometry.js';
 import { IDENTITY, multiply, translate } from './matrix.js';
@@ -761,6 +761,86 @@ export class TextEditing {
     return true;
   }
 
+  // ---- redact matches ---------------------------------------------------------------------------
+  //
+  // Batch redaction from Find's own matches (find-replace.js findMatches): every verified occurrence
+  // of a query, in the page's own unedited text, redacted in one operation. A match is found the same
+  // way Replace all finds one — per run's text, not the whole line — but never across a run,
+  // never in a pasted copy or new text, and never in a run this session has already retyped: none of
+  // those prove which glyphs on the page a match in their CURRENT text would remove. Nothing is
+  // touched until applyMatchRedactions runs; findRedactableMatches only counts what could be done.
+
+  /**
+   * Every verified occurrence of `query` this session's batch redaction could remove for certain, as
+   * areas ready for applyMatchRedactions: { areas: Map<pageNumber, rects>, matched, skipped, reasons }.
+   * Each area is the exact box of the matched glyphs (objects/geometry.js unionBox on their own quads),
+   * never a guessed box, so a match beside other text on the same line never takes it too. Nothing is
+   * changed by this call. `skipped` counts matches this can't answer for — already-edited text, or a
+   * run whose glyph positions aren't known exactly — with `reasons` saying why, once each.
+   */
+  async findRedactableMatches(query, options = {}) {
+    const areas = new Map();
+    let matched = 0;
+    let skipped = 0;
+    const reasons = new Set();
+    const view = this.#view;
+    if (!query || view.rebuilding) return { areas, matched, skipped, reasons: [] };
+    for (let n = 1; n <= (view.shownPlan?.length ?? 0); n++) {
+      const entry = view.shownPlan[n - 1];
+      if (entry.src === 'blank') continue;
+      const content = await (await view.pdf.getPage(n)).getTextContent();
+      if (!mayContain(content.items.map((i) => i.str).join(''), query)) continue;
+      const analysis = await this.#analysis(entry, n);
+      const records = this.#recordsOf(entry);
+      const rects = [];
+      for (const run of analysis.runs) {
+        const found = findMatches(run.text, query, options);
+        if (!found.length) continue;
+        if (records.has(`run:${run.key}`)) {
+          skipped += found.length;
+          reasons.add('Text already changed in this session isn’t included: redact it with “Redact selection” instead.');
+          continue;
+        }
+        for (const m of found) {
+          const refs = uniqueRefs(run.chars.slice(m.start, m.end));
+          if (!refs.length) { skipped += 1; reasons.add('A match with no glyphs of its own on the page was skipped.'); continue; }
+          if (refs.some(([si]) => analysis.shows[si].issues.some((i) => UNCERTAIN_TEXT.has(i)))) {
+            skipped += 1;
+            reasons.add('A match whose text position isn’t known exactly was skipped.');
+            continue;
+          }
+          const box = unionBox(refs.map(([si, gi]) => analysis.shows[si].glyphs[gi].quad));
+          if (!box) { skipped += 1; reasons.add('A match whose text position isn’t known exactly was skipped.'); continue; }
+          rects.push(box);
+          matched += 1;
+        }
+      }
+      if (rects.length) areas.set(n, rects);
+    }
+    return { areas, matched, skipped, reasons: [...reasons] };
+  }
+
+  /**
+   * Applies the areas findRedactableMatches found, across every page they're on, as ONE undo step —
+   * exactly redactAreas, batched: the same record per page (objects/redaction.js planRedaction), the
+   * same shape check before anything is marked. False when there was nothing to redact.
+   */
+  async applyMatchRedactions(areas) {
+    const view = this.#view;
+    if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
+    const pairs = [];
+    for (const [n, rects] of areas) {
+      const entry = view.shownPlan?.[n - 1];
+      if (!entry || !rects.length) continue;
+      const record = planRedaction({ entry: entry.id, rects });
+      if (entry.src !== 'blank') checkShapes(await this.#analysis(entry, n), record.rects, n - 1, 'it wasn’t redacted');
+      pairs.push([null, record]);
+    }
+    if (!pairs.length) return false;
+    view.annotations.applyEdits(pairs);
+    return true;
+  }
+
   /** Deletes one object: text loses its glyphs, a picture loses its draw. One undo step. */
   removeObject(pageNumber, key) {
     return this.removeObjects(pageNumber, [key]);
@@ -1303,6 +1383,19 @@ const keyOfRecord = (r) => (r.kind === insertedKind ? insertedKey(r) : r.kind ==
 
 /** Is this object key new text's? */
 const isNewTextKey = (key) => typeof key === 'string' && key.startsWith('text:');
+
+/** The distinct [showIndex, glyphIndex] refs a run's chars cover, in order, skipping inferred spaces. */
+function uniqueRefs(chars) {
+  const refs = [];
+  let last = null;
+  for (const ref of chars) {
+    if (!ref) continue;
+    if (last && last[0] === ref[0] && last[1] === ref[1]) continue;
+    refs.push(ref);
+    last = ref;
+  }
+  return refs;
+}
 
 const UNIT_QUAD = Object.freeze([0, 0, 1, 0, 1, 1, 0, 1]);
 

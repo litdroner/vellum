@@ -2,6 +2,7 @@ import { h, debounce } from '../dom.js';
 import { icon } from '../icons.js';
 import { EditError } from '../editing/edits.js';
 import { toPdfPoint } from '../page-space.js';
+import { showDialog } from './dialogs.js';
 
 // In-document search. pdf.js's find controller does the matching and highlighting;
 // this is the UI around it. Each document remembers its own query.
@@ -28,8 +29,9 @@ export class FindBar {
     this.replaceInput = h('input', { class: 'find-input', type: 'text', placeholder: 'Replace with', spellcheck: 'false', 'aria-label': 'Replace with' });
     this.replaceBtn = h('button', { class: 'btn small', title: 'Replace this match (Enter)', onClick: () => this.replace() }, 'Replace');
     this.replaceAllBtn = h('button', { class: 'btn small', title: 'Replace every match (Ctrl+Alt+Enter)', onClick: () => this.replaceAll() }, 'Replace all');
+    this.redactAllBtn = h('button', { class: 'btn small', title: 'Redact every verified occurrence of this search in the document', onClick: () => this.redactAll() }, 'Redact all');
     this.replaceRow = h('div', { class: 'find-replace', hidden: true },
-      h('div', { class: 'find-field' }, this.replaceInput), this.replaceBtn, this.replaceAllBtn);
+      h('div', { class: 'find-field' }, this.replaceInput), this.replaceBtn, this.replaceAllBtn, this.redactAllBtn);
     this.el = h('div', { class: 'findbar ui', role: 'search', hidden: true },
       this.replaceToggle,
       h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 15) }), this.input, this.count),
@@ -138,6 +140,50 @@ export class FindBar {
     const view = this.app.active;
     if (!view || !this.input.value) return;
     await this.#replaceWith(view, null);
+  }
+
+  /**
+   * Redacts every verified occurrence of the current search, across the whole document, as one undo
+   * step (editing/session.js findRedactableMatches, applyMatchRedactions). Counts what would be
+   * redacted first and asks before touching anything; a match this can't answer for (already-edited
+   * text, or one whose position isn't known exactly) is left alone and counted separately, never
+   * silently included.
+   */
+  async redactAll() {
+    if (this.#replacing) return;
+    const view = this.app.active;
+    const query = this.input.value;
+    if (!view || !query) return;
+    this.#replacing = true;
+    try {
+      const reason = view.textEditing.unavailableReason;
+      if (reason) throw new EditError('document', reason);
+      const { areas, matched, skipped, reasons } = await view.textEditing.findRedactableMatches(query, {
+        caseSensitive: view.find.caseSensitive, entireWord: view.find.entireWord,
+      });
+      if (!matched) {
+        this.#notify(view, skipped
+          ? `No occurrence could be redacted for certain. Skipped ${skipped} ${skipped === 1 ? 'match' : 'matches'}: ${reasons.join(' ')}`
+          : 'No matches were found to redact.');
+        return;
+      }
+      const left = skipped ? ` ${skipped} ${skipped === 1 ? 'match is' : 'matches are'} left unchanged: ${reasons.join(' ')}` : '';
+      const answer = await showDialog({
+        title: 'Redact all matches?',
+        message: `${matched} verified ${matched === 1 ? 'occurrence' : 'occurrences'} of “${query}” will be redacted: text and pictures in each area are removed from the file when you save, and painted black.${left}`,
+        iconName: 'square',
+        buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'redact', label: 'Redact', primary: true }],
+      });
+      if (answer !== 'redact') return;
+      if (!(await view.confirmChanges())) return;
+      await view.textEditing.applyMatchRedactions(areas);
+      this.#notify(view, `Redacted ${matched} ${matched === 1 ? 'occurrence' : 'occurrences'}.${left} Removed from the file when you save.`);
+    } catch (err) {
+      if (!(err instanceof EditError)) throw err;
+      this.#notify(view, err.message);
+    } finally {
+      this.#replacing = false;
+    }
   }
 
   async #replaceWith(view, at) {

@@ -101,6 +101,7 @@ export function createCommands(app, ui, actions) {
     'find.replace': { group: 'Search', icon: 'search', doc: true, label: 'Replace text', keys: ['Ctrl+H'], global: true, run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
     'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
     'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
+    'find.redactAll': { group: 'Search', icon: 'square', doc: true, label: 'Redact all matches…', run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
 
     'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page', run: () => actions.ocr.run(doc(), 'page') },
     'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document', run: () => actions.ocr.run(doc(), 'document') },

@@ -113,6 +113,14 @@ function sameFrame(a, b) {
   return dot > 0.9998 && Math.abs(a.size - b.size) <= 0.01 * Math.max(a.size, b.size);
 }
 
+/** Appends `unicode` to a run's text, and its glyph ref once per character (charsOf below reads this). */
+function pushChars(run, ref, unicode) {
+  for (const ch of unicode) {
+    run.text += ch;
+    run.chars.push(ref);
+  }
+}
+
 function groupRuns(shows) {
   const runs = [];
   let run = null;
@@ -122,19 +130,24 @@ function groupRuns(shows) {
     for (let gi = 0; gi < show.glyphs.length; gi++) {
       const glyph = show.glyphs[gi];
       const gap = run && last ? continuation(last, show, glyph) : null;
+      const ref = [show.index, gi];
       if (gap === null) {
         run = {
           id: runs.length, key: `${show.index}:${gi}`,
-          shows: [show.index], glyphs: [[show.index, gi]], text: glyph.unicode ?? '�',
+          shows: [show.index], glyphs: [ref], text: '', chars: [],
           font: show.font, fontName: show.fontName, fontSize: show.fontSize,
           frame: show.frame, first: show, reasons: new Set(), editable: false,
         };
         runs.push(run);
+        pushChars(run, ref, glyph.unicode ?? '�');
       } else {
-        if (gap > SPACE_GAP * show.frame.size && !isBlank(last.glyph.unicode) && !isBlank(glyph.unicode)) run.text += ' ';
+        if (gap > SPACE_GAP * show.frame.size && !isBlank(last.glyph.unicode) && !isBlank(glyph.unicode)) {
+          run.text += ' ';
+          run.chars.push(null); // a space Vellum inferred from spacing, not a glyph on the page
+        }
         if (run.shows.at(-1) !== show.index) run.shows.push(show.index);
-        run.glyphs.push([show.index, gi]);
-        run.text += glyph.unicode ?? '�';
+        run.glyphs.push(ref);
+        pushChars(run, ref, glyph.unicode ?? '�');
       }
       last = { show, glyph };
     }
