@@ -3,15 +3,17 @@ import { icon } from '../icons.js';
 import { appIconSvg, iconColors } from '../brand.js';
 import { showDialog } from './dialogs.js';
 import { aboutContent } from './about.js';
+import { formatSize, missingDocuments, storedLine, storedSummary, totalSize } from '../history/model.js';
 import { THEMES, MODES, seedsFor, resolveMode, comfort, setReducedMotion, setReducedTransparency, originOf } from '../themes.js';
 
 // Settings. Every control applies immediately; there is nothing to save.
 // ctx (from app.js): appearance(), setAppearance(patch, { origin }), pageTones, pageTone(),
-// setPageTone(tone), updates(), version(), commands(), setDefault().
+// setPageTone(tone), updates(), history(), version(), commands(), setDefault().
 
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'reading', label: 'Reading', icon: 'book-open' },
+  { id: 'history', label: 'History', icon: 'clock' },
   { id: 'updates', label: 'Updates', icon: 'refresh-cw' },
   { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
   { id: 'about', label: 'About', icon: 'info' },
@@ -35,11 +37,12 @@ export function showSettings(ctx, initial = 'appearance') {
     const scroll = keepScroll ? pane.scrollTop : 0;
     for (const b of navButtons) b.setAttribute('aria-selected', String(b.dataset.id === current));
     const section = SECTIONS.find((s) => s.id === current);
-    pane.replaceChildren(h('h3', { class: 'settings-title', text: section.label }), ...BUILDERS[current](ctx));
+    pane.replaceChildren(h('h3', { class: 'settings-title', text: section.label }), ...BUILDERS[current](ctx, { close: () => close(null) }));
     pane.scrollTop = scroll;
   }
   // The appearance can also change from outside (Ctrl+Shift+L, Windows switching modes).
   const onAppearance = () => { if (current === 'appearance') render(); };
+  let close = () => {};
   document.addEventListener('appearancechange', onAppearance);
   render(false);
 
@@ -48,9 +51,12 @@ export function showSettings(ctx, initial = 'appearance') {
     className: 'settings-dialog',
     buttons: [],
     content: [h('div', { class: 'settings-layout' }, nav, pane)],
-    bind: ({ finish, dialog }) => dialog.append(h('button', {
-      class: 'tb-btn small settings-close', title: 'Close (Esc)', 'aria-label': 'Close settings', html: icon('x', 16), onClick: () => finish(null),
-    })),
+    bind: ({ finish, dialog }) => {
+      close = finish;
+      dialog.append(h('button', {
+        class: 'tb-btn small settings-close', title: 'Close (Esc)', 'aria-label': 'Close settings', html: icon('x', 16), onClick: () => finish(null),
+      }));
+    },
     onOpen: () => navButtons.find((b) => b.dataset.id === current),
   }).finally(() => document.removeEventListener('appearancechange', onAppearance));
 }
@@ -88,6 +94,85 @@ const BUILDERS = {
       group('Default app',
         row('Open PDFs with Vellum', 'Registers Vellum for .pdf; Windows asks you to confirm in its Settings.',
           h('button', { class: 'btn small', onClick: () => ctx.setDefault() }, 'Set as default…'))),
+    ];
+  },
+
+  // Every document with snapshots on this PC. Each document's own history dialog stays where snapshots are
+  // taken and restored; here a history can be opened, cleared, or removed once its document is gone.
+  history(ctx, { close }) {
+    const history = ctx.history();
+    const summary = h('small', { class: 'stored-summary', 'aria-live': 'polite', text: 'Reading…' });
+    const list = h('div', { class: 'stored-list' });
+    const removeMissingBtn = h('button', { class: 'btn small', 'data-act': 'remove-missing', disabled: true }, 'Remove missing');
+    let documents = [];
+
+    const confirm = (title, message, label) => showDialog({
+      title, message, iconName: 'trash-2',
+      buttons: [{ id: 'cancel', label: 'Cancel', primary: true }, { id: 'ok', label }],
+    }).then((choice) => choice === 'ok');
+    const fail = (err) => showDialog({ title: 'Couldn’t change the history', message: err.message, iconName: 'triangle-alert' });
+
+    const render = () => {
+      const missing = missingDocuments(documents);
+      summary.textContent = documents.length ? storedSummary(documents) : 'No document has history on this PC.';
+      removeMissingBtn.disabled = missing.length === 0;
+      removeMissingBtn.textContent = missing.length ? `Remove missing (${missing.length})` : 'Remove missing';
+      list.replaceChildren(...documents.map((d) => h('div', { class: 'setting-row stored-row', dataset: { key: d.key, missing: String(Boolean(d.missing)) } },
+        h('div', { class: 'setting-text' },
+          h('span', { text: d.name, title: d.name }),
+          h('small', { class: 'stored-path', text: d.path || 'Its index can’t be read', title: d.path }),
+          h('small', {}, d.missing ? h('span', { class: 'stored-missing', text: 'Document missing · ' }) : null, storedLine(d))),
+        h('div', { class: 'stored-actions' },
+          d.missing ? null : h('button', {
+            class: 'btn small', 'data-act': 'open',
+            onClick: async () => {
+              close();
+              try { await history.showStored(d); } catch (err) { await fail(err); }
+            },
+          }, 'Open history'),
+          h('button', {
+            class: 'btn small', 'data-act': d.missing ? 'remove' : 'clear',
+            onClick: async () => {
+              const size = formatSize(d.size);
+              const sure = d.missing
+                ? await confirm('Remove this history?', `“${d.name}” is no longer at ${d.path || 'its old place'}. Its ${d.count === 1 ? 'snapshot' : `${d.count} snapshots`} (${size}) will be removed from this PC. Nothing else is deleted.`, 'Remove')
+                : await confirm(`Clear the history of “${d.name}”?`, `${d.count === 1 ? 'Its snapshot' : `All ${d.count} snapshots`} (${size}) will be removed from this PC. The document itself doesn’t change.`, 'Clear history');
+              if (!sure) return;
+              try {
+                await history.removeStored(d, { onlyIfMissing: Boolean(d.missing) });
+                await load();
+              } catch (err) { await fail(err); }
+            },
+          }, d.missing ? 'Remove' : 'Clear')))));
+    };
+    const load = async () => {
+      try {
+        documents = await history.stored();
+        render();
+      } catch (err) {
+        summary.textContent = err.message;
+      }
+    };
+    removeMissingBtn.addEventListener('click', async () => {
+      const missing = missingDocuments(documents);
+      const sure = await confirm(
+        `Remove the history of ${missing.length === 1 ? '1 missing document' : `${missing.length} missing documents`}?`,
+        `These documents are no longer where they were, so their history can’t be opened. Their snapshots (${formatSize(totalSize(missing))}) will be removed from this PC. Nothing else is deleted.`,
+        'Remove');
+      if (!sure) return;
+      try {
+        await history.removeMissing();
+        await load();
+      } catch (err) { await fail(err); }
+    });
+    load();
+
+    return [
+      group('Storage',
+        h('div', { class: 'setting-row' },
+          h('div', { class: 'setting-text' }, h('span', { text: 'Document history on this PC' }), summary),
+          removeMissingBtn)),
+      group('Documents', list),
     ];
   },
 

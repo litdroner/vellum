@@ -52,3 +52,31 @@ export function beforeRestoreName(snapshot) {
   const name = `Before restoring “${snapshotLabel(snapshot)}”`;
   return name.length > 80 ? `${name.slice(0, 78)}…”` : name;
 }
+
+// ---- every document's history (Settings) ----------------------------------------------------
+// A stored history (from the host): { key, path, name, count, size, lastSnapshot, missing }.
+
+/** Most recent snapshot first; histories with no date last. */
+export function sortStored(documents) {
+  const time = (d) => { const t = new Date(d.lastSnapshot ?? NaN).getTime(); return Number.isNaN(t) ? -Infinity : t; };
+  return [...documents].sort((a, b) => time(b) - time(a));
+}
+
+/** The histories whose document is no longer on disk: they can only be removed. */
+export function missingDocuments(documents) {
+  return documents.filter((d) => d.missing);
+}
+
+/** "3 snapshots · 4.2 MB · last 12 Sep 2026, 14:03" */
+export function storedLine(doc) {
+  const count = Number(doc.count) || 0;
+  const when = doc.lastSnapshot ? formatWhen(doc.lastSnapshot) : '';
+  return `${count} snapshot${count === 1 ? '' : 's'} · ${formatSize(doc.size)}${when ? ` · last ${when}` : ''}`;
+}
+
+/** "2 documents · 9 snapshots · 12 MB on this PC" */
+export function storedSummary(documents) {
+  const n = documents.length;
+  const snapshots = documents.reduce((sum, d) => sum + (Number(d.count) || 0), 0);
+  return `${n} document${n === 1 ? '' : 's'} · ${snapshots} snapshot${snapshots === 1 ? '' : 's'} · ${formatSize(totalSize(documents))} on this PC`;
+}

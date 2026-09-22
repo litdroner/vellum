@@ -375,6 +375,7 @@ const settingsContext = {
   setAppearance,
   pageTone: currentPageTone,
   setPageTone,
+  history: () => actions.history,
   updates: () => ui.updates,
   version: () => session.version,
   commands: () => commands,

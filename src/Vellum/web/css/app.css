@@ -2054,6 +2054,12 @@ kbd {
 .hist-empty { margin: 4px 0; color: var(--ink-3); }
 .hist-storage { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
 .hist-total { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+/* Settings → History: every document's history on this PC (ui/settings.js) */
+.stored-row .setting-text { flex: 1; }
+.stored-row .setting-text > span, .stored-path { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.stored-row .setting-text small { font-variant-numeric: tabular-nums; }
+.stored-missing { color: var(--danger); font-weight: 500; }
+.stored-actions { display: flex; flex: none; gap: 6px; align-items: center; }
 
 /* Theme changes grow the new colours out of the control that was used (see themes.js). */
 ::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }

@@ -2,7 +2,7 @@ import { bridge } from '../bridge.js';
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { showDialog, toast } from '../ui/dialogs.js';
-import { beforeRestoreName, formatSize, formatWhen, historySummary, snapshotLabel, sortSnapshots, totalSize, withoutSnapshot } from './model.js';
+import { beforeRestoreName, formatSize, formatWhen, historySummary, snapshotLabel, sortSnapshots, sortStored, totalSize, withoutSnapshot } from './model.js';
 
 // Document history: snapshots a person takes of a document, kept on this PC (see Services/DocumentHistory.cs).
 // Only a manual feature: nothing is snapshotted unless asked, except the current version just before a restore.
@@ -98,6 +98,27 @@ export function createHistoryActions({ app, compare, save }) {
     /** Removes every snapshot of the document from this PC. The document itself doesn't change. */
     async clear(view) {
       return (await bridge.request('history.clear', { path: view.file.path })).removed ?? 0;
+    },
+
+    /** Every document's history on this PC, most recent first (Settings → History). */
+    async stored() {
+      return sortStored((await bridge.request('history.stored')).documents ?? []);
+    },
+
+    /** Opens the document a stored history belongs to (it must still be on disk), then its history dialog. */
+    async showStored(doc) {
+      const { file } = await bridge.request('history.openStored', { key: doc.key });
+      return actions.show(await app.open(file));
+    },
+
+    /** Removes one document's history from this PC, by its key. The document itself is never touched. */
+    async removeStored(doc, { onlyIfMissing = false } = {}) {
+      return (await bridge.request('history.removeStored', { key: doc.key, onlyIfMissing })).removed ?? 0;
+    },
+
+    /** Removes the history of every document that is no longer on disk. Returns how many histories went. */
+    async removeMissing() {
+      return (await bridge.request('history.removeMissing')).removed ?? 0;
     },
 
     /** The history dialog: take a snapshot, and open, compare, restore or delete the ones kept. */

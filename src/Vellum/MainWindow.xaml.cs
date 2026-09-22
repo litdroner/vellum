@@ -422,6 +422,14 @@ public partial class MainWindow : Window
             return Done();
         });
         bridge.Register("history.clear", request => Done(new { removed = _history.Clear(HistoryDocument(request)) }));
+        // Settings: every document's history on this PC. A history is named by its folder's key, never by a
+        // path from the page; removing one deletes that folder in Vellum's data folder and never a document.
+        bridge.Register("history.stored", _ => Done(new { documents = _history.Stored() }));
+        bridge.Register("history.openStored", request =>
+            Done(new { file = DescribeFile(_history.DocumentFor(RequiredString(request, "key"))) }));
+        bridge.Register("history.removeStored", request =>
+            Done(new { removed = _history.RemoveStored(RequiredString(request, "key"), OptionalBool(request, "onlyIfMissing") == true) }));
+        bridge.Register("history.removeMissing", _ => Done(new { removed = _history.RemoveMissing() }));
 
         // The page has dealt with unsaved annotations; really close now.
         bridge.Register("window.closeConfirmed", _ =>
