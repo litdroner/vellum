@@ -132,6 +132,22 @@ export async function run(t) {
     return true;
   })()`) === true);
   await shot('compare-overlay');
+  // A row scrolled far away (its canvases freed) while Overlay is still drawing it: that pass is skipped,
+  // never an error, and the row is drawn again when seen. The delays sweep the moment it's freed.
+  const pages = `document.querySelector('.cmp-pages')`;
+  const mode = (id) => q(`document.querySelector('.cmp-modes [data-mode="${id}"]').click()`);
+  for (const delay of [0, 10, 20, 35, 50, 75, 100, 150]) {
+    await mode('side');
+    await q(`${pages}.scrollTo({ top: 0 })`);
+    await waitFor(`document.querySelector('.cmp-row[data-row="0"]').dataset.rendered?.startsWith('side:')`, 8000);
+    await mode('overlay');
+    await sleep(delay);
+    await q(`${pages}.scrollTo({ top: ${pages}.scrollHeight })`);
+    await sleep(300);
+  }
+  await q(`${pages}.scrollTo({ top: 0 })`);
+  const redrawn = await waitFor(`(() => { const r = document.querySelector('.cmp-row[data-row="0"]'); return r.dataset.rendered?.startsWith('overlay:') && r.querySelector('.cmp-diff').width > 0; })()`, 8000);
+  check('a row freed mid-Overlay is drawn again, without errors', redrawn && (await q(`__vellum.errors.length`)) === 0, JSON.stringify(await q(`__vellum.errors`)));
   await q(`document.querySelector('.cmp-modes [data-mode="blink"]').click()`);
   const seen = new Set();
   for (let i = 0; i < 12; i++) {

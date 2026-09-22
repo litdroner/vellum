@@ -415,8 +415,11 @@ export class CompareView {
     }
     const diff = el.querySelector('.cmp-diff');
     if (diff) {
-      if (mode === 'overlay' && drawn.a && drawn.b) paintDifference(drawn.a, drawn.b, diff);
-      else Object.assign(diff, { width: 0, height: 0 });
+      if (mode === 'overlay' && drawn.a && drawn.b) {
+        // Freed (canvases emptied) while page B was drawing: skip this pass, unmarked, so it's drawn again when seen.
+        if (!this.#visible.has(i) || !hasPixels(drawn.a) || !hasPixels(drawn.b)) return;
+        paintDifference(drawn.a, drawn.b, diff);
+      } else Object.assign(diff, { width: 0, height: 0 });
     }
     if (!this.#closed && this.mode === mode) el.dataset.rendered = key;
   }
@@ -491,6 +494,8 @@ export class CompareView {
       h('span', { html: icon('triangle-alert', 22) }), h('span', { text: message })));
   }
 }
+
+const hasPixels = (canvas) => canvas?.width > 0 && canvas?.height > 0;
 
 /**
  * Overlay: A and B at the same size, pixel by pixel. Where they agree the page is shown faded; ink only
