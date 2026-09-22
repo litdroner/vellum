@@ -164,4 +164,47 @@ export async function run(t) {
   check('the rotated page kept its text', (await texts(4)).includes('Rotated page'));
   check('the picture watermark is in the file, on page 2 only', (await imagesOn(2)) === 1 && (await imagesOn(3)) === 0);
   check('no page errors were collected', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
+
+  // 0.24: roman numerals, and a count that begins again on the pages chosen. Last, so the checks above
+  // stay on the numbering they were written for.
+  area('numerals and where the count begins');
+  const pick = async (label, value) => {
+    await q(`(() => { const el = document.querySelector('.page-setting-dialog [aria-label="${label}"]');
+      el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); return el.value; })()`);
+    await sleep(250);
+  };
+  await palette('Page numbers');
+  await pick('Numerals', 'roman');
+  await pick('Count from', 'here');
+  check('the dialog says how the pages will read', /The first page reads “Page i of iv”, the next “Page ii of iv”\./
+    .test(await q(`document.querySelector('.page-setting-dialog .dialog-note').textContent`)),
+  await q(`document.querySelector('.page-setting-dialog .dialog-note').textContent`));
+  await shot('page-numbers-roman-dialog');
+  await c.key('Enter');
+  await rest();
+  check('the setting is on every page', await q(`${V(DOC)}.annotations.plan.every((e) => e.pageNumber?.style === 'roman' && e.pageNumber.restart === true)`));
+  // The arabic numbers were saved into the file in the area above, and a saved stamp is ordinary page
+  // content from then on — so numbering again writes beside it rather than over it. That is Vellum's
+  // documented behaviour for any stamp, not something numerals change; the pages here carry both.
+  check('the pages read in roman numerals', (await texts(1)).includes('Page i of iv') && (await texts(4)).includes('Page iv of iv'),
+    JSON.stringify(await texts(4)));
+  check('the number saved earlier is still there too, as page content', (await texts(4)).includes('Page 4 of 4'),
+    JSON.stringify(await texts(4)));
+  await q(`${V(DOC)}.focus()`);
+  await c.key('Ctrl+Z');
+  await rest();
+  check('undo brings the arabic numbers back', (await texts(1)).includes('Page 1 of 4'), JSON.stringify(await texts(1)));
+  await c.key('Ctrl+Y');
+  await rest();
+
+  await q('__vellum.actions.save()');
+  check('saved again', await waitFor(`!${V(DOC)}.annotations.dirty`, 25000));
+  await q(`__vellum.app.close(${V(DOC)})`);
+  await waitFor(`!${V(DOC)}`);
+  await q(`__vellum.actions.openRecent(${JSON.stringify(DOC)})`);
+  await rest();
+  const romanPage = await texts(2);
+  check('the roman numerals are in the file, once each', romanPage.filter((s) => s === 'Page ii of iv').length === 1, JSON.stringify(romanPage));
+  check('and the stamp written before them was not doubled either', romanPage.filter((s) => s === 'Page 2 of 4').length === 1, JSON.stringify(romanPage));
+  check('still no page errors', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }

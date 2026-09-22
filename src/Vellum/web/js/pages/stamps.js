@@ -4,8 +4,12 @@
 //   crop        { top, right, bottom, left }  points trimmed from the page's own visible box, as the
 //               page is stored (unrotated). Written as the page's /CropBox: nothing is removed or
 //               rasterized, so the page's content stays whole in the file.
-//   pageNumber  { format, position, size, start }  real text drawn in the visible box; `format` holds
-//               {n} (this page's number) and {total}; the number follows the page's place in the plan.
+//   pageNumber  { format, position, size, start, style, restart }  real text drawn in the visible box;
+//               `format` holds {n} (this page's number) and {total}, and any words around them — that is
+//               where a prefix or suffix goes. `style` writes the numbers as arabic (1, 2, 3) or roman
+//               (i, ii, iii / I, II, III). The number follows the page's place in the plan; with
+//               `restart` it counts from the first page of its own run instead of the first of the
+//               document, so a front matter or a chapter can be numbered from one.
 //   watermark   { text, position, size, opacity, rotation }  real text, drawn over the page content; or
 //               { picture, position, scale, opacity, rotation }  a PNG or JPEG image, `picture` being
 //               { source, format, width, height } as editing/objects/image.js readPicture() describes it
@@ -17,6 +21,9 @@
 // decoration. The page's own content is wrapped in q … Q first, so nothing it leaves set changes them.
 
 export const PAGE_NUMBER_POSITIONS = ['bottom-center', 'bottom-right', 'bottom-left', 'top-center', 'top-right', 'top-left'];
+
+/** How the numbers are written. 'ROMAN' is the same numeral in capitals. */
+export const PAGE_NUMBER_STYLES = ['arabic', 'roman', 'ROMAN'];
 import { embedPictures } from '../editing/objects/image.js';
 
 export const WATERMARK_POSITIONS = ['center', 'top', 'bottom'];
@@ -38,9 +45,51 @@ export async function unsupportedCharacters(lib, text) {
   return [...bad].join('');
 }
 
-/** The text of a page number for page `n` of `total`. */
-export function pageNumberText({ format = '{n}', start = 1 }, n, total) {
-  return format.replaceAll('{n}', String(n + start - 1)).replaceAll('{total}', String(total + start - 1));
+const ROMAN = [[1000, 'm'], [900, 'cm'], [500, 'd'], [400, 'cd'], [100, 'c'], [90, 'xc'], [50, 'l'], [40, 'xl'], [10, 'x'], [9, 'ix'], [5, 'v'], [4, 'iv'], [1, 'i']];
+
+/** A roman numeral in lower case. Outside 1–3999 there is none, so the plain number is used. */
+export function romanNumeral(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 3999) return String(value);
+  let out = '';
+  let left = value;
+  for (const [step, letters] of ROMAN) while (left >= step) { out += letters; left -= step; }
+  return out;
+}
+
+const numeral = (value, style) => (style === 'roman' ? romanNumeral(value)
+  : style === 'ROMAN' ? romanNumeral(value).toUpperCase()
+    : String(value));
+
+/** The text of a page number for page `n` of `total`, in the style asked for. */
+export function pageNumberText({ format = '{n}', start = 1, style = 'arabic' }, n, total) {
+  return format
+    .replaceAll('{n}', numeral(n + start - 1, style))
+    .replaceAll('{total}', numeral(total + start - 1, style));
+}
+
+/** The fields that make two pages part of one numbering run (everything but where the text sits). */
+const runKey = (s) => (s ? JSON.stringify([s.format, s.start, s.style, s.size, s.position]) : null);
+
+/**
+ * What each page's number counts from: { n, total } per plan entry, or null for a page with no number.
+ * A page numbered from the document counts its place in the whole plan. A page whose numbering restarts
+ * counts inside its run — the pages next to it, in an unbroken line, numbered in exactly the same way —
+ * so two separate stretches numbered alike each begin again.
+ */
+export function numberingRuns(plan) {
+  const out = new Array(plan.length).fill(null);
+  let i = 0;
+  while (i < plan.length) {
+    const setting = plan[i].pageNumber;
+    if (!setting) { i++; continue; }
+    if (!setting.restart) { out[i] = { n: i + 1, total: plan.length }; i++; continue; }
+    const key = runKey(setting);
+    let end = i;
+    while (end < plan.length && plan[end].pageNumber?.restart && runKey(plan[end].pageNumber) === key) end++;
+    for (let p = i; p < end; p++) out[p] = { n: p - i + 1, total: end - i };
+    i = end;
+  }
+  return out;
 }
 
 /** True when an entry has something for writeStamps to do. */
@@ -55,7 +104,7 @@ export async function writePageSettings({ lib, doc, pages, plan, sources }) {
   const ctx = doc.context;
   let font = null;
   const { embedded } = await embedPictures(lib, doc, plan.map((e, i) => pages[i] && e.watermark?.picture), sources);
-  const total = plan.length;
+  const counts = numberingRuns(plan);
   for (let i = 0; i < plan.length; i++) {
     const e = plan[i];
     const page = pages[i];
@@ -112,7 +161,8 @@ export async function writePageSettings({ lib, doc, pages, plan, sources }) {
         const [edge, side] = position.split('-');
         const y = edge === 'top' ? h - EDGE : EDGE;
         const x = side === 'left' ? EDGE : side === 'right' ? w - EDGE : w / 2;
-        draw(pageNumberText(e.pageNumber, i + 1, total), size, { x, y, anchor: side });
+        const { n, total } = counts[i] ?? { n: i + 1, total: plan.length };
+        draw(pageNumberText(e.pageNumber, n, total), size, { x, y, anchor: side });
       }
       lines.push('Q', 'EMC');
     }

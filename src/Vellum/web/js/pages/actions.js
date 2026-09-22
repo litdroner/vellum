@@ -7,7 +7,7 @@ import { loadPdfLib } from '../annotations/persist.js';
 import { newId } from '../annotations/model.js';
 import { readPicture } from '../editing/objects/image.js';
 import { decodeBase64 } from '../ui/text-editor.js';
-import { PAGE_NUMBER_POSITIONS, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
+import { PAGE_NUMBER_POSITIONS, PAGE_NUMBER_STYLES, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 import { MINIMUM_INPUTS, countInputs, mergeDocuments, mergedFileName, mergedPageCount, moveInput, removeInput, withoutDuplicates } from './merge.js';
 import { bookmarkSections, sectionFileNames, topLevelBookmarks } from './outline.js';
 
@@ -132,23 +132,36 @@ export function createPageActions({ onOpenFile }) {
     async pageNumbers(view, ids) {
       if (!(await allowed(view))) return;
       const plan = view.annotations.plan;
-      const current = plan.find((e) => ids.includes(e.id) && e.pageNumber)?.pageNumber ?? { format: 'Page {n} of {total}', position: 'bottom-center', size: 10, start: 1 };
+      const current = { format: 'Page {n} of {total}', position: 'bottom-center', size: 10, start: 1, style: 'arabic', restart: false,
+        ...plan.find((e) => ids.includes(e.id) && e.pageNumber)?.pageNumber };
+      // What the numbers would read, from the settings as they stand, without applying anything.
+      const reading = (v, n, count) => pageNumberText(
+        { format: v.format, start: Math.round(Number(v.start)), style: v.style }, n, count);
       const answer = await askForPageSetting({
         title: 'Page numbers', iconName: 'file-text', count: ids.length, total: plan.length, preferAll: true, removable: plan.some((e) => e.pageNumber),
-        message: 'Adds each page’s number as text. {n} is the page’s number and {total} the page count; numbers follow the pages when they’re moved.',
+        message: 'Adds each page’s number as text. {n} is the page’s number and {total} the page count, and anything around them is written as it stands; numbers follow the pages when they’re moved.',
         fields: [
           { key: 'format', label: 'Text', type: 'text', value: current.format, wide: true },
+          { key: 'style', label: 'Numerals', type: 'select', value: current.style, options: PAGE_NUMBER_STYLES.map((k) => [k, STYLE_LABELS[k]]) },
           { key: 'position', label: 'Position', type: 'select', value: current.position, options: PAGE_NUMBER_POSITIONS.map((p) => [p, label(p)]) },
           { key: 'size', label: 'Size', type: 'number', unit: 'pt', value: current.size, min: 4, max: 72 },
+          { key: 'from', label: 'Count from', type: 'select', value: current.restart ? 'here' : 'document', wide: true,
+            options: [['document', 'The first page of the document'], ['here', 'The first of the pages chosen']] },
           { key: 'start', label: 'Start at', type: 'number', value: current.start, min: 0, max: 99999 },
         ],
-        preview: (v) => `Page 1 reads “${pageNumberText({ format: v.format, start: Math.round(Number(v.start)) }, 1, plan.length)}”`,
+        preview: (v) => {
+          const count = v.from === 'here' ? Math.max(1, answerCount(v, ids.length, plan.length)) : plan.length;
+          const first = reading(v, 1, count);
+          const second = count > 1 ? reading(v, 2, count) : null;
+          return `The first page reads “${first}”${second ? `, the next “${second}”` : ''}.`;
+        },
         check: (v) => (v.format.includes('{n}') ? checkText(v.format) : 'Include {n} where the number goes.'),
       });
       if (!answer) return;
       const targets = answer.all ? plan.map((e) => e.id) : ids;
-      const { format, position, size, start } = answer.values;
-      const value = answer.remove ? null : { format, position, size: Number(size), start: Math.round(Number(start)) };
+      const { format, position, size, start, style, from } = answer.values;
+      const value = answer.remove ? null
+        : { format, position, size: Number(size), start: Math.round(Number(start)), style, restart: from === 'here' };
       if (view.setPageSetting(targets, 'pageNumber', value)) toast(answer.remove ? 'Page numbers removed' : `Numbered ${plural(targets.length, 'page')}`, { action: undo(view) });
     },
 
@@ -364,6 +377,9 @@ const SIDES = ['top', 'right', 'bottom', 'left']; // clockwise, as shown
 const toMm = (pt) => Math.round((pt * 25.4 / 72) * 10) / 10;
 const fromMm = (mm) => Math.max(0, Number(mm) || 0) * 72 / 25.4;
 const label = (position) => position.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+const STYLE_LABELS = { arabic: 'Numbers (1, 2, 3)', roman: 'Roman (i, ii, iii)', ROMAN: 'Roman capitals (I, II, III)' };
+/** How many pages the preview counts over: the pages chosen, or the whole document when All is picked. */
+const answerCount = (v, chosen, total) => (v.all ? total : chosen);
 
 async function checkText(text) {
   const bad = await unsupportedCharacters(await loadPdfLib(), text);
@@ -424,7 +440,7 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
     option('all', `All pages (${total})`, preferAll));
   const note = h('p', { class: 'dialog-note' });
   const settings = h('div', { class: 'page-settings' }, rows);
-  const values = () => ({ ...Object.fromEntries([...inputs].map(([k, el]) => [k, el.value])), mode });
+  const values = () => ({ ...Object.fromEntries([...inputs].map(([k, el]) => [k, el.value])), mode, all: scope.querySelector('input:checked')?.value === 'all' });
   const shown = (f) => !f.mode || f.mode === mode;
   let switcher = null;
   if (modes) {
@@ -456,6 +472,8 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
     note.textContent = problem ?? preview?.(v) ?? '';
   };
   settings.addEventListener('input', update);
+  // The preview can depend on how many pages are being numbered, so it follows the scope too.
+  scope.addEventListener('change', update);
 
   const buttons = [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Apply', primary: true }];
   if (removable) buttons.unshift({ id: 'remove', label: 'Remove' });
