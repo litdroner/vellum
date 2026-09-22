@@ -28,15 +28,15 @@ async function pages(name) {
   return list;
 }
 
-const search = (list, text) => list.flatMap((page) => matchPage(page, parseQuery(text)));
+const search = (list, text, options) => list.flatMap((page) => matchPage(page, parseQuery(text, options)));
 const brief = (results) => results.map((r) => `${r.number}:${r.kind}:${r.label}`);
 
 test('parsing: words, kinds, editable filters, contains and exact', () => {
   const q = (text) => { const { type, editable, match, text: words } = parseQuery(text); return [type, editable, match, words]; };
   assert.deepEqual(q('transformer'), [null, null, 'contains', 'transformer']);
-  assert.deepEqual(q('  Transformer   Models '), [null, null, 'contains', 'transformer models']);
+  assert.deepEqual(q('  Transformer   Models '), [null, null, 'contains', 'Transformer Models'], 'case is kept; matching folds it');
   assert.deepEqual(q('all images'), ['image', null, 'contains', '']);
-  assert.deepEqual(q('pictures'), ['image', null, 'contains', '']);
+  assert.deepEqual(q('all pictures'), ['image', null, 'contains', '']);
   assert.deepEqual(q('all form fields'), ['field', null, 'contains', '']);
   assert.deepEqual(q('fields containing grace'), ['field', null, 'contains', 'grace']);
   assert.deepEqual(q('all links'), ['link', null, 'contains', '']);
@@ -45,8 +45,8 @@ test('parsing: words, kinds, editable filters, contains and exact', () => {
   assert.deepEqual(q('editable containing method'), ['text', true, 'contains', 'method']);
   assert.deepEqual(q('non-editable text'), ['text', false, 'contains', '']);
   assert.deepEqual(q('not editable text'), ['text', false, 'contains', '']);
-  assert.deepEqual(q('text exactly Structure report'), ['text', null, 'exact', 'structure report']);
-  assert.deepEqual(q('exactly Figure 1: a picture'), [null, null, 'exact', 'figure 1: a picture']);
+  assert.deepEqual(q('text exactly Structure report'), ['text', null, 'exact', 'Structure report']);
+  assert.deepEqual(q('exactly Figure 1: a picture'), [null, null, 'exact', 'Figure 1: a picture']);
   // Words that only look like the grammar stay words.
   assert.deepEqual(q('"all images"'), [null, null, 'contains', 'all images']);
   assert.deepEqual(q('all the best'), [null, null, 'contains', 'all the best']);
@@ -58,7 +58,7 @@ test('parsing: words, kinds, editable filters, contains and exact', () => {
   assert.equal(needsContent(parseQuery('all form fields')), false);
   assert.equal(needsContent(parseQuery('transformer')), true);
   assert.equal(needsContent(parseQuery('all images')), true);
-  assert.equal(describeQuery(parseQuery('editable text containing Method')), 'Editable text containing “method”');
+  assert.equal(describeQuery(parseQuery('editable text containing Method')), 'Editable text containing “Method”');
   assert.equal(describeQuery(parseQuery('all images')), 'Images');
 });
 
@@ -105,4 +105,54 @@ test('editable and non-editable text, per run', () => {
   assert.deepEqual(labels('non-editable text containing method'), ['run:Method, drawn as outlines']);
   assert.deepEqual(labels('non-editable text'), ['run:Method, drawn as outlines', 'run:Results']);
   assert.deepEqual(labels('method'), ['block:The method we use Method, drawn as outlines Results'], 'without a filter, the paragraph');
+});
+
+test('kind words: alone or before other words they are searched for; "all" or containing makes them kinds', () => {
+  const q = (text) => { const { type, editable, match, text: words } = parseQuery(text); return [type, editable, match, words]; };
+  for (const word of ['text', 'images', 'image', 'links', 'fields', 'form fields', 'comments', 'annotations', 'pictures', 'paragraphs']) {
+    assert.deepEqual(q(word), [null, null, 'contains', word], word);
+  }
+  assert.deepEqual(q('Text  layout'), [null, null, 'contains', 'Text layout']);
+  assert.deepEqual(q('comments on the draft'), [null, null, 'contains', 'comments on the draft']);
+  assert.deepEqual(q('links to page 2'), [null, null, 'contains', 'links to page 2']);
+  assert.deepEqual(q('all images'), ['image', null, 'contains', '']);
+  assert.deepEqual(q('all comments'), ['annotation', null, 'contains', '']);
+  assert.deepEqual(q('ALL Text'), ['text', null, 'contains', '']);
+  assert.deepEqual(q('comments containing budget'), ['annotation', null, 'contains', 'budget']);
+  assert.deepEqual(q('links exactly https://a.b'), ['link', null, 'exact', 'https://a.b']);
+  assert.deepEqual(q('editable text'), ['text', true, 'contains', '']);
+  assert.equal(needsContent(parseQuery('links')), true, 'the word "links" is looked for in the text too');
+});
+
+test('kind words as words find the word, not every object of the kind', async () => {
+  const list = await pages('structure');
+  assert.deepEqual(brief(search(list, 'links')), [], 'no text says "links"');
+  assert.equal(search(list, 'all links').length, 2);
+  assert.deepEqual(brief(search(list, 'text')), [], 'a note’s subtype (Text) only matches when notes are asked for by kind');
+  assert.deepEqual(brief(search(list, 'picture')), ['2:run:Figure 1: a picture'], '"picture" is a word');
+});
+
+test('Match case and Whole words', () => {
+  const run = (id, text) => ({ id, key: id, blockId: id, text, box: [0, 0, 10, 10], quad: null, font: null, size: 10, dir: 0, editable: true, invisible: false });
+  const texts = ['Apple pie', 'apple sauce', 'Pineapple', 'APPLE_JUICE', 'apple-tree'];
+  const runs = texts.map((t, i) => run(`p1:${i}`, t));
+  const page = {
+    id: 'p1', number: 1, contentRead: true, runs, images: [], annotations: [], links: [],
+    fields: [{ id: 'p1:f', name: 'Fruit', type: 'text', value: 'Apple' }],
+    blocks: runs.map((r) => ({ id: r.id, kind: 'line', text: r.text, lines: 1, runIds: [r.id], box: r.box })),
+    readingOrder: runs.map((r) => r.id),
+  };
+  const labels = (text, options) => matchPage(page, parseQuery(text, options)).map((r) => r.label);
+  assert.deepEqual(labels('apple'), [...texts, 'Fruit · text'], 'case ignored by default');
+  assert.deepEqual(labels('apple', { caseSensitive: true }), ['apple sauce', 'Pineapple', 'apple-tree']);
+  assert.deepEqual(labels('Apple', { caseSensitive: true }), ['Apple pie', 'Fruit · text']);
+  assert.deepEqual(labels('apple', { entireWord: true }), ['Apple pie', 'apple sauce', 'apple-tree', 'Fruit · text'], 'not inside Pineapple or APPLE_JUICE');
+  assert.deepEqual(labels('apple', { caseSensitive: true, entireWord: true }), ['apple sauce', 'apple-tree']);
+  assert.deepEqual(labels('apple  PIE', { entireWord: true }), ['Apple pie'], 'white space runs match as one');
+  assert.deepEqual(labels('exactly apple pie'), ['Apple pie']);
+  assert.deepEqual(labels('exactly apple pie', { caseSensitive: true }), []);
+  assert.deepEqual(labels('text containing Apple', { caseSensitive: true, entireWord: true }), ['Apple pie']);
+  const parsed = parseQuery('x', { caseSensitive: true, entireWord: true });
+  assert.equal(parsed.caseSensitive, true);
+  assert.equal(parsed.entireWord, true);
 });

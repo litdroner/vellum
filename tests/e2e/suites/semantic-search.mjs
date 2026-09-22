@@ -1,7 +1,8 @@
 // Semantic search in the real app: the Structure tab's search over a two-page document with text, a
 // paragraph, a form field, a note, a link and a picture. Words, then kinds (images, form fields, links) and
 // an editable filter; Enter, Shift+Enter and the Next button step through results, each going to its page,
-// showing its properties and marking its box over the object itself; Escape brings the tree back; and
+// showing its properties and marking its box over the object itself; a kind word alone is a word; Match case
+// and Whole words narrow words, with the count in the status line; Escape brings the tree back; and
 // nothing in the document changes.
 
 import fs from 'node:fs';
@@ -87,6 +88,25 @@ export async function run(t) {
   check('editable text containing report', await waitFor(`${status} === 'Editable text containing “report” · 1 result'`, 10000) && JSON.stringify(await results()) === JSON.stringify(['p. 1 Text run: Structure report']), await q(status));
   await searchFor('non-editable text');
   check('no non-editable text here', await waitFor(`${status} === 'Non-editable text · No results' && document.querySelector('.structure-results .structure-hint')?.textContent === 'Nothing found.'`, 10000), await q(status));
+
+  area('match case, whole words, kind words');
+  const option = (label) => `document.querySelector('.structure-search .tb-btn[aria-label="${label}"]')`;
+  await searchFor('links');
+  check('"links" alone is a word, not every link', await waitFor(`${status} === 'Anything containing “links” · No results'`, 10000), await q(status));
+  await searchFor('Figure');
+  check('without Match case: three', await waitFor(`${status} === 'Anything containing “Figure” · 3 results'`, 10000), await q(status));
+  await q(`${option('Match case')}.click()`);
+  check('Match case: only “Figure 1: a picture”', await waitFor(`${status} === 'Anything containing “Figure” · 1 result' && ${option('Match case')}.getAttribute('aria-pressed') === 'true'`, 10000)
+    && JSON.stringify(await results()) === JSON.stringify(['p. 2 Text run: Figure 1: a picture']), await q(status));
+  await q(`${option('Match case')}.click()`);
+  await q(`${option('Whole words')}.click()`);
+  check('Whole words: “figures” no longer matches', await waitFor(`${status} === 'Anything containing “Figure” · 2 results'`, 10000)
+    && JSON.stringify(await results()) === JSON.stringify(['p. 2 Text run: A figure on page two', 'p. 2 Text run: Figure 1: a picture']), await q(status));
+  await c.key('Enter');
+  check('Enter shows which of the count', await waitFor(`${status} === 'Anything containing “Figure” · 1 of 2'`, 3000), await q(status));
+  await shot('search-options');
+  await q(`${option('Whole words')}.click()`);
+  check('the Find bar’s own options are untouched', await q(`!${V(DOC)}.find.caseSensitive && !${V(DOC)}.find.entireWord`));
 
   area('clear');
   await c.key('Escape');

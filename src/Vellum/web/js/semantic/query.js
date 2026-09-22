@@ -2,10 +2,13 @@
 // of one kind — matched page by page. Deterministic and local: plain string matching on what the model
 // already holds, nothing inferred, nothing indexed ahead. Pure.
 //
+import { findMatches } from '../editing/find-replace.js';
+
 // A query is, in this order and each part optional:
 //   [all] [editable | non-editable] [text | images | form fields | annotations | links] [containing | exactly] [words]
 //
 //   transformer                      text containing "transformer"
+//   images                           the word "images": a kind word alone, or before other words, is a word
 //   all images                       every image
 //   all form fields / all links      every field / every link
 //   editable text containing method  text runs Vellum can edit that contain "method"
@@ -13,7 +16,10 @@
 //   exactly Figure 1: a picture      text (or a field, note or link) whose whole text is that
 //   "all images"                     quoted: the words themselves, as text
 //
-// Matching ignores case and treats any run of white space (a line break in a paragraph too) as one space.
+// A kind is one when "all" or an editable filter leads it, or containing / exactly follows it.
+//
+// Matching treats any run of white space (a line break in a paragraph too) as one space, and ignores case
+// unless Match case is on; Whole words means what it does in Find (editing/find-replace.js findMatches).
 // Text is matched per block (a paragraph, or a line of its own); with an editable filter, per text run,
 // since editability is a run's. A field matches on its name and value, an annotation on its contents, a
 // link on its URL; asked for by kind, an annotation on its subtype too and a link on the page it goes to ("page 2"). Images have no text: words never match one.
@@ -29,12 +35,16 @@ const TYPES = [
 const EDITABLE = /^(editable|non-?editable|not\s+editable|uneditable)(\s+|$)/i;
 const HOW = /^(containing|contains|matching|with|exactly|equals|equal\s+to)(\s+|$)/i;
 
-const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
-/** A query string as { type: null | 'text' | 'image' | 'field' | 'annotation' | 'link', editable: null | boolean, match: 'contains' | 'exact', text }. */
-export function parseQuery(input) {
-  const query = { type: null, editable: null, match: 'contains', text: '' };
+/**
+ * A query string as { type: null | 'text' | 'image' | 'field' | 'annotation' | 'link', editable: null | boolean,
+ * match: 'contains' | 'exact', text, caseSensitive, entireWord }, the last two Match case and Whole words.
+ */
+export function parseQuery(input, { caseSensitive = false, entireWord = false } = {}) {
+  const query = { type: null, editable: null, match: 'contains', text: '', caseSensitive, entireWord };
   let rest = String(input ?? '').trim();
+  const whole = rest;
   const unquote = (s) => { const m = /^"([^"]*)"?$/.exec(s); return norm(m ? m[1] : s); };
   if (/^"/.test(rest)) return { ...query, text: unquote(rest) };
   const eat = (re) => {
@@ -44,10 +54,13 @@ export function parseQuery(input) {
   };
   // "all" only leads a kind or a filter; otherwise it is one of the words searched for.
   const after = rest.replace(/^all\s+/i, '');
-  if (after !== rest && (EDITABLE.test(after) || TYPES.some(([re]) => re.test(after)))) rest = after;
+  const all = after !== rest && (EDITABLE.test(after) || TYPES.some(([re]) => re.test(after)));
+  if (all) rest = after;
   const editable = eat(EDITABLE);
   if (editable) query.editable = !/^(non|not|un)/i.test(editable[1]);
   for (const [re, type] of TYPES) if (eat(re)) { query.type = type; break; }
+  // A kind word alone, or before other words, is searched for: "images", "text layout", "comments".
+  if (query.type && !all && !editable && !HOW.test(rest)) return { ...query, type: null, text: norm(whole) };
   if (query.editable !== null) query.type ??= 'text';
   // containing / exactly: after a kind or filter, or leading a query of words.
   const how = eat(query.type ? HOW : /^(containing|exactly)\s+/i);
@@ -68,8 +81,13 @@ export function needsContent(query) {
 
 function textMatches(query, ...values) {
   if (!query.text) return true;
+  const { caseSensitive, entireWord } = query;
   const list = values.filter((v) => v != null && v !== '').map(norm);
-  return query.match === 'exact' ? list.some((v) => v === query.text) : list.some((v) => v.includes(query.text));
+  if (query.match === 'exact') {
+    const fold = (s) => (caseSensitive ? s : s.toLowerCase());
+    return list.some((v) => fold(v) === fold(query.text));
+  }
+  return list.some((v) => findMatches(v, query.text, { caseSensitive, entireWord }).length > 0);
 }
 
 const clip = (text, max = 70) => {

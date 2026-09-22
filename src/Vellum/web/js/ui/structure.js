@@ -29,6 +29,7 @@ export class StructurePanel {
   #replan = false; // the page list changed: every page is read again
   #abort = new AbortController();
   #search = { id: 0, query: null, results: [], index: -1, reading: false };
+  #options = { caseSensitive: false, entireWord: false }; // Match case, Whole words
 
   constructor(view) {
     this.view = view;
@@ -57,11 +58,24 @@ export class StructurePanel {
         this.search('');
       }
     }, { signal: this.#abort.signal });
+    const option = (name, title, glyph) => {
+      const button = h('button', {
+        class: 'tb-btn small', title, 'aria-label': title, 'aria-pressed': 'false', html: icon(glyph, 15),
+        onClick: () => {
+          this.#options[name] = !this.#options[name];
+          button.setAttribute('aria-pressed', String(this.#options[name]));
+          if (this.searchInput.value.trim()) this.search(this.searchInput.value);
+        },
+      });
+      return button;
+    };
+    this.caseBtn = option('caseSensitive', 'Match case', 'case-sensitive');
+    this.wordBtn = option('entireWord', 'Whole words', 'whole-word');
     this.prevBtn = h('button', { class: 'tb-btn small', title: 'Previous result (Shift+Enter)', 'aria-label': 'Previous result', html: icon('chevron-up', 15), onClick: () => this.step(-1) });
     this.nextBtn = h('button', { class: 'tb-btn small', title: 'Next result (Enter)', 'aria-label': 'Next result', html: icon('chevron-down', 15), onClick: () => this.step(1) });
     this.searchBar = h('div', { class: 'structure-search', role: 'search' },
       h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), this.searchInput),
-      this.prevBtn, this.nextBtn);
+      this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
     this.searchStatus = h('div', { class: 'structure-summary structure-search-status', 'aria-live': 'polite', hidden: true });
     this.results = h('div', { class: 'structure-tree structure-results', role: 'list', 'aria-label': 'Search results', hidden: true });
     this.#updateSteps();
@@ -222,7 +236,7 @@ export class StructurePanel {
 
   /** Searches the document's structure (semantic/query.js), page after page; an empty query shows the tree again. */
   async search(text) {
-    const query = parseQuery(text);
+    const query = parseQuery(text, this.#options);
     const id = this.#search.id + 1;
     const empty = isEmptyQuery(query);
     this.#search = { id, text: String(text ?? ''), query: empty ? null : query, results: [], index: -1, reading: !empty };
@@ -237,7 +251,8 @@ export class StructurePanel {
     const content = needsContent(query) || this.view.encrypted;
     let capped = false;
     for (let number = 1; number <= count && !capped; number++) {
-      this.searchStatus.textContent = `${describeQuery(query)} · reading page ${number} of ${count}…`;
+      const found = this.#search.results.length;
+      this.searchStatus.textContent = `${describeQuery(query)} · ${found ? `${found} found · ` : ''}reading page ${number} of ${count}…`;
       let page = null;
       try {
         page = content || this.#pages.has(number) ? await this.#read(number) : await readPdfPage(this.view.pdf, number);
