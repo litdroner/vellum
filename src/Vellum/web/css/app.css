@@ -2064,8 +2064,24 @@ kbd {
 .cmp-pick-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }
 .cmp-pick-name.empty { color: var(--ink-3); font-weight: 400; }
 
+/* PDF health (health/actions.js) */
+.health-dialog { width: min(560px, calc(100vw - 32px)); }
+.health-status { margin: 0 0 10px; }
+.health-list { display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 460px); overflow-y: auto; }
+.health-item { display: flex; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
+.health-glyph { flex: none; padding-top: 1px; color: var(--ink-3); }
+.health-item.refused .health-glyph { color: var(--danger); }
+.health-item.limited .health-glyph { color: var(--accent-ink); }
+.health-body { min-width: 0; }
+.health-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; color: var(--ink-3); font-size: 11.5px; }
+.health-severity { color: var(--ink-2); font-weight: 600; }
+.health-page { padding: 0 2px; border: 0; background: none; color: var(--accent-ink); font: inherit; text-decoration: underline; cursor: pointer; }
+.health-message { margin: 4px 0 0; color: var(--ink); line-height: 1.45; }
+.health-details { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
+
 /* Document history (history/actions.js) */
 .history-dialog { width: min(560px, calc(100vw - 32px)); }
+
 .hist-create { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
 .hist-create .field { flex: 1; min-width: 0; height: 34px; }
 .hist-list { display: flex; flex-direction: column; gap: 6px; max-height: min(46vh, 360px); overflow: auto; }

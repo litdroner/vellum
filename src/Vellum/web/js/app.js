@@ -24,6 +24,7 @@ import { toPdfPoint } from './page-space.js';
 import { createPageActions } from './pages/actions.js';
 import { createOcrActions } from './ocr/actions.js';
 import { createCompareActions } from './compare/actions.js';
+import { createHealthActions } from './health/actions.js';
 import { createHistoryActions } from './history/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
@@ -378,6 +379,7 @@ const actions = {
 actions.pages = createPageActions({ onOpenFile: (file) => app.open(file) });
 actions.ocr = createOcrActions({ openSettings: (section) => actions.settings(section) });
 actions.compare = createCompareActions({ app, pdfjsLib: libs.pdfjsLib });
+actions.health = createHealthActions({ app });
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 
 const commands = createCommands(app, ui, actions);
@@ -512,6 +514,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.structure', null, { disabled: !ready }),
+    menuItem('tools.health', null, { disabled: !ready }),
     menuItem('tools.compare'),
     '-',
     menuItem('app.palette'),
