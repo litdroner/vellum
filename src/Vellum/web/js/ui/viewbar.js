@@ -1,6 +1,7 @@
 import { h, commandTitle } from '../dom.js';
 import { icon } from '../icons.js';
 import { openMenu } from './menu.js';
+import { nextSpreadPage, previousSpreadPage } from '../spread.js';
 
 // The view bar floating at the bottom of the document: page navigation, zoom, fit, rotation and
 // layout. It follows the active document and is hidden while none is ready.
@@ -30,6 +31,7 @@ export class ViewBar {
     this.continuousBtn = button('view.continuous', 'gallery-vertical-end', 'seg-btn');
     this.singleBtn = button('view.single', 'file', 'seg-btn');
     this.layoutSeg = h('div', { class: 'seg layout-seg', role: 'group', 'aria-label': 'Page layout' }, this.continuousBtn, this.singleBtn);
+    this.spreadBtn = button('view.spread', 'book-open', 'tb-btn small vb-spread');
 
     this.el = h('div', { class: 'viewbar ui', role: 'toolbar', 'aria-label': 'View', hidden: true },
       h('div', { class: 'vb-group vb-nav' }, this.prevBtn, h('label', { class: 'page-nav' }, this.pageInput, this.pageTotal), this.nextBtn),
@@ -38,7 +40,8 @@ export class ViewBar {
       h('div', { class: 'vb-sep vb-sep-fit' }),
       h('div', { class: 'vb-group vb-fit' }, this.fitPageBtn, this.fitWidthBtn, this.rotateBtn),
       h('div', { class: 'vb-sep vb-sep-layout' }),
-      this.layoutSeg);
+      this.layoutSeg,
+      this.spreadBtn);
     stage.append(this.el);
 
     this.pageInput.addEventListener('focus', () => this.pageInput.select());
@@ -80,14 +83,16 @@ export class ViewBar {
     if (document.activeElement !== this.pageInput) this.pageInput.value = String(s.pageNumber);
     this.pageTotal.textContent = `/ ${s.pagesCount}`;
     this.pageInput.style.width = `${Math.max(2, String(s.pagesCount).length) + 1.6}ch`;
-    this.prevBtn.disabled = s.pageNumber <= 1;
-    this.nextBtn.disabled = s.pageNumber >= s.pagesCount;
+    // In spreads the buttons turn whole spreads, so they stop at the first and last spread.
+    this.prevBtn.disabled = s.spread ? previousSpreadPage(s.pageNumber) === null : s.pageNumber <= 1;
+    this.nextBtn.disabled = s.spread ? nextSpreadPage(s.pageNumber, s.pagesCount) === null : s.pageNumber >= s.pagesCount;
     this.zoomBtn.textContent = `${Math.round(s.scale * 100)}%`;
     this.fitPageBtn.setAttribute('aria-pressed', String(s.scaleValue === 'page-fit'));
     this.fitWidthBtn.setAttribute('aria-pressed', String(s.scaleValue === 'page-width'));
     this.continuousBtn.setAttribute('aria-pressed', String(s.viewMode === 'continuous'));
     this.singleBtn.setAttribute('aria-pressed', String(s.viewMode === 'single'));
     this.layoutSeg.style.setProperty('--seg-index', s.viewMode === 'single' ? '1' : '0');
+    this.spreadBtn.setAttribute('aria-pressed', String(s.spread));
   }
 
   #openZoomMenu() {

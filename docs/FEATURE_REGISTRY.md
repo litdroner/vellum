@@ -138,7 +138,8 @@ Vision.
 | Home screen: greeting, Open card, recent documents with first-page covers | done | ui/start.js, recent-covers.js, RecentFiles.cs |
 | View bar (page, zoom, fit, rotate, layout) floating over the document | done | ui/viewbar.js |
 | Reduce motion, reduce transparency (performance) | done | themes.js |
-| Two-page (spread) layout, full-screen reading | planned | — |
+| Two-page spread layout: pages side by side (1–2, 3–4…, an odd last page alone) in continuous or single-page view, from the view bar or the palette; Previous / Next turn whole spreads; stays on the same page when switched; fitted zooms fit the pair; layout only, the file is never changed. Not yet remembered per file | done, unreleased | spread.js, document-view.js (setSpread), ui/viewbar.js; tests/editing/spread.test.mjs, tests/e2e/suites/spread.mjs |
+| Full-screen reading | planned | — |
 
 ## Roadmap — must not be faked
 
@@ -155,7 +156,7 @@ intended behaviour and its rules.
 | Shapes, lines, arrows, freehand as page content; stamps and reusable custom stamps | planned | §3.2 |
 | Tag-preserving edits; PDF/A font embedding; keeping edited text on its layer | planned | §2.2, §10 |
 | Annotations: strikethrough, shapes, stamps, text boxes, measure (also listed under Annotating); moving annotations and links with content | planned | §3.3 |
-| Two-page (spread) layout, full-screen reading (also listed under App) | planned | §3.1 |
+| Full-screen reading (also listed under App; two-page spreads are done) | planned | §3.1 |
 | Fill & sign: signatures (type / draw / upload, place, resize) | done, unreleased — Fill & Sign v1 (Forms) | §3.7 |
 | Form creation, form flattening as an explicit user-requested output (detecting and filling existing fields: Forms) | planned | §3.7 |
 | Digital (certificate) signatures, separate from signature pictures: signing with a certificate, validity display (needs a local signing/certificate engine chosen) | planned | §3.7 |

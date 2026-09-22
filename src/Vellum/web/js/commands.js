@@ -67,6 +67,7 @@ export function createCommands(app, ui, actions) {
     'view.rotateCcw': { group: 'View', icon: 'rotate-ccw', doc: true, label: 'Rotate view counter-clockwise', keys: ['Ctrl+Shift+-'], global: true, run: () => doc()?.rotate(-90) },
     'view.continuous': { group: 'View', icon: 'gallery-vertical-end', doc: true, label: 'Continuous scroll', run: () => doc()?.setViewMode('continuous') },
     'view.single': { group: 'View', icon: 'file', doc: true, label: 'Single page', run: () => doc()?.setViewMode('single') },
+    'view.spread': { group: 'View', icon: 'book-open', doc: true, label: 'Two-page spread', run: () => doc()?.setSpread(!doc().spread) },
     'view.pageTone': { group: 'View', icon: 'contrast', label: 'Page colours: normal, dark, sepia', keys: ['Ctrl+Shift+D'], global: true, run: () => actions.cyclePageTone() },
     'sidebar.toggle': { group: 'View', icon: 'panel-left', doc: true, label: 'Toggle sidebar', keys: ['F4', 'Ctrl+B'], global: true, run: () => ui.sidebar.toggle() },
 

@@ -15,6 +15,7 @@ import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
 import { ObjectSelection } from './editing/objects/selection.js';
 import { readFields, valueOfInput } from './forms/fields.js';
+import { nextSpreadPage, previousSpreadPage } from './spread.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
 // (page, zoom, rotation, layout, search) and reports changes with a 'change' event.
@@ -58,6 +59,8 @@ export class DocumentView extends EventTarget {
   error = null;
   pdf = null;
   viewMode = 'continuous'; // continuous | single
+  /** Pages shown side by side in two-page spreads (1–2, 3–4…); only the layout changes, never the file. */
+  spread = false;
   encrypted = false;
   find = { query: '', caseSensitive: false, entireWord: false, current: 0, total: 0, state: null };
   /** Called when the view asks to be closed (e.g. "Close" on the error panel). Set by the app. */
@@ -147,6 +150,7 @@ export class DocumentView extends EventTarget {
       scaleValue: v?.currentScaleValue ?? null,
       rotation: v?.pagesRotation ?? 0,
       viewMode: this.viewMode,
+      spread: this.spread,
       find: { ...this.find },
       tool: this.annotLayer?.tool ?? 'select',
       dirty: this.annotations.dirty,
@@ -292,6 +296,7 @@ export class DocumentView extends EventTarget {
         this.viewer.currentScaleValue = restore.scaleValue || 'auto';
         this.viewer.pagesRotation = restore.rotation;
         if (this.viewMode === 'single') this.viewer.scrollMode = this.#libs.viewerLib.ScrollMode.PAGE;
+        if (this.spread) this.viewer.spreadMode = this.#libs.viewerLib.SpreadMode.ODD;
         this.viewer.currentPageNumber = restore.page;
         // The same pages came back (a content edit): stay exactly where the reader was, under the held pictures.
         if (this.#held) Object.assign(this.container, { scrollTop: this.#held.scrollTop, scrollLeft: this.#held.scrollLeft });
@@ -444,10 +449,21 @@ export class DocumentView extends EventTarget {
     if (pulse) this.#pulsePage(page);
   }
 
-  nextPage() { if (this.pdf) this.viewer.nextPage(); }
+  nextPage() {
+    if (!this.pdf) return;
+    // In spreads a turn is always a whole spread (pdf.js turns one page when the pair isn't fully in view).
+    if (!this.spread) { this.viewer.nextPage(); return; }
+    const next = nextSpreadPage(this.viewer.currentPageNumber, this.pdf.numPages);
+    if (next) this.viewer.currentPageNumber = next;
+  }
 
   prevPage({ toBottom = false } = {}) {
-    if (!this.pdf || !this.viewer.previousPage()) return;
+    if (!this.pdf) return;
+    if (this.spread) {
+      const previous = previousSpreadPage(this.viewer.currentPageNumber);
+      if (!previous) return;
+      this.viewer.currentPageNumber = previous;
+    } else if (!this.viewer.previousPage()) return;
     // Paging backwards in single-page view lands at the bottom of the previous page, like turning back.
     if (toBottom) requestAnimationFrame(() => { this.container.scrollTop = this.container.scrollHeight; });
   }
@@ -514,6 +530,17 @@ export class DocumentView extends EventTarget {
     this.viewMode = mode;
     this.viewer.scrollMode = mode === 'single' ? ScrollMode.PAGE : ScrollMode.VERTICAL;
     this.el.classList.toggle('single', mode === 'single');
+    this.viewer.currentPageNumber = page;
+    this.#changed();
+  }
+
+  /** Two-page spreads on or off, staying on the same page (a fitted zoom refits to the new width). */
+  setSpread(on) {
+    if (!this.pdf || on === this.spread) return;
+    const { SpreadMode } = this.#libs.viewerLib;
+    const page = this.viewer.currentPageNumber;
+    this.spread = on;
+    this.viewer.spreadMode = on ? SpreadMode.ODD : SpreadMode.NONE;
     this.viewer.currentPageNumber = page;
     this.#changed();
   }
@@ -926,7 +953,8 @@ export class DocumentView extends EventTarget {
 
   #animatePageTurn(pageNumber, previous) {
     if (this.viewMode !== 'single' || !previous || previous === pageNumber || reducedMotion()) return;
-    const div = this.viewer.getPageView(pageNumber - 1)?.div;
+    const page = this.viewer.getPageView(pageNumber - 1)?.div;
+    const div = page?.parentElement?.classList.contains('spread') ? page.parentElement : page; // a spread turns as one
     const direction = pageNumber > previous ? 1 : -1;
     div?.animate(
       [{ opacity: 0, transform: `translateX(${direction * 36}px) scale(.985)` }, { opacity: 1, transform: 'none' }],

@@ -674,6 +674,9 @@ kbd {
 }
 #stage .pdfViewer .page .loadingIcon { display: none; }
 #stage .doc.single .pdfViewer .page { margin: 24px auto; }
+/* Two-page spreads: the pair sits side by side with a narrow gutter, as in a book. */
+#stage .pdfViewer .spread .page { margin: 16px 6px; }
+#stage .doc.single .pdfViewer .spread .page { margin: 24px 6px; }
 #stage .pdfViewer .page.arrive { animation: arrive 1s var(--ease-out); }
 
 #stage .textLayer {
@@ -761,6 +764,7 @@ kbd {
 .viewbar .seg { padding: 2px; border-radius: 10px; }
 .viewbar .seg::before { top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / var(--seg-count)); border-radius: 8px; }
 .viewbar .seg > .seg-btn { height: 26px; min-width: 34px; border-radius: 8px; }
+.viewbar .vb-spread { margin-left: 4px; }
 .zoom-value { min-width: 54px; color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
 .zoom-value.pulse { animation: value-pulse .45s var(--ease-out); }
 
@@ -1449,7 +1453,7 @@ kbd {
 @media (max-width: 720px) { #toolbar .tone-btn, #toolbar .print-btn, #toolbar .tb-sep { display: none; } }
 /* The view bar sizes to the document area, not the window (the sidebar takes part of it). */
 #stage { container-type: inline-size; }
-@container (max-width: 640px) { .viewbar .layout-seg, .viewbar .vb-sep-layout { display: none; } }
+@container (max-width: 640px) { .viewbar .layout-seg, .viewbar .vb-sep-layout, .viewbar .vb-spread { display: none; } }
 @container (max-width: 500px) { .viewbar .vb-fit, .viewbar .vb-sep-fit { display: none; } }
 
 /* ---- page organiser -------------------------------------------------------------------- */
