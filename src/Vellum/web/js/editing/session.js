@@ -545,11 +545,12 @@ export class TextEditing {
 
   /**
    * Puts a line of new text on a page, in a standard font, centred and upright as the page is shown
-   * (`basis`, page-space.js displayBasis; `box`, the page's crop box): one undo step, one record, and the
+   * (`basis`, page-space.js displayBasis; `box`, the page's crop box), or with its top-left at `at` (a
+   * user-space point, where the page was right-clicked): one undo step, one record, and the
    * new text's object key back, so it can be selected and typed over. Throws EditError when it can't be
    * done: a page whose content can't be rewritten, a PDF/A document (the standard fonts aren't embedded).
    */
-  async insertText(pageNumber, { basis, box, text = PLACEHOLDER }) {
+  async insertText(pageNumber, { basis, box, at = null, text = PLACEHOLDER }) {
     const view = this.#view;
     if (view.rebuilding) throw new EditError('busy', 'Vellum is still updating the pages. Try again in a moment.');
     const lib = await loadPdfLib();
@@ -560,7 +561,7 @@ export class TextEditing {
     const blocked = analysis?.tainted || analysis?.summary.kind === 'unreadable' ? 'unreadable' : analysis?.unbalanced ? 'structure' : null;
     if (blocked) throw new EditError('not-editable', REASONS[blocked], { reason: blocked });
     const upright = planNewText({ lib, text, transform: IDENTITY, entry: entry.id });
-    const transform = defaultTextPlacement({ box: upright.box, page: box, basis });
+    const transform = defaultTextPlacement({ box: upright.box, page: box, basis, at });
     if (!transform) throw new EditError('content', 'Vellum couldn’t work out where to put the text on this page, so nothing was added.');
     const record = planNewText({ lib, text, transform, entry: entry.id, id: upright.id });
     view.annotations.applyEdits([[null, record]]);

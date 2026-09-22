@@ -194,13 +194,26 @@ export function planFormat({ lib, fonts = standardFontSet(lib), record, changes,
 /**
  * Where new text of extent `box` (its own text space) goes: centred on the page, upright as the page is
  * shown (`basis`, page-space.js displayBasis, whatever the page's or the view's rotation). `page` is the
- * page's crop box in user space. A transform, or null when there is none.
+ * page's crop box in user space. Given `at`, a user-space point (where the page was right-clicked), the
+ * box's top-left corner as shown goes there instead, moved back onto the page where it would run off.
+ * A transform, or null when there is none.
  */
-export function defaultTextPlacement({ box, page, basis }) {
+export function defaultTextPlacement({ box, page, basis, at = null }) {
   const back = basis ? invert(basis) : null;
   if (!back || !box || !page) return null;
   // Upright on screen: shown space runs downwards, and text space runs up.
   const linear = multiply([1, 0, 0, -1, 0, 0], back);
+  if (at) {
+    // In shown axes the box is as wide and tall as in its own space, with its top-left at `at`.
+    const corners = [[page[0], page[1]], [page[2], page[3]]].map(([x, y]) => applyLinear(basis, x, y));
+    const [left, right] = [Math.min(corners[0][0], corners[1][0]), Math.max(corners[0][0], corners[1][0])];
+    const [top, bottom] = [Math.min(corners[0][1], corners[1][1]), Math.max(corners[0][1], corners[1][1])];
+    const within = (v, lo, hi) => (hi < lo ? lo : Math.min(Math.max(v, lo), hi));
+    const [sx, sy] = applyLinear(basis, at[0], at[1]);
+    const [ux, uy] = applyLinear(back, within(sx, left, right - (box[2] - box[0])), within(sy, top, bottom - (box[3] - box[1])));
+    const [lx, ly] = applyLinear(linear, box[0], box[3]);
+    return quantize([linear[0], linear[1], linear[2], linear[3], ux - lx, uy - ly]);
+  }
   const [cx, cy] = applyLinear(linear, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2);
   return quantize([linear[0], linear[1], linear[2], linear[3], (page[0] + page[2]) / 2 - cx, (page[1] + page[3]) / 2 - cy]);
 }

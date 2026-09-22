@@ -20,6 +20,7 @@ import { showAbout } from './ui/about.js';
 import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
 import { TextEditor } from './ui/text-editor.js';
+import { toPdfPoint } from './page-space.js';
 import { createPageActions } from './pages/actions.js';
 import { createOcrActions } from './ocr/actions.js';
 import { createCompareActions } from './compare/actions.js';
@@ -559,8 +560,11 @@ document.addEventListener('contextmenu', (e) => {
   const addHere = !hit && !selected && onPage;
   items.push({ heading: 'Page Content' });
   if (pageNumber && view.textEditor?.active) {
+    // The text box starts where the page was right-clicked, read now: the page may scroll or zoom before the choice.
+    const clickedPage = view.viewer.getPageView(pageNumber - 1);
+    const clickedAt = clickedPage ? toPdfPoint(clickedPage, e.clientX, e.clientY) : null;
     items.push(
-      { label: 'Add Text Box', icon: 'type', action: () => view.textEditor.addText(pageNumber) },
+      { label: 'Add Text Box', icon: 'type', action: () => view.textEditor.addText(pageNumber, clickedAt) },
       { label: 'Insert picture…', icon: 'image-plus', action: () => view.textEditor.insertPicture(pageNumber) },
       { label: 'Add signature…', icon: 'pen-line', action: () => view.textEditor.addSignature(pageNumber) },
     );

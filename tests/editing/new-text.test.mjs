@@ -64,6 +64,41 @@ test('a new-text record: its text, a standard font, its extent and a placement; 
   assert.ok(turned[0] === turned[3] && turned[1] === -turned[2] && Math.abs(turned[1]) === 1, `${turned}`);
 });
 
+test('new text placed at a point (right-click): its shown top-left there, upright at every turn, kept on a cropped page', async () => {
+  const lib = await loadPdfLib();
+  const { box } = planNewText({ lib, text: 'New text', transform: [1, 0, 0, 1, 0, 0], entry: 'e1' });
+  const boxQuad = [box[0], box[1], box[2], box[1], box[2], box[3], box[0], box[3]];
+  const point = (basis, [x, y]) => transformQuad([x, y, x, y, x, y, x, y], basis).slice(0, 2);
+  // The box's corners as shown (display axes, y down): its top-left, and whether it reads left to right.
+  const shown = (transform, basis) => {
+    const quad = transformQuad(transformQuad(boxQuad, transform), basis);
+    const xs = [quad[0], quad[2], quad[4], quad[6]];
+    const ys = [quad[1], quad[3], quad[5], quad[7]];
+    return { topLeft: [Math.min(...xs), Math.min(...ys)], rightwards: quad[2] - quad[0] > 0 && Math.abs(quad[3] - quad[1]) < 1e-6 };
+  };
+  const turns = { 0: UPRIGHT, 90: [0, 1, 1, 0, 0, 0], 180: [-1, 0, 0, 1, 0, 0], 270: [0, -1, -1, 0, 0, 0] };
+  for (const [turn, basis] of Object.entries(turns)) {
+    const placed = defaultTextPlacement({ box, page: LETTER, basis, at: [200, 300] });
+    const centred = defaultTextPlacement({ box, page: LETTER, basis });
+    const { topLeft, rightwards } = shown(placed, basis);
+    assert.ok(near(topLeft, point(basis, [200, 300])), `${turn}°: top-left ${topLeft} vs clicked ${point(basis, [200, 300])}`);
+    assert.ok(rightwards, `${turn}°: reads left to right as shown`);
+    assert.deepEqual(placed.slice(0, 4), centred.slice(0, 4), `${turn}°: the same size and turn as centred new text`);
+  }
+  // A crop box that doesn't start at the origin: a point inside it is kept; one by its far corner is moved
+  // back so the whole box stays on the page.
+  const crop = [50, 100, 562, 700];
+  for (const [turn, basis] of Object.entries(turns)) {
+    const inside = defaultTextPlacement({ box, page: crop, basis, at: [300, 400] });
+    assert.ok(near(shown(inside, basis).topLeft, point(basis, [300, 400])), `${turn}°: inside the crop box it is where clicked`);
+    for (const at of [[558, 104], [52, 698], [558, 698], [52, 104]]) {
+      const q = transformQuad(boxQuad, defaultTextPlacement({ box, page: crop, basis, at }));
+      const on = [0, 2, 4, 6].every((i) => q[i] >= crop[0] - 1e-3 && q[i] <= crop[2] + 1e-3 && q[i + 1] >= crop[1] - 1e-3 && q[i + 1] <= crop[3] + 1e-3);
+      assert.ok(on, `${turn}° at ${at}: kept on the page: ${q}`);
+    }
+  }
+});
+
 test('the writer draws new text in its standard font after the page, and PDF/A refuses it', async () => {
   const lib = await loadPdfLib();
   const doc = await lib.PDFDocument.create();

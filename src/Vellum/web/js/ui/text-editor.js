@@ -452,12 +452,13 @@ export class TextEditor {
 
   /**
    * Puts a line of new text on page `n` — by default the selection's page, else the page in view —
-   * centred and upright as the page is shown, in a standard PDF font (editing/objects/inserted-text.js):
+   * centred and upright as the page is shown — or, given `at` (a PDF user-space point on that page), with
+   * its top-left corner there — in a standard PDF font (editing/objects/inserted-text.js):
    * one undo step. The new text is selected and the editor opens on it with its words selected, so
    * typing replaces them. The command (commands.js) and the page's context menu in Edit mode call this.
    * Resolves true when the text was added.
    */
-  async addText(n = null) {
+  async addText(n = null, at = null) {
     const page = this.#insertionPage(n, 'add text');
     if (!page) return false;
     if (!(await this.commitPending())) return false;
@@ -470,7 +471,7 @@ export class TextEditor {
       return false;
     }
     try {
-      const key = await this.#view.textEditing.insertText(page, { basis: displayBasis(pageView), box: pageView.pdfPage.view });
+      const key = await this.#view.textEditing.insertText(page, { basis: displayBasis(pageView), box: pageView.pdfPage.view, at: page === n ? at : null });
       this.#announce('Text added. Type to replace it.');
       this.#warnTagged('newText');
       await this.#selectWhenShown(page, [key]);
@@ -1608,7 +1609,9 @@ export class TextEditor {
     const corners = [[frame[0], frame[1]], [frame[2], frame[3]], [frame[4], frame[5]], [frame[6], frame[7]]];
     const [ll, lr] = corners;
     const length = Math.hypot(lr[0] - ll[0], lr[1] - ll[1]);
-    const points = object.geometry.box[2] - object.geometry.box[0];
+    // Its width in its own points: the live geometry's box is in page axes, which on a turned page is
+    // across the text, not along it.
+    const points = object.record.box[2] - object.record.box[0];
     if (!(length > 0 && points > 0)) return null;
     return {
       mode: 'wrap', verb: 'editText', n: page.n, keys: [object.ref.key], pageView, corners,
