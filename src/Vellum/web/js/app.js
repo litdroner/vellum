@@ -22,6 +22,8 @@ import { CommandPalette } from './ui/palette.js';
 import { setFocusFallback } from './ui/focus.js';
 import { TextEditor } from './ui/text-editor.js';
 import { toPdfPoint } from './page-space.js';
+import { readSessionPage } from './semantic/model.js';
+import { pageTables, tableToTsv } from './semantic/tables.js';
 import { createPageActions } from './pages/actions.js';
 import { createOcrActions } from './ocr/actions.js';
 import { createCompareActions } from './compare/actions.js';
@@ -289,6 +291,21 @@ function setPageTone(tone) {
 // ---- actions -------------------------------------------------------------------------------
 
 const actions = {
+  // The text tables on the current page (semantic/tables.js), copied as tab-separated text to paste into a
+  // spreadsheet. Only tables found on strong evidence; otherwise it says none was confidently detected.
+  async copyPageTables(view) {
+    const number = view.state.pageNumber;
+    if (view.encrypted) return toast('The text of a protected PDF isn’t read, so its tables can’t be copied.');
+    try {
+      const { tables } = pageTables(await readSessionPage(view.textEditing, view.pdf, number));
+      if (!tables.length) return toast(`No table was confidently detected on page ${number}.`, { timeout: 4000 });
+      copyText(tables.map(tableToTsv).join('\n\n'));
+      const what = tables.length === 1 ? `a table (${tables[0].rowCount} rows × ${tables[0].columnCount} columns)` : `${tables.length} tables`;
+      toast(`Copied ${what} from page ${number}`, { kind: 'success' });
+    } catch (err) {
+      toast(err.message, { kind: 'error' });
+    }
+  },
   cyclePageTone() {
     const order = Object.keys(PAGE_TONES);
     const next = order[(order.indexOf(currentPageTone()) + 1) % order.length];

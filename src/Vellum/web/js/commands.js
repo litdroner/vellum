@@ -106,6 +106,7 @@ export function createCommands(app, ui, actions) {
     'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page', run: () => actions.ocr.run(doc(), 'page') },
     'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document', run: () => actions.ocr.run(doc(), 'document') },
 
+    'tools.copyTables': { group: 'Tools', icon: 'copy', doc: true, label: 'Copy tables on this page', run: () => doc() && actions.copyPageTables(doc()) },
     'tools.structure': { group: 'Tools', icon: 'file-text', doc: true, label: 'Document structure', run: () => doc() && ui.sidebar.showStructure() },
     'tools.health': { group: 'Tools', icon: 'list-checks', doc: true, label: 'PDF health…', run: () => doc() && actions.health.show(doc()) },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
