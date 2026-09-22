@@ -1,7 +1,7 @@
 import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
 import { applyObjectEdits } from '../editing/page-writer.js';
-import { writeFormValues, writeNewFields } from '../forms/fields.js';
+import { writeFieldChanges, writeFormValues, writeNewFields } from '../forms/fields.js';
 import { writePageSettings } from '../pages/stamps.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
@@ -76,9 +76,13 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
   }
   try {
-    await writeNewFields(lib, doc, pages, annotations.filter((a) => a.type === 'field'));
-    // Values of fields whose every widget was on a deleted page have nowhere to go.
+    // Values of fields whose every widget was on a deleted page have nowhere to go. Values go in first,
+    // under the names they were typed under, then the file's own fields are changed (moved, renamed,
+    // removed…), then new fields are added.
     await writeFormValues(lib, doc, forms.filter((f) => !removedFields.has(f.name)));
+    const fields = annotations.filter((a) => a.type === 'field');
+    await writeFieldChanges(lib, doc, fields.filter((a) => a.existing));
+    await writeNewFields(lib, doc, pages, fields.filter((a) => !a.existing));
   } catch (err) {
     throw new AnnotationSaveError(err.message);
   }

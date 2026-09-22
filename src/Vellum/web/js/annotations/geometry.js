@@ -147,6 +147,7 @@ function nearPath(p, x, y, reach) {
 export function hitTest(annotations, [x, y], tolerance) {
   for (let i = annotations.length - 1; i >= 0; i--) {
     const a = annotations[i];
+    if (a.deleted) continue; // a form field of the file, deleted until the file is saved
     if (a.type === 'ink') {
       if (a.paths.some((p) => nearPath(p, x, y, a.width / 2 + tolerance))) return a;
       continue;

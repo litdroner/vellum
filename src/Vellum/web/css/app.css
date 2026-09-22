@@ -1186,6 +1186,9 @@ kbd {
 .vl-field-kind { padding: 0 4px 0 6px; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .vl-pop .vl-field-input { height: 28px; padding: 0 9px; border-radius: 8px; font-size: 12.5px; }
 .vl-pop .vl-field-input[aria-invalid] { box-shadow: inset 0 0 0 1.5px var(--danger, #e5484d); }
+.vl-pop .vl-field-flag { width: auto; padding: 0 8px; font-size: 12px; }
+/* The file's own fields being edited: drawn by Vellum, where they now are, until the file is saved. */
+.annotationLayer .vl-field-edited { visibility: hidden !important; }
 .vl-new { animation: vl-in .26s var(--ease-out); }
 .vl-outline {
   fill: color-mix(in srgb, var(--accent) 8%, transparent);

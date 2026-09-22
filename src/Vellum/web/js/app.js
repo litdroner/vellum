@@ -546,6 +546,12 @@ document.addEventListener('contextmenu', (e) => {
     if (hit.type === 'field') items.push({ heading: `Form Field · ${FIELD_KINDS[hit.kind]?.label ?? 'Field'}` });
     items.push({ label: hit.type === 'field' ? 'Delete Form Field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
   }
+  // One of the file's own form fields: moved, resized, renamed… like a created one (forms/fields.js).
+  const ownField = !hit && !selected && layer.existingFieldAt(e.target);
+  if (ownField) {
+    items.push({ heading: 'Form Field' },
+      { label: 'Edit Form Field', icon: 'text-cursor-input', action: () => layer.editExistingField(ownField) }, '-');
+  }
   // Sections, most common first: Page Content (editing what is on the page), Page Tools, then Form Fields
   // last and apart, so a Form Text Field is never taken for a Text Box.
   const pageNumber = Number(e.target.closest('.page')?.dataset.pageNumber) || null;

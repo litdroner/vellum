@@ -8,7 +8,8 @@
 //     quads?: [[ulx,uly, urx,ury, llx,lly, lrx,lry], ...]   highlight / underline
 //     paths?: [[x,y, x,y, ...], ...], width?                ink
 //     point?: [x, y]                                        note (icon's top-left corner)
-//     kind?, rect?: [x1, y1, x2, y2], name, value?, options? field: a form field to create (forms/fields.js)
+//     kind?, rect?: [x1, y1, x2, y2], name, value?, options? field: a form field to create (forms/fields.js),
+//     required?, readOnly?, maxLength?, existing?, deleted?    or, with `existing`, one of the file's own to change
 //     contents, author, created, modified }
 
 export const PALETTES = {

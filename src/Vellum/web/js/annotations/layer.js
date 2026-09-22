@@ -4,7 +4,7 @@ import { copySelection } from '../commands.js';
 import { pageViewAt, toPdfPoint, tolerancePoints } from '../page-space.js';
 import { PALETTES } from './model.js';
 import { selectionToQuads, bounds, hitTest, inkPathD, simplify, underlineSegments, NOTE_SIZE } from './geometry.js';
-import { FIELD_KINDS, MIN_FIELD_SIZE, uniqueFieldName } from '../forms/fields.js';
+import { FIELD_KINDS, MIN_FIELD_SIZE, existingFieldItem, uniqueFieldName, validFieldName } from '../forms/fields.js';
 
 // Vellum's own annotation layer, one per document.
 //
@@ -60,6 +60,7 @@ export class AnnotationLayer extends EventTarget {
   #suppressClick = false;
   #liveField = null; // { id, rect } while a created field is dragged or resized
   #lastRadio = null; // the group the next radio button joins
+  #hidesFields = false; // some of pdf.js's own field widgets are hidden (see #hideEditedFields)
 
   constructor(view, store) {
     super();
@@ -89,7 +90,9 @@ export class AnnotationLayer extends EventTarget {
     store.addEventListener('change', (e) => {
       for (const n of e.detail.pages) this.#render(n);
       if (this.selectedId && !store.get(this.selectedId)) this.select(null);
+      this.#hideEditedFields();
     });
+    bus.on('annotationlayerrendered', () => this.#hideEditedFields());
 
     const opts = { signal: view.signal };
     const c = view.container;
@@ -136,7 +139,9 @@ export class AnnotationLayer extends EventTarget {
     const id = this.selectedId;
     if (!id) return;
     this.select(null);
-    this.store.remove(id);
+    // A field of the file stays in the store, marked, so the save removes it from the file.
+    if (this.store.get(id)?.existing) this.store.update(id, { deleted: true });
+    else this.store.remove(id);
   }
 
   /**
@@ -237,6 +242,54 @@ export class AnnotationLayer extends EventTarget {
     return field;
   }
 
+  /** The widget of one of the file's own form fields under `element` that can be edited, or null. */
+  existingFieldAt(element) {
+    return element?.closest?.('.annotationLayer :is(.textWidgetAnnotation, .choiceWidgetAnnotation, .buttonWidgetAnnotation.checkBox, .buttonWidgetAnnotation.radioButton)[data-annotation-id]') ?? null;
+  }
+
+  /**
+   * Starts editing one of the file's own form fields (its widget under `element`): from now on it is
+   * drawn, moved and resized like a created field, and saving writes the changes into that field
+   * (forms/fields.js writeFieldChanges). One undo step, which gives the field back as it was.
+   */
+  async editExistingField(element) {
+    const widget = this.existingFieldAt(element);
+    const at = widget && this.#pageAt(widget);
+    if (!at || this.view.rebuilding) return null;
+    if (!this.view.canEditPages) {
+      this.view.notify?.('This PDF is protected, so Vellum can’t change its form fields.');
+      return null;
+    }
+    const id = widget.dataset.annotationId;
+    const own = (a) => a.type === 'field' && a.page === at.n && a.existing?.id === id;
+    const found = this.store.all.find(own);
+    if (found && !found.deleted) {
+      this.select(found.id);
+      return found;
+    }
+    const data = (await at.pageView.pdfPage.getAnnotations().catch(() => [])).find((d) => d.id === id);
+    const item = existingFieldItem(data, at.n);
+    if (!item || this.store.all.some(own)) return null;
+    // A radio button joins what its group already has in the edit (a new name, required, read-only).
+    const sibling = item.kind === 'radio' && this.store.all.find((a) => a.type === 'field' && a.existing?.name === item.existing.name);
+    if (sibling) Object.assign(item, { name: sibling.name, required: sibling.required, readOnly: sibling.readOnly });
+    const field = this.store.create(item);
+    this.store.add(field);
+    this.select(field.id);
+    return field;
+  }
+
+  /** Hides pdf.js's own drawing of the fields being edited: Vellum draws them, where they now are. */
+  #hideEditedFields() {
+    const edited = new Set(this.store.all.filter((a) => a.type === 'field' && a.existing).map((a) => `${a.page}:${a.existing.id}`));
+    if (!edited.size && !this.#hidesFields) return;
+    this.#hidesFields = edited.size > 0;
+    for (const el of this.view.container.querySelectorAll('.annotationLayer [data-annotation-id]')) {
+      const n = el.closest('.page')?.dataset.pageNumber;
+      el.classList.toggle('vl-field-edited', edited.has(`${n}:${el.dataset.annotationId}`));
+    }
+  }
+
   editNote(id) {
     const a = this.store.get(id);
     if (a?.type === 'note') this.#openEditor(a, false);
@@ -296,7 +349,8 @@ export class AnnotationLayer extends EventTarget {
     if (!layer) return;
     const seen = new Set();
     for (const stored of this.store.forPage(n)) {
-      const a = this.#liveField?.id === stored.id ? { ...stored, rect: this.#liveField.rect } : stored;
+      if (stored.deleted) continue;
+      const a =this.#liveField?.id === stored.id ? { ...stored, rect: this.#liveField.rect } : stored;
       seen.add(a.id);
       const entry = layer.shapes.get(a.id);
       if (entry?.a === a) continue;
@@ -686,13 +740,35 @@ export class AnnotationLayer extends EventTarget {
     this.#openPopover(el, () => top, 'selection');
   }
 
-  /** Bar for a selected created field: its name (a radio button's group and value), a dropdown's options, delete. */
+  /**
+   * Bar for a selected form field: its name (a radio button's group and value), a created dropdown's
+   * options, a text field's maximum length, required, read-only, delete. A field of the file keeps its
+   * radio export values and options as they are.
+   */
   #showFieldBar(a) {
-    // Radio buttons share their group's name; every other field's name is its own.
-    const taken = () => new Set([...(this.view.fieldNames ?? []), ...this.store.all
-      .filter((f) => f.type === 'field' && f.id !== a.id && !(a.kind === 'radio' && f.kind === 'radio')).map((f) => f.name)]);
-    const input = (label, value, width, apply) => {
-      const el = h('input', { class: 'field vl-field-input', type: 'text', 'aria-label': label, title: label, placeholder: label, spellcheck: 'false', style: `width:${width}px` });
+    const { existing } = a;
+    const current = () => this.store.get(a.id) ?? a;
+    // Radio buttons of one group are one field: named, made required or read-only together.
+    const sameGroup = (f) => f.id !== a.id && f.type === 'field' && a.kind === 'radio' && f.kind === 'radio'
+      && (existing ? f.existing?.name === existing.name : !f.existing && f.name === current().name);
+    const patchGroup = (patch) => {
+      const modified = new Date().toISOString();
+      const list = [current(), ...this.store.all.filter(sameGroup)];
+      this.store.apply(list.map((f) => ({ before: f, after: { ...f, ...patch, modified } })));
+    };
+    // Every field's name is its own, except that a created radio button may join another created group.
+    const taken = () => {
+      const names = new Set(this.view.fieldNames ?? []);
+      if (existing) names.delete(existing.name);
+      for (const f of this.store.all) {
+        if (f.type !== 'field' || f.id === a.id || sameGroup(f)) continue;
+        if (!existing && a.kind === 'radio' && f.kind === 'radio' && !f.existing) continue;
+        names.add(f.name);
+      }
+      return names;
+    };
+    const input = (label, value, width, apply, placeholder = label) => {
+      const el = h('input', { class: 'field vl-field-input', type: 'text', 'aria-label': label, title: label, placeholder, spellcheck: 'false', style: `width:${width}px` });
       el.value = value;
       el.addEventListener('change', () => el.toggleAttribute('aria-invalid', !apply(el.value.trim())));
       el.addEventListener('keydown', (ev) => {
@@ -700,28 +776,56 @@ export class AnnotationLayer extends EventTarget {
       });
       return el;
     };
+    const flag = (label, key) => {
+      const el = h('button', {
+        class: 'tb-btn small vl-field-flag', type: 'button', title: label, 'aria-pressed': String(Boolean(a[key])),
+        onMousedown: (e) => e.preventDefault(),
+        onClick: () => {
+          const on = !current()[key];
+          patchGroup({ [key]: on });
+          el.setAttribute('aria-pressed', String(Boolean(current()[key])));
+        },
+      }, label);
+      return el;
+    };
     const parts = [h('span', { class: 'vl-field-kind', text: FIELD_KINDS[a.kind].label })];
-    parts.push(input(a.kind === 'radio' ? 'Group name' : 'Field name', a.name, 110, (name) => {
-      if (!name || name.includes('.') || taken().has(name)) return false;
-      if (a.kind === 'radio') this.#lastRadio = name;
-      if (name !== a.name) this.store.update(a.id, { name });
+    const nameInput = input(a.kind === 'radio' ? 'Group name' : 'Field name', a.name, 110, (name) => {
+      if (!validFieldName(name) || taken().has(name)) return false;
+      if (name === current().name) return true;
+      if (existing) patchGroup({ name });
+      else this.store.update(a.id, { name });
+      if (a.kind === 'radio' && !existing) this.#lastRadio = name;
       return true;
-    }));
-    if (a.kind === 'radio') {
+    });
+    // A field inside another ("parent.child") is named by its parent too, so its name is left alone.
+    if (existing?.name.includes('.')) Object.assign(nameInput, { disabled: true, title: 'This field is part of a group of fields, so its name can’t be changed' });
+    parts.push(nameInput);
+    if (a.kind === 'radio' && existing) {
+      parts.push(h('span', { class: 'vl-field-kind', title: 'Value when chosen', text: `= ${a.value}` }));
+    } else if (a.kind === 'radio') {
       parts.push(input('Value when chosen', a.value, 80, (value) => {
         if (!value) return false;
         if (value !== a.value) this.store.update(a.id, { value });
         return true;
       }));
     }
-    if (a.kind === 'dropdown') {
+    if (a.kind === 'dropdown' && !existing) {
       parts.push(input('Options, separated by commas', a.options.join(', '), 170, (text) => {
         const options = [...new Set(text.split(',').map((o) => o.trim()).filter(Boolean))];
         if (!options.length) return false;
-        if (options.join('\n') !== a.options.join('\n')) this.store.update(a.id, { options });
+        if (options.join('\n') !== current().options.join('\n')) this.store.update(a.id, { options });
         return true;
       }));
     }
+    if (a.kind === 'text') {
+      parts.push(input('Maximum length (empty for none)', a.maxLength ? String(a.maxLength) : '', 58, (text) => {
+        const max = text === '' ? null : Number(text);
+        if (max !== null && !(Number.isInteger(max) && max > 0 && max <= 100000)) return false;
+        if (max !== (current().maxLength ?? null)) this.store.update(a.id, { maxLength: max });
+        return true;
+      }, 'Max len'));
+    }
+    parts.push(h('div', { class: 'vl-sep' }), flag('Required', 'required'), flag('Read-only', 'readOnly'));
     parts.push(h('div', { class: 'vl-sep' }), this.#popButton('trash-2', 'Delete (Del)', () => this.deleteSelected()));
     const el = h('div', { class: 'vl-pop ui', role: 'toolbar', 'aria-label': 'Form field' }, ...parts);
     this.#openPopover(el, () => this.#clientRect(this.store.get(a.id) ?? a), 'annotation');
