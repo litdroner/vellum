@@ -84,3 +84,16 @@ function summarize(terms, evidence, missing) {
 
 const quote = (t) => `“${t}”`;
 const clip = (text) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text);
+
+/**
+ * Evidence as tab-separated text, one row per item in the given order: the research question, the document
+ * it came from (an item's own `name`, for a collection; else `docName`, for one document), its page, the
+ * quoted evidence, the terms matched, and its kind. Always a header row, even with no evidence — a clean,
+ * pasteable export of nothing found.
+ */
+export function evidenceToTsv(question, evidence, docName = null) {
+  const clean = (v) => String(v ?? '').replace(/[\t\r\n]+/g, ' ').trim();
+  const header = ['Question', 'Document', 'Page', 'Evidence', 'Matched terms', 'Kind'];
+  const rows = evidence.map((item) => [question, item.name ?? docName ?? '', item.number, item.text, item.matched.join('; '), item.kind]);
+  return [header, ...rows].map((row) => row.map(clean).join('\t')).join('\n');
+}

@@ -10,7 +10,7 @@ import { openWithPdfjs, webModule, withSession } from './harness.mjs';
 import { makeFixtures, FIXTURE_DIR } from './fixtures.mjs';
 
 const { readSessionPage } = await webModule('semantic/model.js');
-const { needed, pageCandidates, rankEvidence, researchTerms } = await webModule('semantic/research.js');
+const { evidenceToTsv, needed, pageCandidates, rankEvidence, researchTerms } = await webModule('semantic/research.js');
 
 let files;
 before(async () => { files = await makeFixtures(FIXTURE_DIR); });
@@ -78,4 +78,38 @@ test('insufficient or empty evidence is said, not guessed', async () => {
   const empty = research(list, 'what is the?');
   assert.equal(empty.sufficient, false);
   assert.match(empty.summary, /no key terms/);
+});
+
+test('evidenceToTsv: header, one row per item in order, with the document filename', async () => {
+  const list = await pages('structure');
+  const found = research(list, 'figure two picture 1');
+  const tsv = evidenceToTsv('figure two picture 1', found.evidence, 'structure.pdf');
+  const lines = tsv.split('\n');
+  assert.deepEqual(lines[0].split('\t'), ['Question', 'Document', 'Page', 'Evidence', 'Matched terms', 'Kind']);
+  assert.equal(lines.length, 1 + found.evidence.length);
+  assert.deepEqual(lines[1].split('\t'), ['figure two picture 1', 'structure.pdf', '2', 'Figure 1: a picture', 'figure; picture; 1', found.evidence[0].kind]);
+  assert.deepEqual(lines[2].split('\t'), ['figure two picture 1', 'structure.pdf', '2', 'A figure on page two', 'figure; two', found.evidence[1].kind]);
+});
+
+test('evidenceToTsv: a collection item’s own name is used over the fallback document', () => {
+  const evidence = [
+    { number: 3, text: 'From doc B', matched: ['x'], kind: 'run', name: 'doc-b.pdf' },
+    { number: 1, text: 'From doc A', matched: ['x'], kind: 'run', name: 'doc-a.pdf' },
+  ];
+  const tsv = evidenceToTsv('x?', evidence, 'fallback.pdf');
+  const lines = tsv.split('\n');
+  assert.deepEqual(lines[1].split('\t'), ['x?', 'doc-b.pdf', '3', 'From doc B', 'x', 'run'], 'order is preserved, not resorted');
+  assert.deepEqual(lines[2].split('\t'), ['x?', 'doc-a.pdf', '1', 'From doc A', 'x', 'run']);
+});
+
+test('evidenceToTsv: empty evidence still exports cleanly — header only', () => {
+  const tsv = evidenceToTsv('nothing found?', [], 'doc.pdf');
+  assert.equal(tsv, 'Question\tDocument\tPage\tEvidence\tMatched terms\tKind');
+});
+
+test('evidenceToTsv: tabs and newlines in evidence text are collapsed so rows stay one line', () => {
+  const evidence = [{ number: 1, text: 'line one\nline\ttwo', matched: ['a\tb'], kind: 'run' }];
+  const tsv = evidenceToTsv('q', evidence);
+  assert.equal(tsv.split('\n').length, 2, 'no embedded newline broke the row');
+  assert.deepEqual(tsv.split('\n')[1].split('\t'), ['q', '', '1', 'line one line two', 'a b', 'run']);
 });

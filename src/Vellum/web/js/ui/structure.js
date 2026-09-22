@@ -4,7 +4,9 @@ import { itemBox, markPageBox } from './page-mark.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../semantic/inspector.js';
 import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from '../semantic/query.js';
-import { pageCandidates, rankEvidence, researchTerms } from '../semantic/research.js';
+import { evidenceToTsv, pageCandidates, rankEvidence, researchTerms } from '../semantic/research.js';
+import { copyText } from '../commands.js';
+import { toast } from './dialogs.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
@@ -85,9 +87,13 @@ export class StructurePanel {
       class: 'tb-btn small', title: 'Research: find evidence for a question', 'aria-label': 'Research', 'aria-pressed': 'false',
       html: icon('book-open', 15), onClick: () => { this.setResearch(!this.#research); this.searchInput.focus(); },
     });
+    this.exportBtn = h('button', {
+      class: 'tb-btn small', title: 'Export evidence', 'aria-label': 'Export evidence', hidden: true,
+      html: icon('copy', 15), onClick: () => this.#exportEvidence(),
+    });
     this.searchBar = h('div', { class: 'structure-search', role: 'search' },
       h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), this.searchInput),
-      this.researchBtn, this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
+      this.researchBtn, this.exportBtn, this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
     this.searchStatus = h('div', { class: 'structure-summary structure-search-status', 'aria-live': 'polite', hidden: true });
     this.results = h('div', { class: 'structure-tree structure-results', role: 'list', 'aria-label': 'Search results', hidden: true });
     this.#updateSteps();
@@ -292,6 +298,7 @@ export class StructurePanel {
     this.#research = Boolean(on);
     this.researchBtn.setAttribute('aria-pressed', String(this.#research));
     this.caseBtn.hidden = this.wordBtn.hidden = this.#research;
+    this.exportBtn.hidden = !this.#research;
     this.searchInput.placeholder = this.#research ? 'Ask a research question' : 'Search structure';
     this.searchInput.setAttribute('aria-label', this.#research ? 'Research question' : 'Search the document structure');
     this.search(this.searchInput.value);
@@ -306,6 +313,7 @@ export class StructurePanel {
     this.tree.hidden = this.summary.hidden = !empty;
     this.results.hidden = this.searchStatus.hidden = empty;
     this.results.replaceChildren();
+    this.exportBtn.disabled = true;
     this.#updateSteps();
     if (empty) return;
     const count = this.view.pdf.numPages;
@@ -338,7 +346,16 @@ export class StructurePanel {
       for (const item of found.evidence) this.#addEvidence(item);
     }
     this.searchStatus.textContent = found.sufficient ? `Research · ${found.evidence.length} ${found.evidence.length === 1 ? 'passage' : 'passages'}` : 'Research · no evidence';
+    this.exportBtn.disabled = !found.sufficient;
     this.#updateSteps();
+  }
+
+  /** Copies the evidence shown now as tab-separated text: question, page, quote, matched terms, kind — one row each, in the shown order. */
+  #exportEvidence() {
+    const evidence = this.#search.results.map(({ result }) => result);
+    if (!evidence.length) return toast('No evidence to export.', { timeout: 4000 });
+    copyText(evidenceToTsv(this.#search.text, evidence, this.view.file.name));
+    toast(`Copied ${evidence.length} ${evidence.length === 1 ? 'passage' : 'passages'} of evidence`, { kind: 'success' });
   }
 
   #addEvidence(item) {

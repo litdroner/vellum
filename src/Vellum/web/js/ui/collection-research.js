@@ -1,7 +1,9 @@
 import { h } from '../dom.js';
 import { icon } from '../icons.js';
 import { researchCollection, SKIP_REASONS } from '../semantic/collection-research.js';
-import { showDialog } from './dialogs.js';
+import { evidenceToTsv } from '../semantic/research.js';
+import { copyText } from '../commands.js';
+import { showDialog, toast } from './dialogs.js';
 
 // Research a collection: one question asked of every document in it (semantic/collection-research.js), the
 // evidence ranked across the whole collection and quoted with the document it came from and its page.
@@ -22,19 +24,30 @@ export function researchCollectionDialog({ bridge, collection }) {
     placeholder: 'Ask a research question', 'aria-label': `Research question about ${collection.name}`,
   });
   const askBtn = h('button', { class: 'btn primary', type: 'button' }, 'Research');
+  const exportBtn = h('button', { class: 'tb-btn small', title: 'Export evidence', 'aria-label': 'Export evidence', hidden: true, html: icon('copy', 15) });
   const status = h('p', { class: 'cr-status', 'aria-live': 'polite' });
   const results = h('div', { class: 'cr-results', role: 'list', 'aria-label': 'Evidence' });
   const content = h('div', { class: 'cr-body' },
-    h('div', { class: 'cr-ask' }, h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), input), askBtn),
+    h('div', { class: 'cr-ask' }, h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), input), askBtn, exportBtn),
     status, results);
 
   let abort = null;
   let chosen = null;
   let finish = () => {};
+  let found = null;
+  let question = '';
 
   const choose = (item) => { chosen = item; finish('chosen'); };
 
-  const show = (found) => {
+  exportBtn.addEventListener('click', () => {
+    if (!found?.sufficient) return toast('No evidence to export.', { timeout: 4000 });
+    copyText(evidenceToTsv(question, found.evidence));
+    toast(`Copied ${found.evidence.length} ${found.evidence.length === 1 ? 'passage' : 'passages'} of evidence`, { kind: 'success' });
+  });
+
+  const show = (result) => {
+    found = result;
+    exportBtn.hidden = !found.sufficient;
     results.replaceChildren(
       h('div', { class: 'structure-props-title research-heading', text: 'Summary · by Vellum, from the matches' }),
       h('p', { class: 'structure-hint research-summary', 'data-sufficient': String(found.sufficient), text: found.summary }));
@@ -62,9 +75,9 @@ export function researchCollectionDialog({ bridge, collection }) {
   };
 
   const ask = async () => {
-    const question = input.value.trim();
+    question = input.value.trim();
     abort?.abort();
-    if (!question) { results.replaceChildren(); status.textContent = ''; return; }
+    if (!question) { found = null; exportBtn.hidden = true; results.replaceChildren(); status.textContent = ''; return; }
     const controller = new AbortController();
     abort = controller;
     askBtn.disabled = true;
@@ -72,14 +85,14 @@ export function researchCollectionDialog({ bridge, collection }) {
     status.textContent = 'Reading the collection…';
     try {
       const { documents } = await bridge.request('collections.documents', { id: collection.id });
-      const found = await researchCollection({
+      const asked = await researchCollection({
         documents,
         question,
         signal: controller.signal,
         onProgress: ({ index, total, name }) => { status.textContent = `Researching · reading ${name} (${index + 1} of ${total})…`; },
       });
       if (controller.signal.aborted) return;
-      show({ ...found, documents: documents.length });
+      show({ ...asked, documents: documents.length });
     } catch (err) {
       if (!controller.signal.aborted) {
         results.replaceChildren();
