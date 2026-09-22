@@ -288,7 +288,7 @@ public partial class MainWindow : Window
         bridge.Register("recent.update", request =>
         {
             _recent.UpdatePosition(RequiredString(request, "path"), OptionalInt(request, "page"),
-                OptionalString(request, "scaleValue"), OptionalString(request, "viewMode"));
+                OptionalString(request, "scaleValue"), OptionalString(request, "viewMode"), OptionalBool(request, "spread"));
             return Done();
         });
         bridge.Register("recent.remove", request =>
@@ -560,7 +560,7 @@ public partial class MainWindow : Window
             name = info.Name,
             size = info.Exists ? info.Length : 0, // a Save As target may not exist yet
             url = $"{AppResourceServer.Origin}/doc/{token}",
-            resume = entry is null ? null : new { page = entry.Page, scaleValue = entry.ScaleValue, viewMode = entry.ViewMode },
+            resume = entry is null ? null : new { page = entry.Page, scaleValue = entry.ScaleValue, viewMode = entry.ViewMode, spread = entry.Spread },
         };
     }
 

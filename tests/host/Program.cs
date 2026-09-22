@@ -1,6 +1,7 @@
 // OCR language packs on the host (src/Vellum/Services/OcrLanguages.cs): a pack becomes usable only once its
 // size and SHA-256 match; a failed, cut short or cancelled download leaves nothing behind; an installed pack
 // that changed on disk is refused and removed; packs can be removed. Downloads come from a fake handler.
+// Recent files (src/Vellum/Services/RecentFiles.cs): each file remembers its reading layout across restarts.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -108,6 +109,25 @@ Check("leftovers of an interrupted download are cleaned up", !Directory.Enumerat
 var real = new OcrLanguages(data, Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "Vellum", "web", "js", "ocr", "languages.json"), http);
 Check("the shipped list loads every pack", real.Packs.Count == 10, real.Packs.Count.ToString());
 Check("the shipped list's GitHub source is trusted", await Throws(() => real.InstallAsync(real.Packs[0], progress, new CancellationToken(true))) is OperationCanceledException);
+
+// Each file remembers its layout (single page / continuous, two-page spread), kept across restarts.
+var recentFolder = Path.Combine(root, "recent");
+var recent = new RecentFiles(recentFolder);
+string A = Path.Combine(root, "a.pdf"), B = Path.Combine(root, "b.pdf"), C = Path.Combine(root, "c.pdf");
+recent.Touch(A); recent.Touch(B); recent.Touch(C);
+recent.UpdatePosition(A, 3, "page-width", "continuous", true);
+recent.UpdatePosition(B, 1, "auto", "single", false);
+Check("a new file has no remembered layout (the default applies)", recent.Find(C) is { ViewMode: null, Spread: null });
+Check("spread is remembered", recent.Find(A) is { Spread: true, ViewMode: "continuous", Page: 3 });
+Check("single page is remembered", recent.Find(B) is { Spread: false, ViewMode: "single" });
+var reopened = new RecentFiles(recentFolder);
+Check("spread survives closing and reopening", reopened.Find(A) is { Spread: true, ViewMode: "continuous", ScaleValue: "page-width" });
+Check("single page survives closing and reopening", reopened.Find(B) is { Spread: false, ViewMode: "single" });
+Check("the new file still has no layout after reopening", reopened.Find(C) is { ViewMode: null, Spread: null });
+reopened.UpdatePosition(A, 3, "page-width", "single", false);
+Check("changing the layout replaces the remembered one", new RecentFiles(recentFolder).Find(A) is { Spread: false, ViewMode: "single" });
+File.WriteAllText(Path.Combine(recentFolder, "recent.json"), $"[{{\"path\":{System.Text.Json.JsonSerializer.Serialize(A)},\"page\":2,\"viewMode\":\"continuous\"}}]");
+Check("a list saved before spreads were remembered loads with spread unset", new RecentFiles(recentFolder).Find(A) is { Spread: null, ViewMode: "continuous", Page: 2 });
 
 try { Directory.Delete(root, true); } catch (IOException) { }
 Console.WriteLine(failures == 0 ? "all passed" : $"{failures} failed");

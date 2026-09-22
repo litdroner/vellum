@@ -162,7 +162,7 @@ class App extends EventTarget {
 function rememberPosition(view) {
   if (view.status !== 'ready' || view.file.readOnly) return;
   const s = view.state;
-  bridge.send('recent.update', { path: view.file.path, page: s.pageNumber, scaleValue: String(s.scaleValue ?? ''), viewMode: s.viewMode });
+  bridge.send('recent.update', { path: view.file.path, page: s.pageNumber, scaleValue: String(s.scaleValue ?? ''), viewMode: s.viewMode, spread: s.spread });
 }
 
 /** A picture of the first page for the home screen, taken once the document has settled. */

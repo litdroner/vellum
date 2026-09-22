@@ -2,7 +2,7 @@
 // Two-page spread button lays pages out side by side (1–2, 3–4, then 5 alone) and back, staying on the
 // same page each way; Previous / Next turn whole spreads and stop at the first and last one, even zoomed
 // in; the thumbnails follow the current page; fit width and fit page fit the pair; single-page view shows
-// one spread at a time; and the file itself never changes.
+// one spread at a time; the layout is remembered per file across close and reopen; and the file itself never changes.
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -43,6 +43,7 @@ export async function run(t) {
   await sleep(300);
 
   area('switch on');
+  check('a file opened for the first time starts without spreads, in continuous scroll', await q(`${v}.state.spread === false && ${v}.state.viewMode === 'continuous'`));
   check('the view bar has a Two-page spread button, not pressed', await q(`${bar}.spreadBtn.getAttribute('aria-pressed') === 'false' && !${bar}.spreadBtn.hidden`));
   await clickAt(`${bar}.spreadBtn`);
   check('the button turns spreads on', await waitFor(`${v}.state.spread === true && ${bar}.spreadBtn.getAttribute('aria-pressed') === 'true'`, 3000));
@@ -108,6 +109,29 @@ export async function run(t) {
   await turn('next');
   check('Next turns one page again (3 → 4)', (await page()) === 4, await page());
   check('the thumbnails mark page 4', await waitFor(`Number(document.querySelector('.thumbs .thumb.active')?.dataset.page) === 4`, 2000), await activeThumb());
+
+  area('remembered per file');
+  const reopen = async () => {
+    await q(`__vellum.app.close(${v})`);
+    await waitFor(`!${v}`, 5000);
+    await q(`__vellum.actions.openRecent(${JSON.stringify(DOC)})`);
+    await waitFor(settled(DOC), 25000);
+    await sleep(500);
+  };
+  await clickAt(`${bar}.spreadBtn`);
+  await waitFor(`${v}.state.spread === true`, 3000);
+  await reopen();
+  check('spread → close → reopen: spreads are back', await q(`${v}.state.spread === true && ${bar}.spreadBtn.getAttribute('aria-pressed') === 'true'`));
+  check('… laid out as 1–2, 3–4, 5', (await spreads()) === '1-2 3-4 5', await spreads());
+  check('… in continuous scroll, as it was', await q(`${v}.state.viewMode === 'continuous'`));
+  await clickAt(`${bar}.spreadBtn`);
+  await waitFor(`${v}.state.spread === false`, 3000);
+  await clickAt(`${bar}.singleBtn`);
+  await waitFor(`${v}.state.viewMode === 'single'`, 3000);
+  await reopen();
+  check('single page → close → reopen: single page is back, without spreads', await q(`${v}.state.viewMode === 'single' && ${v}.state.spread === false`), JSON.stringify(await q(`({ mode: ${v}.state.viewMode, spread: ${v}.state.spread })`)));
+  check('… and the view bar shows it', await q(`${bar}.spreadBtn.getAttribute('aria-pressed') === 'false'`));
+  await shot('spread-reopened-single');
 
   area('document');
   check('the layout never marks the document changed', await q(`!${v}.state.dirty`));

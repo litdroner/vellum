@@ -14,6 +14,8 @@ public sealed class RecentEntry
     public int? Page { get; set; }
     public string? ScaleValue { get; set; }
     public string? ViewMode { get; set; }
+    /// <summary>Two-page spreads on (null for entries saved before it was remembered: off).</summary>
+    public bool? Spread { get; set; }
     /// <summary>Page count when it was last open (shown on the home screen).</summary>
     public int? Pages { get; set; }
 }
@@ -67,7 +69,7 @@ public sealed class RecentFiles
         Save();
     }
 
-    public void UpdatePosition(string path, int? page, string? scaleValue, string? viewMode)
+    public void UpdatePosition(string path, int? page, string? scaleValue, string? viewMode, bool? spread = null)
     {
         lock (_gate)
         {
@@ -76,6 +78,7 @@ public sealed class RecentFiles
             entry.Page = page;
             entry.ScaleValue = scaleValue;
             entry.ViewMode = viewMode;
+            entry.Spread = spread;
         }
         Save();
     }

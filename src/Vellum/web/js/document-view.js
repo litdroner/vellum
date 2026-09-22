@@ -306,6 +306,7 @@ export class DocumentView extends EventTarget {
       const resume = this.file.resume;
       this.viewer.currentScaleValue = resume?.scaleValue || 'auto';
       if (resume?.viewMode === 'single') this.setViewMode('single');
+      if (resume?.spread === true) this.setSpread(true);
       if (resume?.page > 1 && resume.page <= this.pdf.numPages) {
         this.viewer.currentPageNumber = resume.page;
       } else {

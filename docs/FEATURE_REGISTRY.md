@@ -139,7 +139,7 @@ Vision.
 | Home screen: greeting, Open card, recent documents with first-page covers | done | ui/start.js, recent-covers.js, RecentFiles.cs |
 | View bar (page, zoom, fit, rotate, layout) floating over the document | done | ui/viewbar.js |
 | Reduce motion, reduce transparency (performance) | done | themes.js |
-| Two-page spread layout: pages side by side (1–2, 3–4…, an odd last page alone) in continuous or single-page view, from the view bar or the palette; Previous / Next turn whole spreads; stays on the same page when switched; fitted zooms fit the pair; layout only, the file is never changed. Not yet remembered per file | done, unreleased | spread.js, document-view.js (setSpread), ui/viewbar.js; tests/editing/spread.test.mjs, tests/e2e/suites/spread.mjs |
+| Two-page spread layout: pages side by side (1–2, 3–4…, an odd last page alone) in continuous or single-page view, from the view bar or the palette; Previous / Next turn whole spreads; stays on the same page when switched; fitted zooms fit the pair; layout only, the file is never changed. Remembered per file with the page, zoom and single/continuous view (the recent-files entry), so a file reopens in its last layout; new files start without spreads | done, unreleased | spread.js, document-view.js (setSpread), ui/viewbar.js, Services/RecentFiles.cs; tests/editing/spread.test.mjs, tests/host (recent files), tests/e2e/suites/spread.mjs |
 | Full-screen reading | planned | — |
 
 ## Roadmap — must not be faked
