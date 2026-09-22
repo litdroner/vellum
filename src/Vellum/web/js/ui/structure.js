@@ -3,6 +3,7 @@ import { icon } from '../icons.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { countsLabel, pageCounts, pageNote, pageRows, properties } from '../semantic/inspector.js';
 import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from '../semantic/query.js';
+import { pageCandidates, rankEvidence, researchTerms } from '../semantic/research.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
@@ -17,6 +18,11 @@ import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from
 // reaches them, each read once and kept for the tree too; a query only for fields, annotations or links
 // reads what pdf.js has of a page, not its content. A new query stops the one before it. Results take the
 // tree's place; Previous and Next (Enter, Shift+Enter) select them in turn, as selecting in the tree does.
+//
+// Research (semantic/research.js) takes the same field for a question: every page is read, the question's
+// key terms are searched for as text, and the passages holding enough of them are listed as evidence —
+// quoted, with their page — under one line of summary that is Vellum's, not the document's. Selecting a
+// passage selects it as a search result does. No passage holding enough of the terms: it says so.
 
 const MARK_MS = 2400;
 const MAX_RESULTS = 1000;
@@ -30,6 +36,7 @@ export class StructurePanel {
   #abort = new AbortController();
   #search = { id: 0, query: null, results: [], index: -1, reading: false };
   #options = { caseSensitive: false, entireWord: false }; // Match case, Whole words
+  #research = false; // the field asks a research question instead of searching
 
   constructor(view) {
     this.view = view;
@@ -73,9 +80,13 @@ export class StructurePanel {
     this.wordBtn = option('entireWord', 'Whole words', 'whole-word');
     this.prevBtn = h('button', { class: 'tb-btn small', title: 'Previous result (Shift+Enter)', 'aria-label': 'Previous result', html: icon('chevron-up', 15), onClick: () => this.step(-1) });
     this.nextBtn = h('button', { class: 'tb-btn small', title: 'Next result (Enter)', 'aria-label': 'Next result', html: icon('chevron-down', 15), onClick: () => this.step(1) });
+    this.researchBtn = h('button', {
+      class: 'tb-btn small', title: 'Research: find evidence for a question', 'aria-label': 'Research', 'aria-pressed': 'false',
+      html: icon('book-open', 15), onClick: () => { this.setResearch(!this.#research); this.searchInput.focus(); },
+    });
     this.searchBar = h('div', { class: 'structure-search', role: 'search' },
       h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), this.searchInput),
-      this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
+      this.researchBtn, this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
     this.searchStatus = h('div', { class: 'structure-summary structure-search-status', 'aria-live': 'polite', hidden: true });
     this.results = h('div', { class: 'structure-tree structure-results', role: 'list', 'aria-label': 'Search results', hidden: true });
     this.#updateSteps();
@@ -99,7 +110,7 @@ export class StructurePanel {
     this.props.replaceChildren(h('p', { class: 'structure-hint', text: 'Select an object to see its properties.' }));
     this.el.replaceChildren(this.searchBar, this.searchStatus, this.summary, this.tree, this.results, this.props);
     this.#toggle(this.view.state.pageNumber, true);
-    if (this.#search.query) this.search(this.searchInput.value);
+    if (this.#search.query || this.#search.research) this.search(this.searchInput.value);
   }
 
   /** Opens the page shown now, when the tab comes up. */
@@ -133,7 +144,7 @@ export class StructurePanel {
     });
     for (const [number] of stale) this.#reread(number);
     this.#summarize();
-    if (stale.length && this.#search.query) this.search(this.searchInput.value);
+    if (stale.length && (this.#search.query || this.#search.research)) this.search(this.searchInput.value);
   }
 
   /** The content edits (text, pictures, redactions…) on a page as shown now. */
@@ -236,6 +247,7 @@ export class StructurePanel {
 
   /** Searches the document's structure (semantic/query.js), page after page; an empty query shows the tree again. */
   async search(text) {
+    if (this.#research) return this.#runResearch(text);
     const query = parseQuery(text, this.#options);
     const id = this.#search.id + 1;
     const empty = isEmptyQuery(query);
@@ -272,6 +284,83 @@ export class StructurePanel {
     const n = this.#search.results.length;
     if (!n) this.results.replaceChildren(h('p', { class: 'structure-hint', text: 'Nothing found.' }));
     this.#updateSteps(capped);
+  }
+
+  /** Research on or off: the field asks a question (semantic/research.js) or searches, and what it holds is run again. */
+  setResearch(on) {
+    this.#research = Boolean(on);
+    this.researchBtn.setAttribute('aria-pressed', String(this.#research));
+    this.caseBtn.hidden = this.wordBtn.hidden = this.#research;
+    this.searchInput.placeholder = this.#research ? 'Ask a research question' : 'Search structure';
+    this.searchInput.setAttribute('aria-label', this.#research ? 'Research question' : 'Search the document structure');
+    this.search(this.searchInput.value);
+  }
+
+  /** Evidence for a question: every page's text read, passages ranked by the key terms they hold; nothing guessed. */
+  async #runResearch(text) {
+    const terms = researchTerms(text);
+    const id = this.#search.id + 1;
+    const empty = !String(text ?? '').trim();
+    this.#search = { id, text: String(text ?? ''), query: null, research: !empty, results: [], index: -1, reading: !empty };
+    this.tree.hidden = this.summary.hidden = !empty;
+    this.results.hidden = this.searchStatus.hidden = empty;
+    this.results.replaceChildren();
+    this.#updateSteps();
+    if (empty) return;
+    const count = this.view.pdf.numPages;
+    const candidates = [];
+    if (this.view.encrypted) {
+      this.searchStatus.textContent = 'Research';
+    } else if (terms.length) {
+      for (let number = 1; number <= count; number++) {
+        this.searchStatus.textContent = `Researching · reading page ${number} of ${count}…`;
+        let page = null;
+        try {
+          page = await this.#read(number);
+        } catch {
+          // a page that can't be read gives no evidence
+        }
+        if (id !== this.#search.id) return; // a newer question took over
+        if (page) candidates.push(...pageCandidates(page, terms));
+        await new Promise((resolve) => setTimeout(resolve)); // input and painting between pages
+        if (id !== this.#search.id) return;
+      }
+    }
+    const found = rankEvidence(terms, candidates);
+    const summary = this.view.encrypted ? 'Not enough evidence: the text of a protected PDF isn’t read, so it can’t be researched.' : found.summary;
+    this.#search.reading = false;
+    this.results.append(
+      h('div', { class: 'structure-props-title research-heading', text: 'Summary · by Vellum, from the matches' }),
+      h('p', { class: 'structure-hint research-summary', 'data-sufficient': String(found.sufficient), text: summary }));
+    if (found.sufficient) {
+      this.results.append(h('div', { class: 'structure-props-title research-heading', text: 'Evidence · quoted from the document' }));
+      for (const item of found.evidence) this.#addEvidence(item);
+    }
+    this.searchStatus.textContent = found.sufficient ? `Research · ${found.evidence.length} ${found.evidence.length === 1 ? 'passage' : 'passages'}` : 'Research · no evidence';
+    this.#updateSteps();
+  }
+
+  #addEvidence(item) {
+    const index = this.#search.results.length;
+    const el = h('button', {
+      class: 'structure-row structure-item research-evidence', role: 'listitem', 'data-id': item.id, 'data-kind': item.kind, 'data-page': String(item.number),
+      onClick: () => this.#selectResult(index),
+    },
+    h('span', { class: 'research-quote', text: `“${item.text}”` }),
+    h('span', { class: 'research-source', text: `Page ${item.number} · ${kindName(item.kind)} · matches ${item.matched.map((t) => `“${t}”`).join(', ')}` }));
+    this.#search.results.push({ result: item, el });
+    this.results.append(el);
+  }
+
+  /** The research shown: { summary, sufficient, evidence: [{ id, page, text, matched }] }, for tests and later features. */
+  get research() {
+    if (!this.#search.research || this.#search.reading) return null;
+    const summary = this.results.querySelector('.research-summary');
+    return {
+      summary: summary?.textContent ?? '',
+      sufficient: summary?.dataset.sufficient === 'true',
+      evidence: this.#search.results.map(({ result }) => ({ id: result.id, page: result.number, text: result.text, matched: result.matched })),
+    };
   }
 
   /** Selects the next (1) or previous (-1) search result, wrapping around. */

@@ -85,6 +85,12 @@ export class Sidebar {
     this.setMode('structure');
   }
 
+  /** Opens the Structure tab asking a research question of the document (the Research command). */
+  showResearch() {
+    this.showStructure();
+    this.structure?.setResearch(true);
+  }
+
   /** The structure panel of the active document, if it has been created. */
   get structure() {
     return this.#panelsFor(this.app.active)?.structure ?? null;

@@ -575,6 +575,13 @@ kbd {
 .structure-search .find-input { width: auto; flex: 1; min-width: 0; height: 26px; font-size: 12px; }
 .structure-search-status { overflow-wrap: anywhere; }
 .structure-kind { flex: none; color: var(--ink-3); font-size: 10.5px; }
+/* research: evidence quoted from the document, under Vellum's one-line summary */
+.research-heading { padding: 8px 8px 4px; font-size: 11.5px; }
+.research-summary { padding: 0 8px 4px; }
+.research-summary[data-sufficient="false"] { color: var(--ink-2); }
+.research-evidence { flex-direction: column; align-items: stretch; gap: 3px; padding: 6px 8px; }
+.research-quote { width: 100%; text-align: left; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; color: var(--ink); overflow-wrap: anywhere; }
+.research-source { width: 100%; text-align: left; color: var(--ink-3); font-size: 11px; overflow-wrap: anywhere; }
 .structure-tree { flex: 1; min-height: 0; overflow: auto; padding: 0 8px 12px; }
 .structure-row {
   display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0;
