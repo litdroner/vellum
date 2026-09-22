@@ -4,7 +4,7 @@
 //
 // Suites (tests/e2e/suites): text-editor, regression, editing-store, phase0, selection, manipulation,
 // multi-select, page-changes, copy-paste, page-text-font, form-text, forms, forms-import, signature, redaction, page-stamps, find-replace, compare, history, history-storage, structure, semantic-search, edit-flicker, spread, new-text-ux by default;
-// ocr, performance and updates only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed;
+// ocr, performance, updates and history-move (it fills in the real Save dialog) only when named (VELLUM_PERF_PDF=<file> measures a real document — copied, never changed;
 // updates needs Inno Setup 6). A suite may export prepare({ dir }) returning { env, exe } (extra environment, another build to start), and cleanup().
 //
 // Safety: stops if Vellum is already running (it's single-instance, so a test would talk to that

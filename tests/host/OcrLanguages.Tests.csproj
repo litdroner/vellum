@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Host tests for OCR language packs and the recent-files list, run with: dotnet run, project tests/host (no app, no network). -->
+  <!-- Host tests for OCR language packs, the recent-files list and document history, run with: dotnet run, project tests/host (no app, no network). -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -10,5 +10,6 @@
     <Compile Include="..\..\src\Vellum\Services\OcrLanguages.cs" Link="OcrLanguages.cs" />
     <Compile Include="..\..\src\Vellum\Services\Updater.cs" Link="Updater.cs" />
     <Compile Include="..\..\src\Vellum\Services\RecentFiles.cs" Link="RecentFiles.cs" />
+    <Compile Include="..\..\src\Vellum\Services\DocumentHistory.cs" Link="DocumentHistory.cs" />
   </ItemGroup>
 </Project>

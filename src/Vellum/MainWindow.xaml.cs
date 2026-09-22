@@ -423,6 +423,14 @@ public partial class MainWindow : Window
             return Done();
         });
         bridge.Register("history.clear", request => Done(new { removed = _history.Clear(HistoryDocument(request)) }));
+        // Save As: the document's history follows it to the new path (both paths must be open in Vellum).
+        bridge.Register("history.move", request =>
+        {
+            var to = RequiredString(request, "to");
+            if (!_server!.IsWritable(to)) throw new InvalidOperationException("That document isn’t open in Vellum.");
+            var moved = _history.Move(HistoryDocument(request), to);
+            return Done(new { moved = moved == HistoryMove.Moved, conflict = moved == HistoryMove.Conflict });
+        });
         // Settings: every document's history on this PC. A history is named by its folder's key, never by a
         // path from the page; removing one deletes that folder in Vellum's data folder and never a document.
         bridge.Register("history.stored", _ => Done(new { documents = _history.Stored() }));

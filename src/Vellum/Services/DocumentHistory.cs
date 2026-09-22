@@ -32,6 +32,16 @@ public sealed class StoredHistory
     public bool Missing { get; set; }
 }
 
+/// <summary>What became of a document's history when it moved to a new path.</summary>
+public enum HistoryMove
+{
+    /// <summary>The document had no history to move.</summary>
+    None,
+    Moved,
+    /// <summary>The new path has history of its own: neither history was changed.</summary>
+    Conflict,
+}
+
 /// <summary>
 /// Document history: snapshots a person takes of a PDF, kept on this PC only, in
 /// %LOCALAPPDATA%\Vellum\history\{key}\ (key = a hash of the document's full path). Each snapshot is an
@@ -143,6 +153,40 @@ public sealed class DocumentHistory
     public int Clear(string documentPath)
     {
         lock (_gate) return RemoveFolder(FolderFor(documentPath));
+    }
+
+    /// <summary>
+    /// The document now lives at <paramref name="to"/> (Save As): its history goes with it, snapshots as they
+    /// are (same files, names, times and sizes), and the old path keeps none. Nothing moves when the document
+    /// has no history, and nothing is merged: when <paramref name="to"/> already has history of its own, both
+    /// stay as they are and <see cref="HistoryMove.Conflict"/> is returned. Documents themselves are never touched.
+    /// </summary>
+    public HistoryMove Move(string from, string to)
+    {
+        var fromFull = Path.GetFullPath(from);
+        var toFull = Path.GetFullPath(to);
+        lock (_gate)
+        {
+            var source = FolderFor(fromFull);
+            var target = FolderFor(toFull);
+            if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(source)) return HistoryMove.None;
+            // Only this document's own history moves: the folder's index must name the path it was taken for.
+            var index = ReadIndex(source);
+            if (index is null || index.Path.Length == 0 || !string.Equals(FolderFor(index.Path), source, StringComparison.OrdinalIgnoreCase))
+                return HistoryMove.None;
+            if (Directory.Exists(target)) return HistoryMove.Conflict;
+            Directory.Move(source, target);
+            try
+            {
+                Save(target, toFull, index.Snapshots);
+            }
+            catch
+            {
+                Directory.Move(target, source);
+                throw;
+            }
+            return HistoryMove.Moved;
+        }
     }
 
     /// <summary>

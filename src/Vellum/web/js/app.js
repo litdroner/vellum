@@ -228,11 +228,22 @@ async function saveView(view, { saveAs = false } = {}) {
     await showDialog({ title: 'Couldn’t save', message: err.message, iconName: 'triangle-alert' });
     return false;
   }
+  let historyNote = null;
   if (target.path.toLowerCase() !== view.file.path.toLowerCase()) {
+    // The document's history follows it to the new file; a snapshot opened read-only has none of its own.
+    if (!view.file.readOnly) {
+      try {
+        const { conflict } = await bridge.request('history.move', { path: view.file.path, to: target.path });
+        if (conflict) historyNote = `“${target.name}” already has history of its own, so this document’s history stayed with “${view.file.name}”. Nothing was merged.`;
+      } catch (err) {
+        historyNote = `The document’s history couldn’t move with it and stayed with “${view.file.name}”: ${err.message}`;
+      }
+    }
     view.retarget(target);
     bridge.send('recent.opened', { path: target.path });
   }
   toast(view.encrypted ? `Annotations saved in Vellum for “${target.name}”` : `Saved “${target.name}”`, { kind: 'success' });
+  if (historyNote) toast(historyNote, { timeout: 8000 });
   return true;
 }
 

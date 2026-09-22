@@ -2,6 +2,7 @@
 // size and SHA-256 match; a failed, cut short or cancelled download leaves nothing behind; an installed pack
 // that changed on disk is refused and removed; packs can be removed. Downloads come from a fake handler.
 // Recent files (src/Vellum/Services/RecentFiles.cs): each file remembers its reading layout across restarts.
+// Document history (src/Vellum/Services/DocumentHistory.cs): Save As moves a document's history to its new path.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -128,6 +129,53 @@ reopened.UpdatePosition(A, 3, "page-width", "single", false);
 Check("changing the layout replaces the remembered one", new RecentFiles(recentFolder).Find(A) is { Spread: false, ViewMode: "single" });
 File.WriteAllText(Path.Combine(recentFolder, "recent.json"), $"[{{\"path\":{System.Text.Json.JsonSerializer.Serialize(A)},\"page\":2,\"viewMode\":\"continuous\"}}]");
 Check("a list saved before spreads were remembered loads with spread unset", new RecentFiles(recentFolder).Find(A) is { Spread: null, ViewMode: "continuous", Page: 2 });
+
+// Document history follows the document to a new path (Save As), unchanged; conflicts are refused.
+var docs = Path.Combine(root, "docs");
+Directory.CreateDirectory(Path.Combine(docs, "moved"));
+var history = new DocumentHistory(Path.Combine(root, "history-data"));
+string Doc(string name, int seed) { var p = Path.Combine(docs, name); File.WriteAllBytes(p, [.. Enumerable.Range(0, 1000 + seed).Select(i => (byte)(i * seed))]); return p; }
+string Summary(IEnumerable<Snapshot> list) => string.Join("|", list.Select(s => $"{s.Id},{s.Name},{s.CreatedAt:O},{s.Size}"));
+string Bytes(string document, string id) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(history.Get(document, id).File)));
+var original = Doc("report.pdf", 3);
+history.Create(original, "First draft");
+File.AppendAllText(original, "more");
+history.Create(original, "");
+var before = Summary(history.List(original));
+var beforeBytes = history.List(original).Select(s => Bytes(original, s.Id)).ToList();
+var renamed = Path.Combine(docs, "report-final.pdf");
+File.Copy(original, renamed);
+Check("a rename moves the history", history.Move(original, renamed) == HistoryMove.Moved);
+Check("… with the same snapshots, names, times and sizes", Summary(history.List(renamed)) == before, Summary(history.List(renamed)));
+Check("… and the same snapshot files", history.List(renamed).Select(s => Bytes(renamed, s.Id)).SequenceEqual(beforeBytes));
+Check("… and the old path keeps none", history.List(original).Count == 0);
+Check("… both documents stay on disk as they were", File.Exists(original) && File.Exists(renamed));
+File.Delete(original);
+var stored = history.Stored();
+Check("Settings lists it once, under the new path, not missing",
+    stored.Count == 1 && stored[0].Path == renamed && !stored[0].Missing && stored[0].Count == 2, string.Join(",", stored.Select(s => $"{s.Path}:{s.Missing}")));
+Check("its stored history opens the new document", history.DocumentFor(stored[0].Key) == renamed);
+var moved = Path.Combine(docs, "moved", "report-final.pdf");
+File.Copy(renamed, moved);
+Check("a move to another folder moves the history", history.Move(renamed, moved) == HistoryMove.Moved && Summary(history.List(moved)) == before);
+Check("a restore source is still there after moving", File.Exists(history.Get(moved, history.List(moved)[0].Id).File));
+Check("moving to the same path (any case) changes nothing", history.Move(moved, moved.ToUpperInvariant()) == HistoryMove.None && Summary(history.List(moved)) == before);
+var plain = Doc("plain.pdf", 5);
+Check("a document without history moves nothing", history.Move(plain, Path.Combine(docs, "plain-2.pdf")) == HistoryMove.None && history.Stored().Count == 1);
+var other = Doc("other.pdf", 7);
+history.Create(other, "Other's own");
+var otherBefore = Summary(history.List(other));
+Check("a target with history of its own is refused", history.Move(moved, other) == HistoryMove.Conflict);
+Check("… the document's history is left as it was", Summary(history.List(moved)) == before);
+Check("… and so is the target's, nothing merged", Summary(history.List(other)) == otherBefore && history.Stored().Count == 2);
+Check("… and neither document was touched", File.ReadAllBytes(other).Length == 1007 && File.Exists(moved));
+var otherFolder = Path.Combine(root, "history-data", "history", history.Stored().First(s => s.Path == other).Key);
+var foreign = Path.Combine(docs, "foreign.pdf");
+var foreignKey = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(foreign.ToUpperInvariant())))[..32];
+Directory.CreateDirectory(Path.Combine(root, "history-data", "history", foreignKey));
+File.Copy(Path.Combine(otherFolder, "index.json"), Path.Combine(root, "history-data", "history", foreignKey, "index.json"));
+Check("a history folder whose index names another document never moves", history.Move(foreign, Path.Combine(docs, "x.pdf")) == HistoryMove.None
+    && Directory.Exists(Path.Combine(root, "history-data", "history", foreignKey)) && Summary(history.List(other)) == otherBefore);
 
 try { Directory.Delete(root, true); } catch (IOException) { }
 Console.WriteLine(failures == 0 ? "all passed" : $"{failures} failed");
