@@ -2,6 +2,7 @@ import { h, timeAgo } from '../dom.js';
 import { icon } from '../icons.js';
 import { researchCollectionDialog } from './collection-research.js';
 import { showKnowledgeGraph } from './knowledge-graph.js';
+import { deleteSavedResearch, savedResearchMeta, showSavedResearch } from './saved-research.js';
 import { showDialog, toast } from './dialogs.js';
 
 // The home screen, shown when no document is open: a greeting, a large Open card and the documents
@@ -13,6 +14,10 @@ import { showDialog, toast } from './dialogs.js';
 // Graph shows what Vellum can prove about one collection (ui/knowledge-graph.js): the documents it lists,
 // the pages evidence came from and that evidence — derived from the collection and the research already
 // shown in this session, and kept only while the window is open.
+//
+// Saved research lists the results kept on this PC (ui/saved-research.js, Services/SavedResearch.cs). Opening
+// one shows the evidence exactly as it was found — the research is never run again — and a passage still opens
+// its document at its page. Delete removes that one saved result and nothing else.
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 const fileName = (path) => path.slice(path.lastIndexOf('\\') + 1);
@@ -81,6 +86,7 @@ export class StartScreen {
     // The last research shown for a collection, by its id: what the Graph lists as evidence. In memory only.
     this.researched = new Map();
     this.collectionsRead = [];
+    this.savedItems = [];
     this.name = '';
     this.greeting = h('h1', { class: 'home-greeting' });
     this.date = h('p', { class: 'home-date' });
@@ -96,6 +102,11 @@ export class StartScreen {
         h('h2', { text: 'Collections' }),
         h('button', { class: 'link-btn', onClick: () => this.#create() }, 'New collection')),
       this.collectionList);
+    this.savedList = h('div', { class: 'collection-list saved-research-list' });
+    this.saved = h('section', { class: 'recent collections saved-research', hidden: true, 'aria-label': 'Saved research' },
+      h('div', { class: 'recent-head' },
+        h('h2', { text: 'Saved research' })),
+      this.savedList);
     this.el = h('div', { class: 'start ui' },
       h('div', { class: 'start-inner' },
         h('div', { class: 'home-top' },
@@ -111,7 +122,8 @@ export class StartScreen {
               h('kbd', { text: 'Ctrl+O' }))),
           h('div', { class: 'home-art', html: ART })),
         this.recent,
-        this.collections));
+        this.collections,
+        this.saved));
     root.append(this.el);
     this.#renderGreeting();
   }
@@ -132,6 +144,7 @@ export class StartScreen {
       remove: async () => { await this.bridge.request('recent.remove', { path: e.path }); this.refresh(); },
     })));
     await this.#renderCollections();
+    await this.#renderSaved();
   }
 
   async #renderCollections() {
@@ -141,6 +154,32 @@ export class StartScreen {
     this.collectionList.replaceChildren(...(collections.length
       ? collections.map((c) => this.#collection(c))
       : [h('p', { class: 'collection-empty', text: 'Group the documents you use together. The files stay where they are.' })]));
+  }
+
+  /** The research kept on this PC. Reading the list runs nothing: each item is shown as it was saved. */
+  async #renderSaved() {
+    let items = [];
+    try { ({ items } = await this.bridge.request('research.list')); } catch { /* no host (dev) */ }
+    this.savedItems = items;
+    this.saved.hidden = items.length === 0;
+    this.savedList.replaceChildren(...items.map((item) => this.#savedItem(item)));
+  }
+
+  #savedItem(item) {
+    return h('div', { class: 'collection saved-item', 'data-id': item.id },
+      h('div', { class: 'collection-head' },
+        h('h3', { class: 'collection-name', text: item.name }),
+        h('span', { class: 'collection-meta', text: savedResearchMeta(item) }),
+        h('button', { class: 'link-btn', 'aria-label': `Open saved research ${item.name}`, onClick: () => this.#openSaved(item) }, 'Open'),
+        h('button', { class: 'link-btn danger', 'aria-label': `Delete saved research ${item.name}`, onClick: () => this.#deleteSaved(item) }, 'Delete')));
+  }
+
+  async #openSaved(item) {
+    await showSavedResearch({ item, onOpenEvidence: (evidence) => this.onOpenEvidence(evidence) });
+  }
+
+  async #deleteSaved(item) {
+    if (await deleteSavedResearch({ bridge: this.bridge, item })) await this.#renderSaved();
   }
 
   #collection(c) {
@@ -175,6 +214,7 @@ export class StartScreen {
       collection: c,
       onResult: (found) => this.researched.set(c.id, found),
     });
+    await this.#renderSaved();
     if (evidence) await this.onOpenEvidence(evidence);
   }
 

@@ -8,6 +8,9 @@ import { evidenceToTsv, pageCandidates, rankEvidence, researchTerms } from '../s
 import { copyText } from '../commands.js';
 import { toast } from './dialogs.js';
 import { documentRef, provenanceDetail, SOURCES } from '../semantic/provenance.js';
+import { savedResearchRecord } from '../semantic/saved-research.js';
+import { saveResearchDialog } from './saved-research.js';
+import { bridge } from '../bridge.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
@@ -28,7 +31,9 @@ import { documentRef, provenanceDetail, SOURCES } from '../semantic/provenance.j
 // quoted, with their page — under one line of summary that is Vellum's, not the document's. Selecting a
 // passage selects it as a search result does. No passage holding enough of the terms: it says so. Each piece
 // of evidence carries its provenance (semantic/provenance.js) — the document it came from, its page, its box
-// and the model's IDs — shown on the row and exposed by `research` for a later feature to use.
+// and the model's IDs — shown on the row and exposed by `research` for a later feature to use. Save keeps the
+// research shown now on this PC (ui/saved-research.js): opening it again from the home screen shows the same
+// evidence without reading the document or asking the question a second time.
 
 const MARK_MS = 2400;
 const MAX_RESULTS = 1000;
@@ -94,9 +99,13 @@ export class StructurePanel {
       class: 'tb-btn small', title: 'Export evidence', 'aria-label': 'Export evidence', hidden: true,
       html: icon('copy', 15), onClick: () => this.#exportEvidence(),
     });
+    this.saveResearchBtn = h('button', {
+      class: 'tb-btn small', title: 'Save this research', 'aria-label': 'Save this research', hidden: true,
+      html: icon('save', 15), onClick: () => this.#saveResearch(),
+    });
     this.searchBar = h('div', { class: 'structure-search', role: 'search' },
       h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), this.searchInput),
-      this.researchBtn, this.exportBtn, this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
+      this.researchBtn, this.exportBtn, this.saveResearchBtn, this.caseBtn, this.wordBtn, this.prevBtn, this.nextBtn);
     this.searchStatus = h('div', { class: 'structure-summary structure-search-status', 'aria-live': 'polite', hidden: true });
     this.results = h('div', { class: 'structure-tree structure-results', role: 'list', 'aria-label': 'Search results', hidden: true });
     this.#updateSteps();
@@ -301,7 +310,7 @@ export class StructurePanel {
     this.#research = Boolean(on);
     this.researchBtn.setAttribute('aria-pressed', String(this.#research));
     this.caseBtn.hidden = this.wordBtn.hidden = this.#research;
-    this.exportBtn.hidden = !this.#research;
+    this.exportBtn.hidden = this.saveResearchBtn.hidden = !this.#research;
     this.searchInput.placeholder = this.#research ? 'Ask a research question' : 'Search structure';
     this.searchInput.setAttribute('aria-label', this.#research ? 'Research question' : 'Search the document structure');
     this.search(this.searchInput.value);
@@ -325,7 +334,7 @@ export class StructurePanel {
     this.tree.hidden = this.summary.hidden = !empty;
     this.results.hidden = this.searchStatus.hidden = empty;
     this.results.replaceChildren();
-    this.exportBtn.disabled = true;
+    this.exportBtn.disabled = this.saveResearchBtn.disabled = true;
     this.#updateSteps();
     if (empty) return;
     const count = this.view.pdf.numPages;
@@ -358,8 +367,25 @@ export class StructurePanel {
       for (const item of found.evidence) this.#addEvidence(item);
     }
     this.searchStatus.textContent = found.sufficient ? `Research · ${found.evidence.length} ${found.evidence.length === 1 ? 'passage' : 'passages'}` : 'Research · no evidence';
-    this.exportBtn.disabled = !found.sufficient;
+    this.exportBtn.disabled = this.saveResearchBtn.disabled = !found.sufficient;
     this.#updateSteps();
+  }
+
+  /** Keeps the research shown now (semantic/saved-research.js). The result is written as it stands; nothing is run again. */
+  async #saveResearch() {
+    const research = this.research;
+    if (!research?.sufficient) return toast('No evidence to save.', { timeout: 4000 });
+    await saveResearchDialog({
+      bridge,
+      record: savedResearchRecord({
+        question: this.#search.text,
+        source: research.source,
+        document: research.document,
+        summary: research.summary,
+        sufficient: research.sufficient,
+        evidence: research.evidence,
+      }),
+    });
   }
 
   /** Copies the evidence shown now as tab-separated text: question, page, quote, matched terms, kind — one row each, in the shown order. */
@@ -385,7 +411,7 @@ export class StructurePanel {
   }
 
   /**
-   * The research shown: { source, document, summary, sufficient, evidence: [{ id, page, text, matched, box,
+   * The research shown: { source, document, summary, sufficient, evidence: [{ id, kind, page, text, matched, box,
    * provenance }] }, for tests and later features. Every value is JSON-safe, so what a feature exports is what
    * it reads here; `provenance` is semantic/provenance.js's record of where the passage came from.
    */
@@ -398,7 +424,7 @@ export class StructurePanel {
       summary: summary?.textContent ?? '',
       sufficient: summary?.dataset.sufficient === 'true',
       evidence: this.#search.results.map(({ result }) => ({
-        id: result.id, page: result.number, text: result.text, matched: result.matched, box: result.box ?? null, provenance: result.provenance ?? null,
+        id: result.id, kind: result.kind, page: result.number, text: result.text, matched: result.matched, box: result.box ?? null, provenance: result.provenance ?? null,
       })),
     };
   }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Interop;
@@ -37,6 +38,7 @@ public partial class MainWindow : Window
     private readonly RecentFiles _recent = new(DataFolder);
     private readonly DocumentHistory _history = new(DataFolder);
     private readonly DocumentCollections _collections = new(DataFolder);
+    private readonly SavedResearch _savedResearch = new(DataFolder);
     private readonly AppSettings _settings = AppSettings.Load(DataFolder);
     private AppResourceServer? _server;
     private BridgeHost? _bridge;
@@ -258,7 +260,7 @@ public partial class MainWindow : Window
         bridge.Register("openPath", request =>
         {
             var path = RequiredString(request, "path");
-            if (_recent.Find(path) is null && !_collections.Contains(path)) throw new InvalidOperationException("That file isn't in the recent list or a collection.");
+            if (_recent.Find(path) is null && !_collections.Contains(path) && !_savedResearch.Contains(path)) throw new InvalidOperationException("That file isn't in the recent list, a collection or a saved research result.");
             if (!File.Exists(path)) throw new FileNotFoundException("The file is no longer there.");
             return Done(new { file = DescribeFile(path) });
         });
@@ -376,6 +378,36 @@ public partial class MainWindow : Window
         bridge.Register("collections.remove", request =>
         {
             _collections.Remove(RequiredString(request, "id"), RequiredString(request, "path"));
+            return Done();
+        });
+
+        // ---- saved research: a result kept as the page made it, given back unchanged; no PDF is touched ----
+
+        bridge.Register("research.list", _ => Done(new
+        {
+            items = _savedResearch.All.Select(r => new
+            {
+                r.Id,
+                r.Name,
+                r.CreatedAt,
+                result = r.Result,
+                documents = r.Paths.Select(p => new { path = p, name = Path.GetFileName(p), exists = File.Exists(p) }).ToArray(),
+            }).ToArray(),
+        }));
+        // The page hands over the whole result and the paths it quotes; nothing is recomputed here or on opening.
+        bridge.Register("research.save", request =>
+        {
+            if (request.Payload.ValueKind != JsonValueKind.Object || !request.Payload.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object)
+                throw new ArgumentException("There is no research result to save.");
+            var paths = new List<string>();
+            if (request.Payload.TryGetProperty("paths", out var listed) && listed.ValueKind == JsonValueKind.Array)
+                paths.AddRange(listed.EnumerateArray().Where(p => p.ValueKind == JsonValueKind.String).Select(p => p.GetString()!));
+            var saved = _savedResearch.Save(RequiredString(request, "name"), paths, JsonNode.Parse(result.GetRawText()));
+            return Done(new { saved.Id, saved.Name, saved.CreatedAt });
+        });
+        bridge.Register("research.delete", request =>
+        {
+            _savedResearch.Delete(RequiredString(request, "id"));
             return Done();
         });
 

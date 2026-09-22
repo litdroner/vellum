@@ -3,8 +3,10 @@ import { icon } from '../icons.js';
 import { researchCollection, SKIP_REASONS } from '../semantic/collection-research.js';
 import { evidenceToTsv } from '../semantic/research.js';
 import { copyText } from '../commands.js';
-import { provenanceDetail } from '../semantic/provenance.js';
+import { provenanceDetail, SOURCES } from '../semantic/provenance.js';
 import { showDialog, toast } from './dialogs.js';
+import { savedResearchRecord } from '../semantic/saved-research.js';
+import { saveResearchDialog } from './saved-research.js';
 
 // Research a collection: one question asked of every document in it (semantic/collection-research.js), the
 // evidence ranked across the whole collection and quoted with the document it came from and its page.
@@ -28,10 +30,11 @@ export function researchCollectionDialog({ bridge, collection, onResult = null }
   });
   const askBtn = h('button', { class: 'btn primary', type: 'button' }, 'Research');
   const exportBtn = h('button', { class: 'tb-btn small', title: 'Export evidence', 'aria-label': 'Export evidence', hidden: true, html: icon('copy', 15) });
+  const saveBtn = h('button', { class: 'tb-btn small', title: 'Save this research', 'aria-label': 'Save this research', hidden: true, html: icon('save', 15) });
   const status = h('p', { class: 'cr-status', 'aria-live': 'polite' });
   const results = h('div', { class: 'cr-results', role: 'list', 'aria-label': 'Evidence' });
   const content = h('div', { class: 'cr-body' },
-    h('div', { class: 'cr-ask' }, h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), input), askBtn, exportBtn),
+    h('div', { class: 'cr-ask' }, h('div', { class: 'find-field' }, h('span', { class: 'find-glyph', html: icon('search', 14) }), input), askBtn, exportBtn, saveBtn),
     status, results);
 
   let abort = null;
@@ -48,10 +51,26 @@ export function researchCollectionDialog({ bridge, collection, onResult = null }
     toast(`Copied ${found.evidence.length} ${found.evidence.length === 1 ? 'passage' : 'passages'} of evidence`, { kind: 'success' });
   });
 
+  // The result as it stands, kept under a name; nothing is recomputed now or when it is opened again.
+  saveBtn.addEventListener('click', async () => {
+    if (!found?.sufficient) return toast('No evidence to save.', { timeout: 4000 });
+    await saveResearchDialog({
+      bridge,
+      record: savedResearchRecord({
+        question,
+        source: SOURCES.collection,
+        collection: { id: collection.id, name: collection.name },
+        summary: found.summary,
+        sufficient: found.sufficient,
+        evidence: found.evidence,
+      }),
+    });
+  });
+
   const show = (result) => {
     found = result;
     onResult?.({ question, evidence: result.sufficient ? result.evidence : [] });
-    exportBtn.hidden = !found.sufficient;
+    exportBtn.hidden = saveBtn.hidden = !found.sufficient;
     results.replaceChildren(
       h('div', { class: 'structure-props-title research-heading', text: 'Summary · by Vellum, from the matches' }),
       h('p', { class: 'structure-hint research-summary', 'data-sufficient': String(found.sufficient), text: found.summary }));
@@ -83,7 +102,7 @@ export function researchCollectionDialog({ bridge, collection, onResult = null }
   const ask = async () => {
     question = input.value.trim();
     abort?.abort();
-    if (!question) { found = null; onResult?.({ question, evidence: [] }); exportBtn.hidden = true; results.replaceChildren(); status.textContent = ''; return; }
+    if (!question) { found = null; onResult?.({ question, evidence: [] }); exportBtn.hidden = saveBtn.hidden = true; results.replaceChildren(); status.textContent = ''; return; }
     const controller = new AbortController();
     abort = controller;
     askBtn.disabled = true;

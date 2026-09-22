@@ -4,6 +4,7 @@
 // Recent files (src/Vellum/Services/RecentFiles.cs): each file remembers its reading layout across restarts.
 // Document history (src/Vellum/Services/DocumentHistory.cs): Save As moves a document's history to its new path.
 // Document collections (src/Vellum/Services/DocumentCollections.cs): named lists of paths that persist; PDFs untouched.
+// Saved research (src/Vellum/Services/SavedResearch.cs): a result kept as the page made it, given back unchanged, deleted one at a time.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -212,6 +213,73 @@ Directory.CreateDirectory(Path.Combine(root, "history-data", "history", foreignK
 File.Copy(Path.Combine(otherFolder, "index.json"), Path.Combine(root, "history-data", "history", foreignKey, "index.json"));
 Check("a history folder whose index names another document never moves", history.Move(foreign, Path.Combine(docs, "x.pdf")) == HistoryMove.None
     && Directory.Exists(Path.Combine(root, "history-data", "history", foreignKey)) && Summary(history.List(other)) == otherBefore);
+
+static bool Refused(Action run)
+{
+    try { run(); return false; } catch (Exception) { return true; }
+}
+
+// ---- saved research: a result kept whole, given back as it was saved, and deleted one at a time ----
+
+var researchFolder = Path.Combine(root, "research-data");
+Directory.CreateDirectory(researchFolder);
+var researchFile = Path.Combine(researchFolder, "research.json");
+var reportA = Doc("report-a.pdf", 3);
+var reportB = Doc("report-b.pdf", 4);
+var result = System.Text.Json.Nodes.JsonNode.Parse("""
+{ "v": 1, "question": "Where are the samples collected weekly?", "source": "collection-research",
+  "collection": { "id": "c1", "name": "Reports" }, "summary": "2 passages in 2 documents.", "sufficient": true,
+  "evidence": [ { "id": "p2:run:7", "kind": "run", "page": 2, "text": "Samples were collected weekly",
+                  "matched": ["samples", "collected", "weekly"], "box": [72.0, 700.0, 300.0, 712.0],
+                  "provenance": { "v": 1, "source": "collection-research", "page": 2,
+                                  "document": { "name": "report-a.pdf", "path": "X", "contentKey": "ABC", "reference": "content" },
+                                  "object": { "id": "p2:run:7", "kind": "run", "blockId": "p2:block:1", "runIds": null } } } ] }
+""")!;
+
+var research = new SavedResearch(researchFolder);
+var first = research.Save("  Weekly   samples  ", [reportA, reportB, reportA.ToUpperInvariant()], result);
+Check("a saved result gets an id, its name cleaned and a time", first.Id.Length == 32 && first.Name == "Weekly samples" && first.CreatedAt > DateTimeOffset.Now.AddMinutes(-1));
+Check("… and lists each document it quotes once", first.Paths.Count == 2);
+Check("… the documents themselves are untouched", File.Exists(reportA) && File.Exists(reportB) && new FileInfo(reportA).Length == 1003);
+research.Save("Second", [reportB], result);
+Check("saving is refused without a name", Refused(() => research.Save(" ", [reportA], result)));
+Check("saving is refused without a result", Refused(() => research.Save("No result", [reportA], null)));
+
+var reread = new SavedResearch(researchFolder);
+var items = reread.All;
+Check("both survive a restart, newest first", items.Count == 2 && items[0].Name == "Second" && items[1].Name == "Weekly samples");
+var kept = items[1].Result!.ToJsonString();
+Check("the result comes back exactly as it was saved", kept == result.ToJsonString());
+Check("… with its question, provenance and evidence inside it",
+    kept.Contains("collected weekly") && kept.Contains("\"contentKey\":\"ABC\"") && kept.Contains("p2:block:1"), kept[..Math.Min(80, kept.Length)]);
+Check("a document a saved result quotes can be reopened", reread.Contains(reportA) && reread.Contains(reportB.ToUpperInvariant()));
+Check("… and one nothing quotes can't", !reread.Contains(Path.Combine(docs, "elsewhere.pdf")));
+
+reread.Delete(items[0].Id);
+Check("delete removes that one saved result only", reread.All.Count == 1 && reread.All[0].Name == "Weekly samples");
+Check("… and the documents it quoted are still there", File.Exists(reportB));
+Check("deleting one that is gone is refused", Refused(() => reread.Delete("nope")));
+Check("the deletion survives a restart", new SavedResearch(researchFolder).All.Count == 1);
+
+// A hand-edited or damaged file: whole items still open, broken ones are dropped, and a file that can't be
+// read at all starts over with the old one kept beside it.
+File.WriteAllText(researchFile, """
+[ { "id": "a1", "name": "Whole", "createdAt": "2026-09-23T10:00:00+00:00", "paths": ["C:\\a.pdf", ""], "result": { "v": 1, "question": "q" } },
+  { "id": "", "name": "No id", "result": { "v": 1 } },
+  { "id": "a3", "name": "", "result": { "v": 1 } },
+  { "id": "a4", "name": "No result" },
+  { "id": "a1", "name": "Duplicate id", "result": { "v": 1 } } ]
+""");
+var damaged = new SavedResearch(researchFolder);
+Check("a damaged file keeps the items that are whole and drops the rest", damaged.All.Count == 1 && damaged.All[0].Name == "Whole", string.Join(",", damaged.All.Select(i => i.Name)));
+Check("… and empty paths inside one are dropped", damaged.All.Count == 1 && damaged.All[0].Paths.Count == 1);
+
+File.WriteAllText(researchFile, "{ not json at all");
+var broken = new SavedResearch(researchFolder);
+Check("a file that can't be read at all starts over", broken.All.Count == 0);
+Check("… and is kept beside it, so nothing a person saved is lost for good", File.Exists(researchFile + ".bad"));
+broken.Save("After the damage", [reportA], result);
+Check("saving again works and rewrites the file", new SavedResearch(researchFolder).All.Count == 1);
 
 try { Directory.Delete(root, true); } catch (IOException) { }
 Console.WriteLine(failures == 0 ? "all passed" : $"{failures} failed");
