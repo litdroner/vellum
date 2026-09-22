@@ -18,6 +18,7 @@ import { analyzePage } from '../editing/runs.js';
 import { openSource } from '../editing/source.js';
 import { loadPdfLib } from '../annotations/persist.js';
 import { MAX_EVIDENCE, needed, pageCandidates, rankEvidence, researchTerms } from './research.js';
+import { documentRef, SOURCES } from './provenance.js';
 import { readSemanticPage } from './model.js';
 
 export { MAX_EVIDENCE, researchTerms };
@@ -53,16 +54,23 @@ export async function* documentPages(bytes) {
   }
 }
 
-/** Reads a collection document from the host: its bytes over the read-only URL the host gave for it. */
+/**
+ * Reads a collection document from the host: its bytes over the read-only URL the host gave for it, and the
+ * content key the host returns with them (X-Vellum-Doc-Key — the SHA-256 of those bytes, the same one an open
+ * document is identified by). Returns { bytes, contentKey }; `contentKey` is null when the host sent none.
+ */
 export async function fetchDocumentBytes(doc) {
   if (!doc.exists || !doc.url) throw new SkippedDocument('missing');
   const response = await fetch(doc.url);
   if (!response.ok) throw new SkippedDocument(response.status === 404 ? 'missing' : 'unreadable');
-  return new Uint8Array(await response.arrayBuffer());
+  const contentKey = response.headers.get('X-Vellum-Doc-Key');
+  return { bytes: new Uint8Array(await response.arrayBuffer()), contentKey: contentKey || null };
 }
 
-const defaultRead = async function* read(doc) {
-  yield* documentPages(await fetchDocumentBytes(doc));
+const defaultRead = async function* read(doc, { identify } = {}) {
+  const { bytes, contentKey } = await fetchDocumentBytes(doc);
+  identify?.({ contentKey });
+  yield* documentPages(bytes);
 };
 
 /**
@@ -70,14 +78,18 @@ const defaultRead = async function* read(doc) {
  *
  *   documents   [{ path, name, exists, url }], in the collection's own order
  *   question    what is asked; its key terms are Research's (researchTerms)
- *   readDocument(doc) → async iterable of that document's semantic pages (the app's reader by default)
+ *   readDocument(doc, { identify }) → async iterable of that document's semantic pages (the app's reader by
+ *               default). `identify({ contentKey })` is what a reader tells the research about the file it
+ *               read; a reader that doesn't call it leaves the content key null and the document is referenced
+ *               by its path.
  *   onProgress({ index, total, name })  before each document is read
  *   signal      an AbortSignal: reading stops at the next page and `aborted` comes back true
  *
  * Returns { terms, evidence, missing, sufficient, summary, searched, skipped, aborted }. Each evidence item is
  * a passage as Research quotes it ({ id, kind, number, text, box, matched }) with the document it came from
- * (`path`, `name`, `docOrder`), so a result names its file, its page and the words it holds. At most `limit`
- * passages over the whole collection — the same 8 a single document gives.
+ * (`path`, `name`, `docOrder`), so a result names its file, its page and the words it holds, and with its
+ * `provenance` (semantic/provenance.js): the document reference, the page, the box and the model's IDs. At
+ * most `limit` passages over the whole collection — the same 8 a single document gives.
  */
 export async function researchCollection({
   documents = [], question = '', readDocument = defaultRead, limit = MAX_EVIDENCE, onProgress = null, signal = null,
@@ -92,12 +104,17 @@ export async function researchCollection({
     for (const [index, doc] of documents.entries()) {
       if (signal?.aborted) { aborted = true; break; }
       onProgress?.({ index, total: documents.length, name: doc.name });
+      let ref = documentRef({ name: doc.name, path: doc.path });
+      const identify = (about) => { ref = documentRef({ name: doc.name, path: doc.path, contentKey: about?.contentKey ?? null }); };
       try {
-        for await (const page of readDocument(doc)) {
+        for await (const page of readDocument(doc, { identify })) {
           if (signal?.aborted) { aborted = true; break; }
           for (const c of pageCandidates(page, terms)) {
             // The page model itself is dropped: a candidate keeps only what evidence shows.
-            candidates.push({ id: c.id, kind: c.kind, number: c.number, text: c.text, box: c.box, matched: c.matched, docOrder: index, path: doc.path, name: doc.name });
+            candidates.push({
+              id: c.id, kind: c.kind, number: c.number, text: c.text, box: c.box, matched: c.matched,
+              blockId: c.blockId, runIds: c.runIds, docOrder: index, path: doc.path, name: doc.name, document: ref,
+            });
           }
           // Reading and matching between pages, so the window stays responsive.
           await new Promise((resolve) => setTimeout(resolve));
@@ -111,7 +128,7 @@ export async function researchCollection({
     }
   }
 
-  const found = rankEvidence(terms, candidates, { limit });
+  const found = rankEvidence(terms, candidates, { limit, source: SOURCES.collection });
   return { ...found, summary: summarize(terms, found, { searched, skipped, documents, aborted }), searched, skipped, aborted };
 }
 

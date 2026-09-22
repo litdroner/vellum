@@ -7,6 +7,7 @@ import { describeQuery, isEmptyQuery, matchPage, needsContent, parseQuery } from
 import { evidenceToTsv, pageCandidates, rankEvidence, researchTerms } from '../semantic/research.js';
 import { copyText } from '../commands.js';
 import { toast } from './dialogs.js';
+import { documentRef, provenanceDetail, SOURCES } from '../semantic/provenance.js';
 
 // The Structure tab of the sidebar: the semantic document model (semantic/model.js) of the document, page
 // by page — text blocks and their runs, images, form fields, annotations and links — with the properties of
@@ -25,7 +26,9 @@ import { toast } from './dialogs.js';
 // Research (semantic/research.js) takes the same field for a question: every page is read, the question's
 // key terms are searched for as text, and the passages holding enough of them are listed as evidence —
 // quoted, with their page — under one line of summary that is Vellum's, not the document's. Selecting a
-// passage selects it as a search result does. No passage holding enough of the terms: it says so.
+// passage selects it as a search result does. No passage holding enough of the terms: it says so. Each piece
+// of evidence carries its provenance (semantic/provenance.js) — the document it came from, its page, its box
+// and the model's IDs — shown on the row and exposed by `research` for a later feature to use.
 
 const MARK_MS = 2400;
 const MAX_RESULTS = 1000;
@@ -304,6 +307,15 @@ export class StructurePanel {
     this.search(this.searchInput.value);
   }
 
+  /**
+   * The document evidence is quoted from, as provenance references it: its name and path, and the content key
+   * the host gave when its bytes were read (view.docKey). Editing and saving the file give it another key, so
+   * this is the file as it was opened — Vellum keeps no identity beyond that and none is invented here.
+   */
+  #documentRef() {
+    return documentRef({ name: this.view.file?.name, path: this.view.file?.path, contentKey: this.view.docKey ?? null });
+  }
+
   /** Evidence for a question: every page's text read, passages ranked by the key terms they hold; nothing guessed. */
   async #runResearch(text) {
     const terms = researchTerms(text);
@@ -335,7 +347,7 @@ export class StructurePanel {
         if (id !== this.#search.id) return;
       }
     }
-    const found = rankEvidence(terms, candidates);
+    const found = rankEvidence(terms, candidates, { document: this.#documentRef(), source: SOURCES.document });
     const summary = this.view.encrypted ? 'Not enough evidence: the text of a protected PDF isn’t read, so it can’t be researched.' : found.summary;
     this.#search.reading = false;
     this.results.append(
@@ -362,6 +374,8 @@ export class StructurePanel {
     const index = this.#search.results.length;
     const el = h('button', {
       class: 'structure-row structure-item research-evidence', role: 'listitem', 'data-id': item.id, 'data-kind': item.kind, 'data-page': String(item.number),
+      // Where the passage came from, in full, on the row it came from: the file, its page and the object's ID.
+      title: provenanceDetail(item.provenance),
       onClick: () => this.#selectResult(index),
     },
     h('span', { class: 'research-quote', text: `“${item.text}”` }),
@@ -370,14 +384,22 @@ export class StructurePanel {
     this.results.append(el);
   }
 
-  /** The research shown: { summary, sufficient, evidence: [{ id, page, text, matched }] }, for tests and later features. */
+  /**
+   * The research shown: { source, document, summary, sufficient, evidence: [{ id, page, text, matched, box,
+   * provenance }] }, for tests and later features. Every value is JSON-safe, so what a feature exports is what
+   * it reads here; `provenance` is semantic/provenance.js's record of where the passage came from.
+   */
   get research() {
     if (!this.#search.research || this.#search.reading) return null;
     const summary = this.results.querySelector('.research-summary');
     return {
+      source: SOURCES.document,
+      document: this.#documentRef(),
       summary: summary?.textContent ?? '',
       sufficient: summary?.dataset.sufficient === 'true',
-      evidence: this.#search.results.map(({ result }) => ({ id: result.id, page: result.number, text: result.text, matched: result.matched })),
+      evidence: this.#search.results.map(({ result }) => ({
+        id: result.id, page: result.number, text: result.text, matched: result.matched, box: result.box ?? null, provenance: result.provenance ?? null,
+      })),
     };
   }
 

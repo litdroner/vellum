@@ -3,6 +3,7 @@ import { icon } from '../icons.js';
 import { researchCollection, SKIP_REASONS } from '../semantic/collection-research.js';
 import { evidenceToTsv } from '../semantic/research.js';
 import { copyText } from '../commands.js';
+import { provenanceDetail } from '../semantic/provenance.js';
 import { showDialog, toast } from './dialogs.js';
 
 // Research a collection: one question asked of every document in it (semantic/collection-research.js), the
@@ -16,7 +17,7 @@ const reasonText = (skip) => SKIP_REASONS[skip.reason] ?? skip.reason;
 
 /**
  * Asks a question of `collection` ({ id, name }). Resolves with the chosen evidence
- * ({ path, name, number, box, text }), or null when nothing was chosen.
+ * ({ path, name, number, box, text, provenance }), or null when nothing was chosen.
  */
 export function researchCollectionDialog({ bridge, collection }) {
   const input = h('input', {
@@ -56,7 +57,9 @@ export function researchCollectionDialog({ bridge, collection }) {
       for (const item of found.evidence) {
         results.append(h('button', {
           class: 'structure-row structure-item research-evidence cr-evidence', role: 'listitem', type: 'button',
-          'data-path': item.path, 'data-page': String(item.number), title: `Open ${item.name} at page ${item.number}`,
+          'data-path': item.path, 'data-page': String(item.number),
+          // Where the passage came from, in full, on the row that quotes it.
+          title: [`Open ${item.name} at page ${item.number}`, provenanceDetail(item.provenance)].filter(Boolean).join('\n'),
           onClick: () => choose(item),
         },
         h('span', { class: 'research-quote', text: `“${item.text}”` }),

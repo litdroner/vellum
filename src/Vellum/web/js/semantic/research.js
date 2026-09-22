@@ -3,11 +3,16 @@
 // for as text, and a passage (a paragraph, or a line of its own) is evidence when it holds enough of them.
 // Deterministic and local — no AI, no index, no embeddings; nothing is written. Pure.
 //
-// Evidence is the document's own text with its page and box. The one line of summary is Vellum's, made from
+// Evidence is the document's own text with its page and box, and a provenance record (semantic/provenance.js)
+// naming the document it came from, its page, its box and the model's IDs for it — what a later feature needs
+// to quote or reach the source again without reading the PDF a second time. The one line of summary is Vellum's, made from
 // the matches (how many passages, on which pages, which terms were found nowhere); it never states an answer.
 // When no passage holds enough of the terms, the result says the evidence is insufficient instead of guessing.
 
 import { matchPage } from './query.js';
+import { evidenceProvenance, SOURCES } from './provenance.js';
+
+export { SOURCES };
 
 export const MAX_EVIDENCE = 8;
 const MAX_TEXT = 280;
@@ -36,7 +41,7 @@ export const needed = (count) => (count <= 2 ? count : Math.ceil(count / 2));
 // A term is matched as semantic search matches text; a short one only as a whole word ("two" not in "network").
 const termQuery = (text) => ({ type: 'text', editable: null, match: 'contains', text, caseSensitive: false, entireWord: text.length <= 3 });
 
-/** A page's passages holding any of the terms: [{ id, kind, number, item, text, box, matched }], in reading order. */
+/** A page's passages holding any of the terms: [{ id, kind, number, item, text, box, blockId, runIds, matched }], in reading order. */
 export function pageCandidates(page, terms) {
   const found = new Map();
   for (const term of terms) {
@@ -48,17 +53,24 @@ export function pageCandidates(page, terms) {
   }
   return [...found.values()].sort((a, b) => a.order - b.order).map(({ order, ...c }) => ({
     ...c, text: String(c.item.text ?? '').replace(/\s+/g, ' ').trim(), box: c.item.box ?? null,
+    // The model's own IDs for the passage, kept beside it so provenance outlives the page model.
+    blockId: c.item.blockId ?? null, runIds: c.item.runIds ?? null,
   }));
 }
 
 /**
  * Evidence for a question from the candidates of every page read: { terms, evidence, missing, sufficient, summary }.
  * Evidence holds at least needed(terms) of the terms, most terms first, then in page and reading order; at most
- * `limit`. Each item: { id, kind, number, item, text (clipped), box, matched }. `missing`: terms found nowhere.
- * A candidate may carry `docOrder` (its document's place in a collection); those from earlier documents come
- * first, so candidates from several documents stay in document and page order. One document leaves it unset.
+ * `limit`. Each item: { id, kind, number, item, text (clipped), box, matched, provenance }. `missing`: terms
+ * found nowhere. A candidate may carry `docOrder` (its document's place in a collection); those from earlier
+ * documents come first, so candidates from several documents stay in document and page order. One document
+ * leaves it unset.
+ *
+ * `provenance` is semantic/provenance.js's record of where the passage came from: the document reference
+ * (the candidate's own `document`, else the `document` given here), its page, its box and the model's IDs.
+ * `source` is the kind of research asking, a value of SOURCES.
  */
-export function rankEvidence(terms, candidates, { limit = MAX_EVIDENCE } = {}) {
+export function rankEvidence(terms, candidates, { limit = MAX_EVIDENCE, document = null, source = SOURCES.document } = {}) {
   if (!terms.length) return { terms, evidence: [], missing: [], sufficient: false, summary: 'Ask about something the document may contain: the question has no key terms.' };
   const min = needed(terms.length);
   const seen = new Set(candidates.flatMap((c) => c.matched));
@@ -68,7 +80,7 @@ export function rankEvidence(terms, candidates, { limit = MAX_EVIDENCE } = {}) {
     .filter(({ c }) => c.matched.length >= min)
     .sort((a, b) => b.c.matched.length - a.c.matched.length || (a.c.docOrder ?? 0) - (b.c.docOrder ?? 0) || a.c.number - b.c.number || a.i - b.i)
     .slice(0, limit)
-    .map(({ c }) => ({ ...c, text: clip(c.text) }));
+    .map(({ c }) => ({ ...c, text: clip(c.text), provenance: evidenceProvenance(c, { document: c.document ?? document, source }) }));
   return { terms, evidence, missing, sufficient: evidence.length > 0, summary: summarize(terms, evidence, missing) };
 }
 

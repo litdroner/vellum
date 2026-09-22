@@ -58,6 +58,15 @@ export async function run(t) {
   check('the summary is marked as Vellum’s and the evidence as quoted from the documents',
     await q(`[...${dialog}.querySelectorAll('.research-heading')].map((h) => h.textContent).slice(0, 2).join(' | ') === 'Summary · by Vellum, from the matches | Evidence · quoted from the documents'`));
 
+  area('provenance');
+  const titles = await q(`[...document.querySelectorAll('.cr-evidence')].map((el) => el.title)`);
+  check('each result shows where it came from: its file, its page and the object’s ID',
+    titles.every((title, i) => title.includes(found[i].path) && title.includes(`page ${found[i].page}`) && /· p\d+:/.test(title)), JSON.stringify(titles));
+  check('… and the content key the host gave for the bytes it read',
+    titles.every((title) => /content [0-9a-f]{12}… \(the file as it was read\)/.test(title)), JSON.stringify(titles));
+  check('the key is each document’s own',
+    new Set(titles.map((title) => /content ([0-9a-f]{12})…/.exec(title)?.[1])).size === titles.length, JSON.stringify(titles));
+
   area('skipped');
   const skipped = await q(`[...${dialog}.querySelectorAll('.cr-skipped')].map((el) => el.textContent)`);
   check('the protected document is skipped, with its reason', skipped.some((s) => s.startsWith('locked.pdf') && s.includes('protected')), JSON.stringify(skipped));
