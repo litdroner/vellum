@@ -24,6 +24,7 @@
 
 import { documentRef } from '../semantic/provenance.js';
 import { blockTables } from '../semantic/tables.js';
+import { destinationPage } from '../pages/outline.js';
 
 const MAX_HEADING = 4; // an outline deeper than this keeps the deepest Markdown heading available
 
@@ -133,13 +134,3 @@ export async function outlineHeadings(pdf) {
   return byPage;
 }
 
-async function destinationPage(pdf, dest) {
-  try {
-    const resolved = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
-    const target = Array.isArray(resolved) ? resolved[0] : null;
-    const index = Number.isInteger(target) ? target : target && typeof target === 'object' ? await pdf.getPageIndex(target) : null;
-    return Number.isInteger(index) && index >= 0 && index < pdf.numPages ? index + 1 : null;
-  } catch {
-    return null;
-  }
-}

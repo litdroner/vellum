@@ -9,6 +9,7 @@ import { readPicture } from '../editing/objects/image.js';
 import { decodeBase64 } from '../ui/text-editor.js';
 import { PAGE_NUMBER_POSITIONS, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 import { MINIMUM_INPUTS, countInputs, mergeDocuments, mergedFileName, mergedPageCount, moveInput, removeInput, withoutDuplicates } from './merge.js';
+import { bookmarkSections, sectionFileNames, topLevelBookmarks } from './outline.js';
 
 // Page operations as the UI offers them: the DocumentView methods plus the dialogs, menus and
 // messages around them. Used by the thumbnail panel, the menus and keyboard shortcuts.
@@ -257,9 +258,12 @@ export function createPageActions({ onOpenFile }) {
         toast('This document has only one page.');
         return;
       }
-      const groups = await askHowToSplit(total, numbersOf(view, selectedIds));
-      if (!groups) return;
-      const names = groups.map((_, i) => `${baseName(view.file.name)} (part ${i + 1}).pdf`);
+      const answer = await askHowToSplit(total, numbersOf(view, selectedIds), await sectionsOf(view, total));
+      if (!answer) return;
+      const { groups, sections } = answer;
+      const names = sections
+        ? sectionFileNames(sections, baseName(view.file.name))
+        : groups.map((_, i) => `${baseName(view.file.name)} (part ${i + 1}).pdf`);
       const { files } = await bridge.request('splitTargets', { names, path: view.file.path });
       if (!files?.length) return;
       try {
@@ -471,7 +475,18 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
 }
 
 /** The Split dialog. Resolves with groups of page numbers, or null if cancelled. */
-async function askHowToSplit(total, selected) {
+/**
+ * The sections the document's own bookmarks would cut it into, or [] when it can't be done: fewer than
+ * two sections, or the pages on screen (which the outline is read from) not yet matching the page plan.
+ */
+async function sectionsOf(view, total) {
+  const shown = view.shownPlan;
+  if (!view.pdf || shown?.length !== total || !shown.every((e, i) => e.id === view.annotations.plan[i].id)) return [];
+  const sections = bookmarkSections(await topLevelBookmarks(view.pdf), total);
+  return sections.length > 1 ? sections : [];
+}
+
+async function askHowToSplit(total, selected, sections = []) {
   const cuts = selected.filter((n) => n > 1);
   const every = h('input', { class: 'field inline', type: 'number', min: '1', max: String(total), value: String(Math.max(1, Math.ceil(total / 2))) });
   const ranges = h('input', { class: 'field', type: 'text', spellcheck: 'false', placeholder: `e.g. 1-3, 4-${total}` });
@@ -481,37 +496,42 @@ async function askHowToSplit(total, selected) {
   const choices = h('div', { class: 'choices' },
     option('every', 'Every ', [every, ' pages']),
     option('selected', cuts.length ? `Before each selected page (${describePages(cuts)})` : 'Before each selected page', null, !cuts.length),
+    option('bookmarks', sections.length ? `Before each bookmark (${plural(sections.length, 'section')})` : 'Before each bookmark', null, !sections.length),
     option('ranges', 'Page ranges', ranges));
   let primary = null;
   let groups = null;
 
+  const mode = () => choices.querySelector('input[name="split-mode"]:checked')?.value;
   const compute = () => {
-    const mode = choices.querySelector('input[name="split-mode"]:checked')?.value;
-    if (mode === 'every') {
+    const chosen = mode();
+    if (chosen === 'every') {
       const size = Number(every.value);
       if (!Number.isInteger(size) || size < 1 || size >= total) return null;
       const out = [];
       for (let start = 1; start <= total; start += size) out.push(range(start, Math.min(total, start + size - 1)));
       return out;
     }
-    if (mode === 'selected') {
+    if (chosen === 'selected') {
       const points = [1, ...cuts, total + 1];
       return points.slice(0, -1).map((start, i) => range(start, points[i + 1] - 1));
     }
+    if (chosen === 'bookmarks') return sections.length > 1 ? sections.map((s) => range(s.from, s.to)) : null;
     const parsed = parseRanges(ranges.value, total);
     return parsed?.map(([a, b]) => range(a, b)) ?? null;
   };
   const update = () => {
     groups = compute();
     if (primary) primary.disabled = !groups;
+    const named = mode() === 'bookmarks' && groups;
     summary.textContent = groups
-      ? `Creates ${plural(groups.length, 'file')}: ${groups.slice(0, 4).map((g) => `pages ${describePages(g)}`).join(' · ')}${groups.length > 4 ? ' …' : ''}`
-      : 'Enter page ranges between 1 and ' + total + '.';
+      ? `Creates ${plural(groups.length, 'file')}: ${(named ? sections.map((s) => s.title ?? `pages ${describePages(range(s.from, s.to))}`) : groups.map((g) => `pages ${describePages(g)}`)).slice(0, 4).join(' · ')}${groups.length > 4 ? ' …' : ''}`
+      : mode() === 'bookmarks' ? 'This document has no bookmarks Vellum can split on.'
+        : 'Enter page ranges between 1 and ' + total + '.';
   };
   choices.addEventListener('change', update);
   every.addEventListener('input', () => { choices.querySelector('input[value="every"]').checked = true; update(); });
   ranges.addEventListener('input', () => { choices.querySelector('input[value="ranges"]').checked = true; update(); });
-  choices.querySelector(`input[value="${cuts.length ? 'selected' : 'every'}"]`).checked = true;
+  choices.querySelector(`input[value="${cuts.length ? 'selected' : sections.length ? 'bookmarks' : 'every'}"]`).checked = true;
 
   const result = await showDialog({
     title: 'Split into separate PDFs',
@@ -526,7 +546,7 @@ async function askHowToSplit(total, selected) {
       return primary;
     },
   });
-  return result === 'ok' ? groups : null;
+  return result === 'ok' && groups ? { groups, sections: mode() === 'bookmarks' ? sections : null } : null;
 }
 
 /**

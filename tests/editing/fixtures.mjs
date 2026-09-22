@@ -819,6 +819,47 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.page(PageSizes.Letter, lines([20, 700, 'Glossary'], [12, 660, 'Terms used throughout this report are defined here']), res);
   });
 
+  // Bookmarks: six pages under an outline whose top-level entries are what a bookmark split cuts on.
+  // "Introduction" is on page 2, so page 1 comes before the first bookmark; "Results / Findings: Q1"
+  // holds characters a file name can't; "Appendix" is reached by a NAMED destination and has a child
+  // (nested entries are not boundaries); the last entry is a link with no page at all, which a split
+  // must pass over without inventing one.
+  await build('bookmarks', async (b) => {
+    const res = { Font: { F1: b.std(StandardFonts.Helvetica) } };
+    const titles = ['Title page', 'Introduction', 'More introduction', 'Results', 'More results', 'Appendix'];
+    const pages = titles.map((t, i) => b.page(PageSizes.Letter, lines([20, 700, t], [12, 660, `This is page ${i + 1} of six.`]), res));
+    const ctx = b.ctx;
+    const outline = ctx.register(ctx.obj({}));
+    // "Appendix" goes through a named destination, the way a real book's outline often does.
+    ctx.lookup(b.doc.catalog).set(PDFName.of('Names'), ctx.obj({
+      Dests: { Names: [PDFString.of('appendix'), ctx.obj([pages[5].ref, PDFName.of('XYZ'), 0, 792, 0])] },
+    }));
+    const child = ctx.register(ctx.obj({ Title: PDFHexString.fromText('A.1 Notes'), Dest: [pages[5].ref, 'XYZ', 0, 700, 0] }));
+    const entries = [
+      { title: 'Introduction', dest: [pages[1].ref, 'XYZ', 0, 792, 0] },
+      { title: 'Results / Findings: Q1*', dest: [pages[3].ref, 'XYZ', 0, 792, 0] },
+      { title: 'Appendix', dest: PDFString.of('appendix'), first: child, last: child, count: 1 },
+      { title: 'Vellum online', url: 'https://example.com/vellum' },
+    ];
+    const refs = entries.map(() => ctx.nextRef());
+    entries.forEach((e, i) => {
+      const item = { Title: PDFHexString.fromText(e.title), Parent: outline };
+      if (e.dest) item.Dest = e.dest;
+      if (e.url) item.A = { S: 'URI', URI: PDFString.of(e.url) };
+      if (e.first) { item.First = e.first; item.Last = e.last; item.Count = e.count; }
+      if (i > 0) item.Prev = refs[i - 1];
+      if (i < refs.length - 1) item.Next = refs[i + 1];
+      ctx.assign(refs[i], ctx.obj(item));
+    });
+    ctx.lookup(child).set(PDFName.of('Parent'), refs[2]);
+    const o = ctx.lookup(outline);
+    o.set(PDFName.of('Type'), PDFName.of('Outlines'));
+    o.set(PDFName.of('First'), refs[0]);
+    o.set(PDFName.of('Last'), refs.at(-1));
+    o.set(PDFName.of('Count'), ctx.obj(entries.length));
+    b.doc.catalog.set(PDFName.of('Outlines'), outline);
+  });
+
   // Document structure: every kind of object the semantic model describes, over two pages — a heading, a
   // paragraph, a link, a note and a form field on page 1; text, a picture and a link back to page 1 (a named
   // destination) on page 2.
