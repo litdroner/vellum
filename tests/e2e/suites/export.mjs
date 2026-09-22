@@ -1,6 +1,7 @@
 // Export Center V1 in the real app: the Export command opens the dialog from the More menu; an export to the
 // document's own folder writes real files through the host (MainWindow.Export.cs, /export/{token}) — JPEG and
-// PNG one per page, Markdown one file — with the names the plan gives; a second export of the same pages
+// PNG one per page, Markdown one file, and an Excel workbook of the tables Vellum is confident about — with
+// the names the plan gives; a second export of the same pages
 // keeps both instead of overwriting when asked; and the PDF itself is byte for byte unchanged throughout.
 
 import fs from 'node:fs';
@@ -36,7 +37,7 @@ export async function run(t) {
   await clickAt(entry);
   check('the Export dialog opens', await waitFor(`Boolean(document.querySelector('.export-dialog'))`, 3000));
   const formats = await q(`[...document.querySelectorAll('.export-dialog input[name="export-format"]')].map((i) => i.value).join(',')`);
-  check('with the three formats V1 has', formats === 'jpg,png,markdown', formats);
+  check('with the formats the Export Center offers', formats === 'jpg,png,markdown,excel', formats);
   check('and the document’s own folder to start with', await q(`document.querySelector('.export-folder-path').textContent === ${J(folder)}`));
   const note = await q(`document.querySelector('.export-dialog .dialog-note').textContent`);
   check('the note names the files it will create', note.includes(`${base} (page 001).jpg`), note);
@@ -65,6 +66,14 @@ export async function run(t) {
   check('with a heading per page', /\n## Page 1\n/.test(text) && /\n## Page 2\n/.test(text), text.slice(0, 120));
   check('the document’s text', text.includes('Structure report') && text.includes('A figure on page two'));
   check('and where it came from', text.includes(path.basename(DOC)) && text.includes(DOC.replace(/\\/g, '\\\\')), text.slice(-260));
+
+  area('excel');
+  // This document has no table Table extraction is confident about, so there is nothing to put in a
+  // workbook: the export says so and writes no file rather than an empty spreadsheet.
+  const xlsx = await exportTo('excel', [1, 2]);
+  check('an Excel export of a document with no confident table writes nothing', xlsx?.ok === false && xlsx.written.length === 0, JSON.stringify(xlsx));
+  check('and says why', /confidently find a table/.test(xlsx?.failed.join(' ') ?? ''), JSON.stringify(xlsx?.failed));
+  check('no .xlsx was left behind', !fs.existsSync(path.join(folder, `${base}.xlsx`)));
 
   area('overwriting');
   const again = await exportTo('markdown', [1, 2], 'keepBoth');

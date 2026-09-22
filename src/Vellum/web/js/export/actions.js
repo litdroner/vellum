@@ -5,6 +5,7 @@ import { describeResult, exportPlan } from './model.js';
 import { runExport } from './run.js';
 import { renderPageImage } from './images.js';
 import { documentMarkdown, outlineHeadings } from './markdown.js';
+import { tablesWorkbook } from './xlsx.js';
 import { readPdfPage, readSessionPage } from '../semantic/model.js';
 import { pageTables } from '../semantic/tables.js';
 
@@ -13,9 +14,10 @@ import { pageTables } from '../semantic/tables.js';
 // writes them one by one with progress and a Cancel that stops before the next file.
 //
 // Every format goes through the same steps; only `producerFor` differs. Images are rendered by pdf.js as
-// printing renders them (export/images.js); Markdown is written from the semantic document model and the
-// confident tables already extracted (export/markdown.js). Nothing new reads or parses the PDF, and the
-// document on disk is never opened for writing — an export only ever creates new files.
+// printing renders them (export/images.js); Markdown and the Excel workbook are written from the semantic
+// document model and the confident tables already extracted (export/markdown.js, export/xlsx.js). Nothing
+// new reads or parses the PDF, and the document on disk is never opened for writing — an export only ever
+// creates new files.
 
 export function createExportActions({ pdfjsLib }) {
   const folderOf = (path) => path.slice(0, Math.max(0, path.lastIndexOf('\\')));
@@ -36,24 +38,42 @@ export function createExportActions({ pdfjsLib }) {
         signal,
       });
     }
+    if (plan.format.id === 'excel') {
+      return async (file, { signal }) => {
+        const read = await readPages(view, file.pages, signal);
+        return tablesWorkbook({ document: sourceOf(view), pages: read.map((r) => r.extraction) });
+      };
+    }
     return async (file, { signal }) => {
       const headings = await outlineHeadings(view.pdf);
-      const pages = [];
-      const tables = new Map();
-      for (const number of file.pages) {
-        if (signal?.aborted) break;
-        const page = view.encrypted
-          ? await readPdfPage(view.pdf, number)
-          : await readSessionPage(view.textEditing, view.pdf, number);
-        pages.push(page);
-        tables.set(number, pageTables(page).tables);
-      }
+      const read = await readPages(view, file.pages, signal);
       const markdown = documentMarkdown({
-        document: { name: view.file.name, path: view.file.path, contentKey: view.docKey ?? null },
-        pages, tables, headings,
+        document: sourceOf(view),
+        pages: read.map((r) => r.page),
+        tables: new Map(read.map((r) => [r.page.number, r.extraction.tables])),
+        headings,
       });
       return new TextEncoder().encode(markdown);
     };
+  }
+
+  /** Which document this is, for the provenance every text format records. */
+  const sourceOf = (view) => ({ name: view.file.name, path: view.file.path, contentKey: view.docKey ?? null });
+
+  /**
+   * The chosen pages of the semantic document model, each with its table extraction, in page order. One
+   * read for every format that works from the model, so no format reads the document a second way.
+   */
+  async function readPages(view, numbers, signal) {
+    const out = [];
+    for (const number of numbers) {
+      if (signal?.aborted) break;
+      const page = view.encrypted
+        ? await readPdfPage(view.pdf, number)
+        : await readSessionPage(view.textEditing, view.pdf, number);
+      out.push({ page, extraction: pageTables(page) });
+    }
+    return out;
   }
 
   /** Sends one exported file's bytes to the host, which writes it atomically. Returns its size. */

@@ -5,7 +5,7 @@
 // (export/run.js) produces each file's bytes and hands them to the host, and every format goes through the
 // same steps: choose pages, name the files, ask the host for write targets, produce, write, report.
 //
-//   format   { id, label, extension, mime, kind: 'image' | 'text', perPage, note }
+//   format   { id, label, extension, mime, kind: 'image' | 'text' | 'binary', perPage, note }
 //   plan     { format, base, pageCount, pages, files }
 //   file     { name, pages }        pages: the page numbers this one file holds (one, for a per-page format)
 //   result   { format, total, written, failed, cancelled, ok }   (export/run.js fills it in)
@@ -14,7 +14,7 @@
 // order, whatever was exported before. A per-page format names each file after the document and the page,
 // zero-padded to the document's page count (at least three digits) so the files sort as the pages read.
 //
-// Adding a format (PDF → Word, Excel, PowerPoint later) means adding an entry here and a producer for it;
+// Adding a format (PDF → PowerPoint later) means adding an entry here and a producer for it;
 // pages, names, targets, overwriting, progress, cancellation and the result stay exactly as they are.
 
 export const EXPORT_FORMATS = Object.freeze({
@@ -29,6 +29,11 @@ export const EXPORT_FORMATS = Object.freeze({
   markdown: Object.freeze({
     id: 'markdown', label: 'Markdown', extension: 'md', mime: 'text/markdown', kind: 'text', perPage: false,
     note: 'One file: the text Vellum already reads, its confident tables, and the page each part came from.',
+  }),
+  excel: Object.freeze({
+    id: 'excel', label: 'Excel workbook', extension: 'xlsx',
+    mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', kind: 'binary', perPage: false,
+    note: 'One worksheet for every table Vellum is confident about, as real cells.',
   }),
 });
 
