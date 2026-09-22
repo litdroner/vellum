@@ -575,6 +575,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('pages.insert', null, { disabled: !app.active?.canEditPages }),
     menuItem('pages.extract', null, { disabled: !app.active?.canEditPages }),
     menuItem('pages.split', null, { disabled: !app.active?.canEditPages }),
+    menuItem('pages.merge'),
     '-',
     menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
     menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),

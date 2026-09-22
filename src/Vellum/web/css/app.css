@@ -1602,6 +1602,39 @@ kbd {
 :root[data-page-tone="sepia"] .recent-thumb img,
 :root[data-page-tone="sepia"] #stage .vl-held-page { filter: url(#page-tone-sepia); } /* white → paper, black → brown ink; defined in index.html */
 
+/* ---- merge dialog (pages/actions.js askWhatToMerge) --------------------------------------- */
+
+.merge-dialog { width: min(520px, calc(100vw - 40px)); }
+.merge-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.merge-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 11px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.merge-item.selected { box-shadow: inset 0 0 0 1.5px var(--accent-line); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface); }
+.merge-order { width: 18px; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.merge-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-2); }
+.merge-pages { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.merge-buttons { display: flex; gap: 2px; }
+.merge-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  transition: background-color var(--fast), color var(--fast);
+}
+.merge-btn:hover:not(:disabled) { background: var(--hover); color: var(--ink-1); }
+.merge-btn:disabled { opacity: .3; cursor: default; }
+.merge-add { margin-top: 10px; }
+
 /* ---- split dialog ------------------------------------------------------------------------ */
 
 .split-dialog { width: min(480px, calc(100vw - 40px)); }

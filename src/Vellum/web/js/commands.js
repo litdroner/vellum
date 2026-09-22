@@ -95,6 +95,8 @@ export function createCommands(app, ui, actions) {
     'pages.numbers': { group: 'Pages', icon: 'file-text', doc: true, label: 'Page numbers…', run: onPages((view, ids) => pages.pageNumbers(view, ids)) },
     'pages.watermark': { group: 'Pages', icon: 'blend', doc: true, label: 'Watermark…', run: onPages((view, ids) => pages.watermark(view, ids)) },
     'pages.extract': { group: 'Pages', icon: 'file-output', doc: true, label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
+    // Merging needs no open document: it reads the files chosen and writes a new one.
+    'pages.merge': { group: 'Pages', icon: 'combine', label: 'Merge PDFs…', run: () => pages.merge() },
     'pages.split': { group: 'Pages', icon: 'scissors', doc: true, label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
     'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 

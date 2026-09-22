@@ -43,3 +43,15 @@ export const bridge = {
     return () => listeners.get(event).delete(fn);
   },
 };
+
+/**
+ * Sends finished PDF bytes to a file the host registered (and only to that file), which writes it
+ * atomically. `target` is a file the host described — a Save As target, a split part, a merge result.
+ */
+export async function writePdfFile(target, bytes) {
+  const result = await fetch(`${new URL(target.url).origin}/save/${target.token}`, {
+    method: 'POST', body: bytes, headers: { 'Content-Type': 'application/pdf' },
+  });
+  const outcome = await result.json().catch(() => ({ ok: false, error: `The file couldn’t be written (${result.status}).` }));
+  if (!outcome.ok) throw new Error(outcome.error);
+}

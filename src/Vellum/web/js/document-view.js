@@ -1,4 +1,4 @@
-import { bridge } from './bridge.js';
+import { bridge, writePdfFile } from './bridge.js';
 import { h, clamp, reducedMotion } from './dom.js';
 import { icon } from './icons.js';
 import { documentAssetOptions } from './pdfjs.js';
@@ -600,12 +600,8 @@ export class DocumentView extends EventTarget {
   }
 
   /** Sends finished PDF bytes to the host, which writes them to a file it registered (atomically). */
-  async writeFile(target, bytes) {
-    const result = await fetch(`${new URL(this.file.url).origin}/save/${target.token}`, {
-      method: 'POST', body: bytes, headers: { 'Content-Type': 'application/pdf' },
-    });
-    const outcome = await result.json().catch(() => ({ ok: false, error: `The file couldn’t be written (${result.status}).` }));
-    if (!outcome.ok) throw new Error(outcome.error);
+  writeFile(target, bytes) {
+    return writePdfFile(target, bytes);
   }
 
   // ---- page editing -----------------------------------------------------

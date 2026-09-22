@@ -1,5 +1,6 @@
-import { bridge } from '../bridge.js';
+import { bridge, writePdfFile } from '../bridge.js';
 import { h } from '../dom.js';
+import { icon } from '../icons.js';
 import { openMenu } from '../ui/menu.js';
 import { showDialog, toast } from '../ui/dialogs.js';
 import { loadPdfLib } from '../annotations/persist.js';
@@ -7,6 +8,7 @@ import { newId } from '../annotations/model.js';
 import { readPicture } from '../editing/objects/image.js';
 import { decodeBase64 } from '../ui/text-editor.js';
 import { PAGE_NUMBER_POSITIONS, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
+import { MINIMUM_INPUTS, countInputs, mergeDocuments, mergedFileName, mergedPageCount, moveInput, removeInput, withoutDuplicates } from './merge.js';
 
 // Page operations as the UI offers them: the DocumentView methods plus the dialogs, menus and
 // messages around them. Used by the thumbnail panel, the menus and keyboard shortcuts.
@@ -273,6 +275,38 @@ export function createPageActions({ onOpenFile }) {
       }
     },
 
+    /**
+     * Merge Documents: several PDFs chosen from disk into one new file. It needs no open document —
+     * the chosen files are only read, and the merge itself is pages/merge.js over the writer every
+     * other page operation uses.
+     */
+    async merge() {
+      const { files } = await bridge.request('openDialog', { title: 'Choose PDFs to merge' });
+      if (!files?.length) return;
+      let inputs = await readForMerge(files);
+      if (inputs.length < MINIMUM_INPUTS) {
+        // A file that couldn't be read has already said so by name.
+        if (inputs.length) toast(`Choose at least ${MINIMUM_INPUTS} PDFs to merge.`);
+        return;
+      }
+      inputs = await askWhatToMerge(inputs);
+      if (!inputs) return;
+
+      const target = await bridge.request('saveAsDialog', {
+        path: inputs[0].path, name: mergedFileName(inputs[0].name), title: 'Save the merged PDF as',
+      });
+      const file = target?.file;
+      if (!file) return;
+      try {
+        await writePdfFile(file, await mergeDocuments(inputs));
+        toast(`Merged ${plural(inputs.length, 'PDF')} into “${file.name}”`, {
+          kind: 'success', action: { label: 'Open', run: () => onOpenFile(file) },
+        });
+      } catch (err) {
+        showDialog({ title: 'Couldn’t merge the PDFs', message: err.message, iconName: 'triangle-alert' });
+      }
+    },
+
     /** Right-click menu on thumbnails. `index` is the page right-clicked (inserts go after it). */
     contextMenu(view, ids, { x, y, index }) {
       const off = !view.canEditPages;
@@ -305,6 +339,8 @@ export function createPageActions({ onOpenFile }) {
       openMenu([
         { label: 'Insert blank page', icon: 'file-plus', disabled: off, action: () => actions.insertBlank(view, after) },
         { label: 'Insert pages from file…', icon: 'files', disabled: off, action: () => actions.insertFromFile(view, after) },
+        '-',
+        { label: 'Merge PDFs…', icon: 'combine', action: () => actions.merge() },
         '-',
         { label: ids.length > 1 ? `Extract ${ids.length} pages…` : 'Extract this page…', icon: 'file-output', disabled: off, action: () => actions.extract(view, ids) },
         { label: 'Split into files…', icon: 'scissors', disabled: off, action: () => actions.split(view, panel?.selectedIds ?? []) },
@@ -491,6 +527,94 @@ async function askHowToSplit(total, selected) {
     },
   });
   return result === 'ok' ? groups : null;
+}
+
+/**
+ * Reads the chosen files and counts their pages, so a protected or damaged one is named and left out
+ * before the list is even shown. Files already listed are not read twice.
+ */
+async function readForMerge(files, existing = []) {
+  const wanted = withoutDuplicates([...existing, ...(files ?? []).map((f) => ({ ...f, id: newId() }))]);
+  const fresh = wanted.filter((f) => !existing.includes(f));
+  const kept = [];
+  for (const f of wanted) {
+    if (!fresh.includes(f)) { kept.push(f); continue; }
+    try {
+      const response = await fetch(f.url);
+      if (!response.ok) throw new Error(`“${f.name}” couldn’t be read.`);
+      const [counted] = await countInputs([{ ...f, bytes: new Uint8Array(await response.arrayBuffer()) }]);
+      kept.push(counted);
+    } catch (err) {
+      toast(err.message, { kind: 'error', timeout: 6000 });
+    }
+  }
+  return kept;
+}
+
+/** The merge list: the documents in the order they will be merged, reordered or dropped before merging. */
+async function askWhatToMerge(initial) {
+  let inputs = initial;
+  let selected = inputs[0].id;
+  const list = h('div', { class: 'merge-list', role: 'listbox', 'aria-label': 'Documents to merge' });
+  const summary = h('p', { class: 'dialog-note' });
+  let primary = null;
+
+  const button = (name, label, disabled, run) => h('button', {
+    class: 'merge-btn', type: 'button', title: label, 'aria-label': label, disabled, html: icon(name, 16),
+    onClick: (e) => { e.stopPropagation(); run(); },
+  });
+
+  const render = () => {
+    list.replaceChildren(...inputs.map((f, i) => h('div', {
+      class: `merge-item${f.id === selected ? ' selected' : ''}`, role: 'option', tabindex: '0',
+      'aria-selected': f.id === selected ? 'true' : 'false',
+      onClick: () => { selected = f.id; render(); },
+      onKeydown: (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); selected = f.id; render(); } },
+    },
+    h('span', { class: 'merge-order', text: String(i + 1) }),
+    h('span', { class: 'merge-name', text: f.name, title: f.path ?? f.name }),
+    h('span', { class: 'merge-pages', text: plural(f.pageCount, 'page') }),
+    h('span', { class: 'merge-buttons' },
+      button('chevron-up', 'Move up', i === 0, () => { inputs = moveInput(inputs, f.id, -1); selected = f.id; render(); }),
+      button('chevron-down', 'Move down', i === inputs.length - 1, () => { inputs = moveInput(inputs, f.id, 1); selected = f.id; render(); }),
+      button('x', 'Remove from the list', inputs.length <= MINIMUM_INPUTS, () => {
+        inputs = removeInput(inputs, f.id);
+        selected = inputs[Math.min(i, inputs.length - 1)]?.id ?? null;
+        render();
+      })),
+    )));
+    const enough = inputs.length >= MINIMUM_INPUTS;
+    if (primary) primary.disabled = !enough;
+    summary.textContent = enough
+      ? `${plural(inputs.length, 'document')} · ${plural(mergedPageCount(inputs), 'page')} in the merged PDF`
+      : `Merging needs at least ${MINIMUM_INPUTS} documents.`;
+  };
+
+  const add = h('button', {
+    class: 'btn small', type: 'button',
+    onClick: async () => {
+      const { files } = await bridge.request('openDialog', { title: 'Add PDFs to merge' });
+      if (!files?.length) return;
+      inputs = await readForMerge(files, inputs);
+      render();
+    },
+  }, 'Add files…');
+
+  render();
+  const result = await showDialog({
+    title: 'Merge PDFs',
+    message: 'The documents are merged in this order into one new PDF. The files you chose aren’t changed.',
+    iconName: 'combine',
+    className: 'merge-dialog',
+    content: [list, h('div', { class: 'merge-add' }, add), summary],
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Save as…', primary: true }],
+    onOpen: (dialog) => {
+      primary = dialog.querySelector('.btn.primary');
+      render();
+      return primary;
+    },
+  });
+  return result === 'ok' && inputs.length >= MINIMUM_INPUTS ? inputs : null;
 }
 
 function range(a, b) {

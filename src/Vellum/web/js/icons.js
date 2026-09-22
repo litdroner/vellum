@@ -89,6 +89,7 @@ const paths = {
  "text-align-start": "<path d=\"M21 5H3\" /><path d=\"M15 12H3\" /><path d=\"M17 19H3\" />",
  "text-align-center": "<path d=\"M21 5H3\" /><path d=\"M17 12H7\" /><path d=\"M19 19H5\" />",
  "text-align-end": "<path d=\"M21 5H3\" /><path d=\"M21 12H9\" /><path d=\"M21 19H7\" />",
+ "combine": "<path d=\"M10 18H5a3 3 0 0 1-3-3v-1\" /><path d=\"M14 2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z\" /><path d=\"m7 21 3-3-3-3\" /><rect x=\"14\" y=\"14\" width=\"8\" height=\"8\" rx=\"2\" />",
  "blend": "<circle cx=\"9\" cy=\"9\" r=\"7\" /><circle cx=\"15\" cy=\"15\" r=\"7\" />",
  "text-cursor-input": "<path d=\"M12 20h-1a2 2 0 0 1-2-2 2 2 0 0 1-2 2H6\" /><path d=\"M13 8h7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-7\" /><path d=\"M5 16H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h1\" /><path d=\"M6 4h1a2 2 0 0 1 2 2 2 2 0 0 1 2-2h1\" /><path d=\"M9 6v12\" />"
 };
