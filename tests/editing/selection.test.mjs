@@ -74,6 +74,19 @@ test('change fires once per real change, and never for a no-op', () => {
   assert.equal(changes, 3);
 });
 
+// The Edit-mode overlay redraws on this event (ui/text-editor.js #selectionChanged), so a selection set
+// from outside a click must announce the new page before anyone reads it, and a page it left behind.
+test('a change made from outside a gesture reports the new page as it fires', () => {
+  const selection = new ObjectSelection();
+  const seen = [];
+  selection.addEventListener('change', () => seen.push(selection.page));
+  selection.set(1, ['text:a']);
+  selection.set(2, ['text:b']);
+  selection.select(3, 'run:0:0');
+  selection.clear();
+  assert.deepEqual(seen, [1, 2, 3, null], 'each change is seen with the page it moved to, in order');
+});
+
 test('an incomplete identity clears rather than selecting something half-known', () => {
   const selection = new ObjectSelection();
   selection.select(1, 'run:0:0');

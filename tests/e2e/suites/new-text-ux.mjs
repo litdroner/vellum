@@ -102,5 +102,50 @@ export async function run(t) {
   await placedAt(4, await onPage(4, 0.55, 0.4), 'with the view turned as well, the box starts where page 4 was right-clicked, upright');
   await q(`${v}.rotate(-90)`);
   await rest();
+
+  area('selection moved to another page from outside a click');
+  // Both pages in view at once, so a handle left behind on the page the selection left would show.
+  await q(`${v}.zoomTo(0.3)`);
+  await rest();
+  await waitFor(`[1, 4].every((n) => ${v}.viewer.getPageView(n - 1)?.renderingState === 3)`, 10000);
+  // Nothing may redraw a page by chance: no render still to come, and the pointer off the pages (a
+  // hover redraws the page under it, selection and all).
+  const bar = await q(`(() => { const r = ${v}.container.getBoundingClientRect(); return [r.left + r.width / 2, Math.max(2, r.top - 12)]; })()`);
+  await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: bar[0], y: bar[1] });
+  await sleep(1500);
+  const marks = (n) => q(`(() => { const p = ${pageEl(n)}; return p ? p.querySelectorAll('.vl-object-handle, .vl-object-sel').length : -1; })()`);
+  // Set straight on the model, then only a fixed wait: waiting for handles would pass on a stale one.
+  const setFromOutside = async (n, id) => { await q(`${v}.objectSelection.set(${n}, ['text:' + ${JSON.stringify(id)}])`); await sleep(600); };
+  const state = async () => ({ page: await q(`${v}.objectSelection.page`), p1: await marks(1), p4: await marks(4) });
+  if (upright && turned) {
+    await setFromOutside(1, upright.id);
+    const first = await state();
+    check('page 1 shows the selected box with its handles', first.page === 1 && first.p1 > 0 && first.p4 === 0, JSON.stringify(first));
+    await setFromOutside(4, turned.id);
+    const moved = await state();
+    check('set from outside a click: page 1 keeps no handles, page 4 shows them', moved.page === 4 && moved.p1 === 0 && moved.p4 > 0, JSON.stringify(moved));
+    await shot('selection-moved-programmatically');
+    await q(`${v}.objectSelection.clear()`);
+    await sleep(300);
+    const cleared = await state();
+    check('cleared from outside a click: no handles on either page', cleared.page === null && cleared.p1 === 0 && cleared.p4 === 0, JSON.stringify(cleared));
+    // Then the same move made by a person: a click on the page-4 box, found where its handles were.
+    await select(4, turned.id);
+    const at = await q(`(() => { const hs = [...${pageEl(4)}.querySelectorAll('.vl-object-handle:not(.edge)')].map((h) => { const r = h.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }); return [hs.reduce((s, p) => s + p[0], 0) / 4, hs.reduce((s, p) => s + p[1], 0) / 4]; })()`);
+    await setFromOutside(1, upright.id);
+    const back = await state();
+    await c.mouse(at[0], at[1]);
+    await waitFor(`${v}.objectSelection.page === 4 && document.querySelector('.vl-text-input')`, 5000);
+    await sleep(300);
+    // A click on text selects it and opens the editor over it, which stands in for its handles.
+    const clicked = { ...(await state()), editing: await q(`Boolean(document.querySelector('.vl-text-input'))`) };
+    check('set back to page 1 from outside, then a click on page 4: each leaves only the page it chose marked',
+      back.page === 1 && back.p1 > 0 && back.p4 === 0 && clicked.page === 4 && clicked.p1 === 0 && clicked.editing,
+      JSON.stringify({ back, clicked }));
+    await c.key('Escape');
+    await rest();
+  } else {
+    check('both new text boxes were placed for the selection check', false, JSON.stringify({ upright: Boolean(upright), turned: Boolean(turned) }));
+  }
   check('no errors in the page', (await q(`__vellum.errors?.length ?? 0`)) === errorsBefore, JSON.stringify(await q(`__vellum.errors`)));
 }

@@ -292,6 +292,7 @@ export class TextEditor {
   #previewTimer = 0;
   #announcer;
   #warnedTagged = new Set(); // what the tagged-PDF warning has been given for: 'text', 'picture'
+  #drawnSelectionPage = null; // the page the selection was last drawn on (#selectionChanged)
 
   constructor(view, { notify }) {
     this.#view = view;
@@ -304,6 +305,7 @@ export class TextEditor {
     view.eventBus.on('scalechanging', () => requestAnimationFrame(() => this.#reposition()));
     view.eventBus.on('rotationchanging', () => requestAnimationFrame(() => this.#reposition()));
     view.addEventListener('documentchange', () => this.#documentChanged());
+    view.objectSelection.addEventListener('change', () => this.#selectionChanged(), { signal });
     const c = view.container;
     c.addEventListener('pointerdown', (e) => this.#onPointerDown(e), { signal });
     c.addEventListener('pointermove', (e) => this.#onHover(e), { signal });
@@ -1028,18 +1030,33 @@ export class TextEditor {
    */
   #changeSelection(change) {
     const selection = this.#selection;
-    const before = selection.current;
     if (!change(selection)) return false;
     const after = selection.current;
     const nudge = this.#nudge;
     if (nudge && !(after?.page === nudge.n && sameKeys(after.keys, nudge.keys))) this.#flushNudge();
-    for (const n of new Set([before?.page, after?.page].filter(Boolean))) {
-      const page = this.#pages.get(n);
-      if (page) this.#draw(page);
-    }
+    // The pages it touched are redrawn by #selectionChanged, which the change has already run.
     if (after && after.keys.length > 1) this.#announce(`${counted(after.keys.length, 'object', 'objects')} selected.`);
-    this.#syncArrangeBar();
     return true;
+  }
+
+  /**
+   * Any change to the selection — a click here, or the selection set from anywhere else — redraws
+   * the page it left, so no outline or handle stays behind there, and the page it is now on, which
+   * is read first when the editor hasn't read it yet (not while the pages are being rebuilt: each
+   * is drawn as it renders again).
+   */
+  #selectionChanged() {
+    const before = this.#drawnSelectionPage;
+    const after = this.#selection.page;
+    this.#drawnSelectionPage = after;
+    if (!this.active) return;
+    for (const n of new Set([before, after].filter(Boolean))) {
+      const page = this.#pages.get(n);
+      if (page?.data) this.#draw(page);
+      else if (n === after && !this.#view.rebuilding) this.#ensurePage(n).then((p) => { if (p?.data && this.active) this.#draw(p); });
+      else this.#view.annotLayer.decorate(n, []);
+    }
+    this.#syncArrangeBar();
   }
 
   // ---- the arrange bar ---------------------------------------------------------------------------------
