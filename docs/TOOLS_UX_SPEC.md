@@ -943,6 +943,11 @@ temporary (DESIGN_SYSTEM: blur only on floating or temporary surfaces). Phase 2 
 large document. If it's over budget, the sheet uses a 94% opaque `--glass-float` with `--blur` reduced
 for this component only, recorded in DESIGN_SYSTEM.md first.
 
+**Measured in Phase 2** (e2e `tools`, a 200-page document still repainting after a zoom, 1280 × 840 at
+DPR 1): frame intervals while opening, changing category, typing and closing are the same with the blur
+on and off (p95 10 ms on a 5 ms display refresh; no long animation frame caused by the sheet), so the blur
+stays. Contrast, not performance, made the one change: in dark mode the sheet is 94 % opaque (§21).
+
 ### 19.3 Possible design-system additions (documented first, only if Phase 2 needs them)
 
 - `--r-card: 16px` and `--r-well: 10px`, if the values repeat in several places (today they're literals).
@@ -1256,12 +1261,14 @@ The questions this spec raised, as the owner answered them after the architectur
    deadlines, bounded child processes and `selftest-timeout`; the test-safety rule in
    ARCHITECTURE_GUIDELINES.md. *Exit:* Node suite green (golden queries and the palette invariant
    included), e2e `regression` and `accessibility` green.
-2. **Phase 2: the Tools sheet.** First the WebView2 check for Ctrl+Shift+A and the §18.4 mode audit.
+2. **Phase 2: the Tools sheet** (done). First the WebView2 check for Ctrl+Shift+A and the §18.4 mode audit.
    Title-bar entry, Ctrl+Shift+A, "Modes" as the mode control's name, landing, categories, results,
    empty and unavailable states, full keyboard and screen-reader model, reduced transparency and reduced
    motion, dark mode. *Exit:* e2e `tools` suite green; blur frame-time measured; screenshots reviewed in
-   light, dark and reduced transparency.
-3. **Phase 3: recent, favorites, and the Home row.**
+   light, dark and reduced transparency (and forced colours and 560 × 400).
+3. **Phase 3: recent, favorites, and the Home row.** Recent and Favorites inside the sheet arrived with
+   Phase 2 (`catalog/store.js`, recorded from the sheet only, without tests of their own yet); Phase 3 adds
+   the Home row, recording from Home and the palette, and the store and e2e tests.
 4. **Phase 4: recommendations and the selection strip** (the scanned-page signal, Q9).
 5. **Phase 5: consolidation**, each item only on the owner's decision (Q4, Q5).
 6. **Then:** every new feature arrives with its catalog record (§28). Automate appears with the first
