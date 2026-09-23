@@ -860,6 +860,32 @@ export async function makeFixtures(outDir = FIXTURE_DIR) {
     b.doc.catalog.set(PDFName.of('Outlines'), outline);
   });
 
+  // Attachments: a one-page document carrying two embedded files — one stating its type, size and dates
+  // the way a well-made PDF does, and one stating nothing but its name, which the inspector must still
+  // list. The catalog's /AF array names both, as a PDF 2.0 file would.
+  await build('attachments', async (b) => {
+    const res = { Font: { F1: b.std(StandardFonts.Helvetica) } };
+    b.page(PageSizes.Letter, lines([18, 700, 'A document with files attached'], [11, 660, 'See the attachments.']), res);
+    const ctx = b.ctx;
+    const embed = (content, dict) => ctx.register(ctx.flateStream(new TextEncoder().encode(content), { Type: 'EmbeddedFile', ...dict }));
+    const notes = embed('Notes about the figures.\n', {
+      Subtype: PDFName.of('text#2Fplain'),
+      Params: { Size: 25, CreationDate: PDFString.of('D:20240102030405Z'), ModDate: PDFString.of('D:20240506070809Z') },
+    });
+    const data = embed('a,b\n1,2\n', {});
+    const spec = (name, stream, desc) => {
+      const dict = { Type: 'Filespec', F: PDFString.of(name), UF: PDFHexString.fromText(name), EF: { F: stream } };
+      if (desc) dict.Desc = PDFHexString.fromText(desc);
+      return ctx.register(ctx.obj(dict));
+    };
+    const first = spec('notes.txt', notes, 'Notes taken while reading');
+    const second = spec('data.csv', data, null);
+    ctx.lookup(b.doc.catalog).set(PDFName.of('Names'), ctx.obj({
+      EmbeddedFiles: { Names: [PDFString.of('notes.txt'), first, PDFString.of('data.csv'), second] },
+    }));
+    b.doc.catalog.set(PDFName.of('AF'), ctx.obj([first, second]));
+  });
+
   // Document structure: every kind of object the semantic model describes, over two pages — a heading, a
   // paragraph, a link, a note and a form field on page 1; text, a picture and a link back to page 1 (a named
   // destination) on page 2.

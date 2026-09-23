@@ -4,7 +4,7 @@ import { icon } from './icons.js';
 import { documentAssetOptions } from './pdfjs.js';
 import { AnnotationStore } from './annotations/model.js';
 import { AnnotationLayer } from './annotations/layer.js';
-import { extractAnnotations, composeDocument, countPages, loadPdfLib } from './annotations/persist.js';
+import { extractAnnotations, composeDocument, countPages, loadPdfLib, readEmbeddedFiles } from './annotations/persist.js';
 import { inspectDocument, mayBeSigned } from './editing/source.js';
 import { paintAnnotations as paintOnCanvas } from './annotations/paint.js';
 import { newId } from './annotations/model.js';
@@ -416,6 +416,8 @@ export class DocumentView extends EventTarget {
     this.annotations.initPlan(identityPlan(this.pdf.numPages));
     // The outline is read once, here, and edited as one list from then on (pages/outline.js).
     readOutline(this.pdf).then((list) => { this.annotations.initOutline(list); });
+    // The embedded files are read the same way, from the file's own bytes (attachments/attachments.js).
+    this.#readAttachments();
     this.#shownPlan = this.annotations.plan;
     this.viewer.setDocument(this.pdf);
     readFields(this.pdf).then((fields) => { this.#fields = fields; });
@@ -597,7 +599,7 @@ export class DocumentView extends EventTarget {
     const bytes = await composeDocument({
       base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources,
       annotations: this.annotations.all, edits: this.annotations.edits, forms: this.annotations.formValues,
-      outline: this.annotations.outline,
+      outline: this.annotations.outline, attachments: this.annotations.attachments,
     });
     await this.writeFile(target, bytes);
     this.annotations.markSaved();
@@ -698,7 +700,17 @@ export class DocumentView extends EventTarget {
       base: await this.#baseBytes(), plan, sources: this.sources, annotations,
       edits: this.annotations.edits, forms: this.annotations.formValues,
       outline: followOutlinePages(this.annotations.outline ?? [], current, plan),
+      attachments: this.annotations.attachments,
     });
+  }
+
+  /** Reads the document's embedded files once, for the inspector. A failure just means "none known". */
+  async #readAttachments() {
+    try {
+      this.annotations.initAttachments(this.encrypted ? [] : await readEmbeddedFiles(await this.#baseBytes()));
+    } catch {
+      this.annotations.initAttachments([]);
+    }
   }
 
   async #baseBytes() {

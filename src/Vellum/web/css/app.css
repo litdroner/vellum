@@ -669,6 +669,25 @@ kbd {
 .outline-tool:hover { background: var(--hover); color: var(--ink); }
 .outline-tool:active { background: var(--press); }
 
+/* The attachment inspector (ui/attachments.js). */
+.attach-dialog { width: min(560px, 92vw); }
+.attach-list { max-height: min(48vh, 420px); overflow: auto; margin: 4px 0 2px; }
+.attach-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 4px;
+  border-top: 1px solid var(--line);
+}
+.attach-row:first-child { border-top: 0; }
+.attach-glyph { display: grid; place-items: center; color: var(--ink-3); }
+.attach-detail { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 1px; }
+.attach-name { overflow: hidden; font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
+.attach-facts, .attach-desc { color: var(--ink-3); font-size: 12px; }
+.attach-desc { font-style: italic; }
+.attach-actions { display: flex; gap: 6px; }
+.attach-dialog .dialog-actions { justify-content: space-between; }
+
 /* ---- stage: the desk the pages lie on ------------------------------------------------------ */
 
 #stage {

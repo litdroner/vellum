@@ -5,6 +5,7 @@ import { writeFieldChanges, writeFormValues, writeNewFields } from '../forms/fie
 import { writeLinkChanges, writeNewLinks } from '../links/links.js';
 import { writePageSettings } from '../pages/stamps.js';
 import { writeOutline } from '../pages/outline.js';
+import { readAttachments, writeAttachments } from '../attachments/attachments.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -56,9 +57,11 @@ export function writeAnnotations(bytes, annotations) {
  *   forms        values of the file's own form fields, by field name (forms/fields.js)
  *   outline      the document's bookmarks as the editable list (pages/outline.js); null leaves the
  *                file's own outline exactly as it is
+ *   attachments  the document's embedded files as the editable list (attachments/attachments.js);
+ *                null leaves the file's own attachments exactly as they are
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
  */
-export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], forms = [], outline = null, clean = true }) {
+export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], forms = [], outline = null, attachments = null, clean = true }) {
   const lib = await pdfLib();
   const doc = await loadForWriting(lib, base);
   const ctx = doc.context;
@@ -97,6 +100,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     await writeLinkChanges(lib, doc, pages, links.filter((a) => a.existing));
     await writeNewLinks(lib, doc, pages, links.filter((a) => !a.existing));
     if (outline) writeOutline(lib, doc, pages, outline);
+    await writeAttachments(lib, doc, attachments);
   } catch (err) {
     throw new AnnotationSaveError(err.message);
   }
@@ -106,6 +110,13 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   if (clean && (dropped || changed)) collectGarbage(ctx, lib, dropped ?? []);
   // Uncompressed object layout keeps the /VellumId marker findable by a quick byte scan on open.
   return doc.save({ useObjectStreams: false, updateFieldAppearances: false });
+}
+
+/** The files embedded in a PDF (attachments/attachments.js), read without changing its bytes. */
+export async function readEmbeddedFiles(bytes) {
+  const lib = await pdfLib();
+  const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
+  return readAttachments(lib, doc);
 }
 
 /** Page count of a PDF that pages are about to be inserted from (fails clearly if it's protected). */

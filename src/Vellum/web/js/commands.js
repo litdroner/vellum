@@ -11,6 +11,7 @@
 
 import { FAMILY_NAMES } from './editing/objects/text-format.js';
 import { BUNDLED_FONTS } from './editing/objects/bundled-fonts.js';
+import { showAttachments } from './ui/attachments.js';
 
 export function createCommands(app, ui, actions) {
   const doc = () => (app.active?.status === 'ready' ? app.active : null);
@@ -132,6 +133,8 @@ export function createCommands(app, ui, actions) {
     'forms.addCheckbox': { group: 'Forms', icon: 'check', doc: true, label: 'Add checkbox', run: () => doc()?.annotLayer.startField('checkbox') },
     'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
     'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
+
+    'tools.attachments': { group: 'Tools', icon: 'paperclip', doc: true, label: 'Attachments…', run: () => doc() && showAttachments(doc()) },
 
     'bookmarks.show': { group: 'Bookmarks', icon: 'list-tree', doc: true, label: 'Show outline', run: () => ui.sidebar.showOutline() },
     'bookmarks.add': { group: 'Bookmarks', icon: 'plus', doc: true, label: 'Add bookmark for this page', run: () => ui.sidebar.showOutline({ add: true }) },

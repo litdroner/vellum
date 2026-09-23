@@ -1,6 +1,7 @@
 // Per-document edit store with undo/redo and "unsaved changes" tracking. It holds the annotations,
-// the page plan (see pages/plan.js), the outline (see pages/outline.js) and content edits such as
-// changed text (see editing/edits.js), so one Ctrl+Z undoes any kind of edit.
+// the page plan (see pages/plan.js), the outline (see pages/outline.js), the attachments (see
+// attachments/attachments.js) and content edits such as changed text (see editing/edits.js), so one
+// Ctrl+Z undoes any kind of edit.
 //
 // An annotation is plain data. Geometry is in PDF user space (points, y pointing up), so it's
 // independent of zoom and rotation and can be written straight into the file.
@@ -40,6 +41,7 @@ export class AnnotationStore extends EventTarget {
   #edits = new Map();
   #plan = null;
   #outline = null;
+  #attachments = null;
   #undo = [];
   #redo = [];
   #savedAt = 0;
@@ -67,6 +69,17 @@ export class AnnotationStore extends EventTarget {
   /** Changes the outline: one undo step, like any other edit. */
   applyOutline(list) {
     this.apply([{ outline: { before: this.#outline, after: list } }]);
+  }
+
+  /** The document's embedded files as the editable list (null until the document has loaded). */
+  get attachments() { return this.#attachments; }
+
+  /** Sets the attachments the document was opened with. Not undoable, not dirty. */
+  initAttachments(list) { this.#attachments = list; }
+
+  /** Attaches or removes a file: one undo step, like any other edit. */
+  applyAttachments(list) {
+    this.apply([{ attachments: { before: this.#attachments, after: list } }]);
   }
 
   /** Changes the page plan, plus the annotation changes that go with it, as one undo step. */
@@ -238,6 +251,10 @@ export class AnnotationStore extends EventTarget {
         this.#outline = change.outline[side];
         continue;
       }
+      if (change.attachments) {
+        this.#attachments = change.attachments[side];
+        continue;
+      }
       if (change.edit) {
         const value = change.edit[side];
         const id = (change.edit.after ?? change.edit.before).id;
@@ -257,23 +274,25 @@ export class AnnotationStore extends EventTarget {
     let plan = false;
     let edits = false;
     let outline = false;
+    let attachments = false;
     for (const c of changes) {
       if (c.plan) plan = true;
       if (c.edit) edits = true;
       if (c.outline) outline = true;
+      if (c.attachments) attachments = true;
       if (c.before) pages.add(c.before.page);
       if (c.after) pages.add(c.after.page);
     }
-    this.#emit(pages, plan, edits, outline);
+    this.#emit(pages, plan, edits, outline, attachments);
   }
 
   /**
    * detail.plan: the page list itself changed; detail.edits: page content changed. Either way the
    * document must be rebuilt. detail.outline: the bookmarks changed, which only the outline panel
-   * and the save care about.
+   * and the save care about; detail.attachments: the embedded files did.
    */
-  #emit(pages, plan = false, edits = false, outline = false) {
-    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits, outline } }));
+  #emit(pages, plan = false, edits = false, outline = false, attachments = false) {
+    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits, outline, attachments } }));
   }
 }
 

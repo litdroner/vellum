@@ -244,6 +244,24 @@ public partial class MainWindow : Window
             return Done(new { file = new { name = info.Name, data = Convert.ToBase64String(File.ReadAllBytes(info.FullName)) } });
         });
 
+        // Attach a file to the PDF: the chosen file's bytes come back in the answer itself, so the file is
+        // only read, never registered with the resource server (which would make it writable by the page).
+        // Nothing is attached here — the page holds it until the person saves the document.
+        bridge.Register("attachDialog", request =>
+        {
+            const long MaxAttachmentBytes = 32L * 1024 * 1024;
+            var dialog = new OpenFileDialog
+            {
+                Title = "Choose a file to attach",
+                Filter = "All files (*.*)|*.*",
+                InitialDirectory = LastFolder(),
+            };
+            if (dialog.ShowDialog(this) != true) return Done(new { file = (object?)null });
+            var info = new FileInfo(dialog.FileName);
+            if (info.Length > MaxAttachmentBytes) throw new InvalidDataException("it is larger than 32 MB.");
+            return Done(new { file = new { name = info.Name, data = Convert.ToBase64String(File.ReadAllBytes(info.FullName)) } });
+        });
+
         // Drag-and-drop: the page sends the dropped File objects, WebView2 gives us their real paths.
         bridge.Register("openDropped", request =>
         {
