@@ -1686,6 +1686,10 @@ kbd {
 .merge-btn:disabled { opacity: .3; cursor: default; }
 .merge-add { margin-top: 10px; }
 
+/* ---- HTML to PDF dialog (pages/actions.js askHowToPrintHtml) ------------------------------ */
+
+.html-pdf-dialog { width: min(460px, calc(100vw - 40px)); }
+
 /* ---- split dialog ------------------------------------------------------------------------ */
 
 .split-dialog { width: min(480px, calc(100vw - 40px)); }

@@ -42,6 +42,8 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load(DataFolder);
     private AppResourceServer? _server;
     private BridgeHost? _bridge;
+    /// <summary>The WebView2 environment the window's own view runs in; HTML to PDF renders in the same one.</summary>
+    private CoreWebView2Environment? _webViewEnvironment;
     private bool _pageReady;
     /// <summary>Set once the page has confirmed nothing is left unsaved (or can't answer).</summary>
     private bool _allowClose;
@@ -138,6 +140,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _webViewEnvironment = env;
         var core = Web.CoreWebView2;
         var settings = core.Settings;
         // The app provides its own context menu, zoom, shortcuts and find bar.
@@ -632,6 +635,7 @@ public partial class MainWindow : Window
         RegisterUpdateHandlers(bridge);
         RegisterOcrLanguageHandlers(bridge);
         RegisterExportHandlers(bridge);
+        RegisterHtmlToPdfHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------

@@ -98,8 +98,9 @@ export function createCommands(app, ui, actions) {
     'pages.extract': { group: 'Pages', icon: 'file-output', doc: true, label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
     // Merging needs no open document: it reads the files chosen and writes a new one.
     'pages.merge': { group: 'Pages', icon: 'combine', label: 'Merge PDFs…', run: () => pages.merge() },
-    // Nor does making a PDF out of pictures.
+    // Nor does making a PDF out of pictures, or out of a web page saved on this PC.
     'pages.imagesToPdf': { group: 'Pages', icon: 'image', label: 'Images to PDF…', run: () => pages.imagesToPdf() },
+    'pages.htmlToPdf': { group: 'Pages', icon: 'file-text', label: 'HTML to PDF…', run: () => pages.htmlToPdf() },
     'pages.split': { group: 'Pages', icon: 'scissors', doc: true, label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
     'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 

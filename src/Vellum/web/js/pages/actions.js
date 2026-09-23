@@ -420,6 +420,26 @@ export function createPageActions({ onOpenFile }) {
       }
     },
 
+    /**
+     * HTML to PDF: a local HTML file rendered and printed to a PDF. All of it is the host's
+     * (MainWindow.HtmlToPdf.cs) — the page is laid out by the WebView2 runtime Vellum already runs on,
+     * in a hidden view that can reach nothing but local files, and printed by Chromium's own
+     * print-to-PDF. Nothing of the document is read or written here; the host picks both files.
+     */
+    async htmlToPdf() {
+      const size = await askHowToPrintHtml();
+      if (!size) return;
+      try {
+        const { file } = await bridge.request('html.toPdf', { size });
+        if (!file) return;
+        toast(`Made “${file.name}” from the page`, {
+          kind: 'success', action: { label: 'Open', run: () => onOpenFile(file) },
+        });
+      } catch (err) {
+        showDialog({ title: 'Couldn’t make the PDF', message: err.message, iconName: 'triangle-alert' });
+      }
+    },
+
     /** Right-click menu on thumbnails. `index` is the page right-clicked (inserts go after it). */
     contextMenu(view, ids, { x, y, index }) {
       const off = !view.canEditPages;
@@ -784,6 +804,26 @@ async function readForImages(files, existing = []) {
     }
   }
   return kept;
+}
+
+/**
+ * The page size an HTML file is printed at, or null if the conversion was cancelled. The files
+ * themselves are chosen by the host, which is the only thing that may name a path it writes to.
+ */
+async function askHowToPrintHtml() {
+  const sizes = h('select', { class: 'field' }, ...PAGE_SIZES.filter(([id]) => id !== 'image').map(([value, text]) => h('option', { value, text })));
+  const settings = h('div', { class: 'page-settings' },
+    h('label', { class: 'page-setting wide' }, 'Page size', h('div', { class: 'page-setting-input' }, sizes)));
+  const result = await showDialog({
+    title: 'HTML to PDF',
+    message: 'Vellum renders a web page saved on this PC and prints it to a new PDF. The page is rendered offline: anything it asks for from the internet is refused, and the HTML file isn’t changed.',
+    iconName: 'file-text',
+    className: 'html-pdf-dialog',
+    content: [settings],
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Choose file…', primary: true }],
+    onOpen: (dialog) => dialog.querySelector('select'),
+  });
+  return result === 'ok' ? sizes.value : null;
 }
 
 /** The picture list: the images in the order they become pages, with the page size to give them. */
