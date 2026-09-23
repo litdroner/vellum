@@ -478,7 +478,7 @@ ui.start = new StartScreen(stage, {
   onOpenEvidence: (e) => actions.openEvidence(e),
 });
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
-ui.palette = new CommandPalette({ app, commands, bridge, onOpenRecent: (p) => actions.openRecent(p) });
+ui.palette = new CommandPalette({ app, commands, bridge, snapshot: () => snapshot(app, ui, actions), onOpenRecent: (p) => actions.openRecent(p) });
 installShortcuts(commands);
 
 // Files dropped on the page thumbnails are inserted there; anywhere else they open as tabs.

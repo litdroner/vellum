@@ -114,7 +114,9 @@ AIProvider              the interface features call (what it can do, whether it'
 
 1. Put its logic in its own module (`js/<feature>/` or `js/ui/<feature>.js`).
 2. Register its actions in `commands.js` (with `group` and `icon`, so the palette and menus pick
-   them up), and add toolbar/menu entries that call those commands.
+   them up, and `doc` / `requires` / `presentIf` for what they need, decided by `requirements.js`), and
+   add toolbar/menu entries that call those commands. A task a person would look for by name also gets
+   one record in `catalog/catalog.js` (docs/TOOLS_UX_SPEC.md §28).
 3. If it needs the host, add a `MainWindow.<Feature>.cs` partial with its bridge handlers.
 4. Styles go in `app.css` under their own section, using design tokens only.
 5. Update `docs/FEATURE_REGISTRY.md`.
@@ -133,6 +135,9 @@ files.
 PDF writing, against the app's own pdf.js build and pdf-lib. Fixtures are generated into a temp
 folder (`tests/editing/fixtures.mjs`); saved files are re-read independently (pdf-lib for structure,
 pdf.js for what's drawn). `VELLUM_TEST_PDFS="a.pdf;b.pdf"` adds real files, read only.
+`node --test "tests/catalog/*.test.mjs"` covers the command registry, `requirements.js`, the Tools
+catalog and the shared search (golden queries, the palette's exact-label promise) and which modules
+may import which; it needs no app and no PDF.
 
 **The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
 build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in
