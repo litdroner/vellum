@@ -293,6 +293,7 @@ export class TextEditor {
   #announcer;
   #warnedTagged = new Set(); // what the tagged-PDF warning has been given for: 'text', 'picture'
   #drawnSelectionPage = null; // the page the selection was last drawn on (#selectionChanged)
+  #entering = Promise.resolve(); // the last change of tool, settled once Edit mode is on or refused (enter())
 
   constructor(view, { notify }) {
     this.#view = view;
@@ -300,7 +301,7 @@ export class TextEditor {
     this.#announcer = h('div', { class: 'vl-sr-only', role: 'status', 'aria-live': 'polite' });
     view.el.append(this.#announcer);
     const { signal } = view;
-    view.annotLayer.addEventListener('toolchange', () => this.#toolChanged());
+    view.annotLayer.addEventListener('toolchange', () => { this.#entering = this.#toolChanged(); });
     view.eventBus.on('pagerendered', ({ pageNumber }) => { if (this.active) this.#showPage(pageNumber); });
     view.eventBus.on('scalechanging', () => requestAnimationFrame(() => this.#reposition()));
     view.eventBus.on('rotationchanging', () => requestAnimationFrame(() => this.#reposition()));
@@ -319,6 +320,17 @@ export class TextEditor {
   }
 
   get active() { return this.#view.annotLayer?.tool === 'edit'; }
+
+  /**
+   * Switches to Edit mode, as E does, for a command that works there (new text, a picture, a signature)
+   * and may be run from anywhere: Tools, the palette, another mode. Resolves true once Edit mode is on;
+   * false when it was refused, which says why (a protected PDF, or a signed one whose change wasn't confirmed).
+   */
+  async enter() {
+    if (!this.active) this.#view.setTool('edit');
+    await this.#entering;
+    return this.active;
+  }
 
   /** Exactly one picture is selected, and it can be replaced (the bar then offers "Replace picture…"). */
   get pictureSelected() {

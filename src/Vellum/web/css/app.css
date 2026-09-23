@@ -2083,6 +2083,346 @@ kbd {
 .palette-item mark { background: none; color: var(--accent-ink); font-weight: 700; }
 .palette-empty { padding: 26px; text-align: center; color: var(--ink-3); }
 
+/* ---- tools (ui/tools.js) -------------------------------------------------------------------- */
+
+/* Title bar: an icon and its name; icon only on narrow windows. */
+.tools-btn { gap: 6px; padding: 0 9px 0 7px; font-size: 12.5px; font-weight: 500; }
+@media (max-width: 900px) { .tools-btn { padding: 0 6px; } .tools-btn-label { display: none; } }
+
+/* A large sheet of floating glass, centred under the title bar. The scrim is a layer of its own (the
+   palette's colour, no blur): were the backdrop itself fading in, the sheet's blur couldn't see the page
+   until the fade ended. Closing fades both for --fast; ui/tools.js removes them after 200 ms. */
+.tools-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--titlebar-h) + 24px) 24px 24px;
+}
+.tools-backdrop::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--scrim) 70%, transparent);
+  animation: fade-in var(--fast) var(--ease-out);
+  transition: opacity var(--fast);
+}
+.tools-backdrop.closing { pointer-events: none; }
+.tools-backdrop.closing::before { opacity: 0; animation: none; }
+.tools-sheet {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(980px, calc(100vw - 48px));
+  height: min(700px, calc(100vh - var(--titlebar-h) - 48px));
+  border-radius: var(--r-panel);
+  background: var(--glass-float);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--float-shadow);
+  overflow: hidden;
+  animation: pop-in var(--med) var(--ease-out);
+  transition: opacity var(--fast), transform var(--fast) var(--ease-out);
+}
+.tools-backdrop.closing .tools-sheet { opacity: 0; transform: scale(.985); animation: none; }
+.tools-sheet:focus { outline: none; } /* focused only by a click on its empty space */
+/* Dark: text-heavy and usually over a white page, where 86 % glass leaves ink-3 under 4.5:1; 94 % keeps it
+   above (DESIGN_SYSTEM.md, Materials). Reduce transparency still makes it solid. */
+:root[data-theme="dark"]:not([data-glass="off"]) .tools-sheet { background: color-mix(in srgb, var(--surface) 94%, transparent); }
+
+.tools-head { padding: 14px 64px 12px 16px; border-bottom: 1px solid var(--hairline); }
+.tools-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 12px 0 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-2), inset 0 1px 2px var(--sh-1);
+  color: var(--ink-3);
+  transition: box-shadow var(--fast);
+}
+.tools-field:focus-within { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px var(--accent-soft); }
+.tools-field-icon { display: grid; }
+.tools-input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: none; color: var(--ink); font: 15px var(--font-ui); outline: none; appearance: none; }
+.tools-input::placeholder { color: var(--ink-3); }
+.tools-input::-webkit-search-cancel-button, .tools-input::-webkit-search-decoration { display: none; appearance: none; }
+.tools-close { position: absolute; top: 21px; right: 16px; width: 32px; height: 32px; min-width: 32px; padding: 0; }
+
+.tools-body { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 0; }
+
+/* The rail: Home, Favorites and Recent (once there are some), then the categories. The selected pill is
+   one element that slides to the chosen tab. */
+.tools-rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 12px 10px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--hairline);
+}
+.tools-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--pill-w, 0);
+  height: var(--pill-h, 0);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  transform: translate(var(--pill-x, 0), var(--pill-y, 0));
+  transition: transform var(--med) var(--ease-out), opacity var(--fast);
+  pointer-events: none;
+}
+.tools-sheet[data-searching] .tools-pill { opacity: .45; }
+.tools-tab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--ink-2);
+  font-weight: 500;
+  text-align: left;
+  transition: background-color var(--fast), color var(--fast);
+}
+.tools-tab:hover { background: var(--hover); color: var(--ink); }
+.tools-tab[aria-selected="true"], .tools-tab[aria-selected="true"]:hover { background: none; color: var(--accent-ink); }
+.tools-tab:focus-visible { outline-offset: -2px; }
+.tools-tab-icon { display: grid; color: var(--ink-3); transition: color var(--fast); }
+.tools-tab:hover .tools-tab-icon { color: var(--ink-2); }
+.tools-tab[aria-selected="true"] .tools-tab-icon { color: var(--accent-ink); }
+.tools-tab-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tools-tab-count { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tools-rail-sep { flex: none; height: 1px; margin: 8px 10px; background: var(--hairline); }
+
+.tools-content { position: relative; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 22px 26px 28px; }
+.tools-view { display: flex; flex-direction: column; gap: 22px; }
+.tools-enter { animation: settle-in var(--fast) var(--ease-out); }
+.tools-fade { animation: fade-in var(--fast) var(--ease-out); }
+
+.tools-head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tools-title { margin: 0; color: var(--ink); font-family: var(--font-display); font-size: 22px; font-weight: 500; line-height: 1.2; overflow-wrap: anywhere; }
+.tools-subtitle { margin: 0; color: var(--ink-3); font-size: 13px; }
+.tools-cat-head { display: flex; align-items: center; gap: 14px; }
+.tools-cat-head .tools-clear { margin-left: auto; }
+.tools-label { margin: 0; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; }
+.tools-block { display: flex; flex-direction: column; gap: 12px; }
+.tools-block-head { display: flex; align-items: center; gap: 12px; min-height: 30px; }
+.tools-note { margin-left: auto; color: var(--ink-3); font-size: 12px; }
+.tools-block-head .tools-open { margin-left: auto; }
+.tools-note + .tools-open { margin-left: 0; }
+.tools-open { display: inline-flex; align-items: center; gap: 7px; }
+.tools-open > span { display: grid; }
+.tools-empty { margin: 0; padding: 4px 10px; color: var(--ink-2); }
+
+/* Icon wells: neutral clay in rows; on tiles and headings a clay tinted with the theme's wash, the
+   glyph in the accent. Flat (no clay) when the tool can't run now. */
+.tools-well {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--ink-2);
+  background: var(--clay);
+  box-shadow: var(--clay-shadow);
+}
+.tools-well-tint {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  color: var(--accent-ink);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--tint) 40%, var(--surface-hi)), color-mix(in oklab, var(--tint) 85%, var(--surface)));
+}
+.tools-cat-head .tools-well-tint { width: 44px; height: 44px; border-radius: 13px; }
+
+/* Cards: the eight categories, and the tools that work without a document. The only cards in Tools. */
+.tools-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.tools-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.tools-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 14px 15px;
+  border: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-hi) 72%, transparent);
+  box-shadow: var(--glass-shadow);
+  color: var(--ink);
+  text-align: left;
+  transition: transform var(--med) var(--ease-out), background-color var(--med);
+}
+/* Lifting: the deeper shadow fades in (opacity), the shadow itself never animates. */
+.tools-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--float-shadow);
+  opacity: 0;
+  transition: opacity var(--med);
+  pointer-events: none;
+}
+.tools-tile:hover { transform: translateY(-2px); background-color: var(--surface-hi); }
+.tools-tile:hover::after { opacity: 1; }
+.tools-tile:active { transform: scale(.98); }
+.tools-tile-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tools-tile-name { min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.tools-tile-blurb { color: var(--ink-3); font-size: 12px; line-height: 1.45; }
+
+.tools-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tools-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--clay);
+  box-shadow: var(--clay-shadow);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: transform var(--fast) var(--ease-out), filter var(--fast);
+}
+.tools-chip:hover { filter: brightness(1.02); transform: translateY(-1px); }
+.tools-chip:active { transform: scale(.97); }
+.tools-chip-icon { display: grid; color: var(--accent-ink); }
+
+/* Rows: not cards. They sit on the sheet; hairlines only between sections. */
+.tools-section { display: flex; flex-direction: column; gap: 6px; }
+.tools-section + .tools-section { padding-top: 18px; border-top: 1px solid var(--hairline); }
+.tools-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.tools-row { display: flex; align-items: center; min-height: 52px; border-radius: 12px; transition: background-color var(--fast); }
+.tools-row:hover { background: var(--hover); }
+.tools-run {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+}
+.tools-run:focus-visible, .tools-variant:focus-visible, .tools-star:focus-visible { outline-offset: -2px; }
+.tools-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tools-row-name { color: var(--ink); font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tools-row-line { color: var(--ink-3); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tools-row-end { flex: none; display: flex; align-items: center; gap: 6px; padding-right: 8px; }
+.tools-variant {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color var(--fast), color var(--fast);
+}
+.tools-variant:hover { background: var(--accent-soft); color: var(--accent-ink); }
+.tools-star {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity var(--fast), color var(--fast), background-color var(--fast);
+}
+.tools-row:hover .tools-star, .tools-star:focus-visible, .tools-star[aria-pressed="true"] { opacity: 1; }
+.tools-star:hover { background: var(--hover); color: var(--ink-2); }
+.tools-star[aria-pressed="true"] { color: var(--accent-2); }
+.tools-star[aria-pressed="true"] svg { fill: currentColor; }
+.tools-star.pulse svg { animation: star-pulse var(--fast) var(--ease-out); }
+
+/* Can't run now: in its place, still readable, the reason where the description was. */
+:is(.tools-row, .tools-option)[data-off] .tools-row-name { color: var(--ink-2); }
+:is(.tools-row, .tools-option)[data-off] .tools-well { background: none; box-shadow: inset 0 0 0 1px var(--hairline); color: var(--ink-3); }
+.tools-variant[aria-disabled="true"], .tools-variant[aria-disabled="true"]:hover { background: none; color: var(--ink-3); }
+
+/* Search results: the palette's pattern (focus stays in the field; the active option is marked). */
+.tools-list { display: flex; flex-direction: column; gap: 14px; }
+.tools-group { display: flex; flex-direction: column; gap: 2px; }
+.tools-group > .tools-label { padding: 0 10px 6px; }
+.tools-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px 8px 10px;
+  border-radius: 12px;
+  color: var(--ink);
+  transition: background-color var(--fast);
+}
+.tools-option:not(:has(.tools-row-line)) { min-height: 44px; }
+.tools-option.active { background: var(--accent-soft); }
+.tools-option.active:not([data-off]) .tools-well { color: var(--on-accent); background: var(--clay-accent); box-shadow: var(--accent-shadow); }
+.tools-option-variant { flex: none; padding: 3px 8px; border-radius: 7px; background: var(--hover); color: var(--ink-2); font-size: 12px; font-weight: 500; }
+
+/* Narrow: the rail becomes a row of categories under the search, scrolling sideways. */
+@media (max-width: 719px) {
+  .tools-head { padding: 12px 56px 10px 12px; }
+  .tools-close { top: 19px; right: 12px; }
+  .tools-field kbd { display: none; }
+  .tools-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .tools-rail { flex-direction: row; align-items: center; gap: 4px; padding: 8px 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border-right: 0; border-bottom: 1px solid var(--hairline); }
+  .tools-rail::-webkit-scrollbar { display: none; } /* as the tab strip: the wheel scrolls it (ui/tools.js) */
+  .tools-tab { height: 32px; gap: 7px; padding: 0 11px; border-radius: 9px; }
+  .tools-tab-count { display: none; }
+  .tools-rail-sep { width: 1px; height: 18px; margin: 0 4px; }
+  .tools-pill { border-radius: 9px; }
+  .tools-content { padding: 18px 16px 22px; }
+  .tools-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* Short: the smallest margins, and everything in one column. */
+@media (max-height: 479px) {
+  .tools-backdrop { padding: calc(var(--titlebar-h) + 10px) 12px 12px; }
+  .tools-sheet { width: min(980px, calc(100vw - 24px)); height: calc(100vh - var(--titlebar-h) - 22px); }
+  .tools-head { padding-top: 8px; padding-bottom: 8px; }
+  .tools-field { height: 38px; }
+  .tools-close { top: 11px; }
+  .tools-content { padding: 14px 16px 18px; }
+  .tools-view { gap: 16px; }
+  .tools-title { font-size: 18px; }
+  .tools-cat-head .tools-well-tint { width: 36px; height: 36px; border-radius: 11px; }
+  .tools-tiles, .tools-cards { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .tools-tile { flex-direction: row; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 12px; }
+  .tools-tile-head { flex: none; width: 150px; }
+}
+@media (forced-colors: active) {
+  .tools-sheet { border: 1px solid CanvasText; }
+  .tools-pill { display: none; }
+  .tools-tab[aria-selected="true"], .tools-option.active { outline: 2px solid Highlight; outline-offset: -2px; }
+  .tools-head, .tools-rail, .tools-section + .tools-section { border-color: CanvasText; }
+  .tools-tile, .tools-chip, .tools-variant { border: 1px solid CanvasText; }
+  .tools-star[aria-pressed="true"] svg { fill: Highlight; }
+}
+
 /* ---- scrollbars ----------------------------------------------------------------------------- */
 
 ::-webkit-scrollbar { width: 12px; height: 12px; }
@@ -2101,6 +2441,8 @@ kbd {
 @keyframes rise-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes doc-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(4px) scale(.97); } }
+@keyframes settle-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes star-pulse { 50% { transform: scale(1.08); } }
 @keyframes viewbar-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 @keyframes value-pulse { 40% { color: var(--accent-ink); transform: scale(1.08); } }
 @keyframes spin { to { transform: rotate(360deg); } }

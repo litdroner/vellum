@@ -48,6 +48,12 @@ export function createCommands(app, ui, actions) {
   const objectsSelected = nudging;
   // Export… starts on the dialog's first format; these start on their own (export/model.js ids).
   const exportAs = (format) => () => actions.export.run(doc(), { format });
+  // New text, a picture or a signature is added in Edit mode: from any other mode these switch to it
+  // first, as E does, so they work wherever they are run from (the editor says why when it can't).
+  const inEditMode = (add) => async () => {
+    const editor = doc()?.textEditor;
+    if (editor && (await editor.enter())) add(editor);
+  };
 
   return {
     'file.open': { group: 'File', icon: 'folder-open', label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
@@ -169,7 +175,7 @@ export function createCommands(app, ui, actions) {
     'arrange.alignBottom': { group: 'Arrange', icon: 'align-end-horizontal', doc: true, label: 'Align bottom edges', run: () => arrange('bottom') },
     'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
     'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
-    'edit.addText': { group: 'Edit', icon: 'type', doc: true, requires: ['writable'], label: 'Add text box', run: () => doc()?.textEditor?.addText() },
+    'edit.addText': { group: 'Edit', icon: 'type', doc: true, requires: ['writable'], label: 'Add text box', run: inEditMode((editor) => editor.addText()) },
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },
@@ -189,8 +195,8 @@ export function createCommands(app, ui, actions) {
     'edit.textAlignLeft': { group: 'Edit', icon: 'text-align-start', doc: true, label: 'Align new text left', run: () => doc()?.textEditor?.formatSelected('left') },
     'edit.textAlignCenter': { group: 'Edit', icon: 'text-align-center', doc: true, label: 'Centre new text', run: () => doc()?.textEditor?.formatSelected('center') },
     'edit.textAlignRight': { group: 'Edit', icon: 'text-align-end', doc: true, label: 'Align new text right', run: () => doc()?.textEditor?.formatSelected('right') },
-    'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, requires: ['writable'], label: 'Insert picture…', run: () => doc()?.textEditor?.insertPicture() },
-    'edit.addSignature': { group: 'Edit', icon: 'pen-line', doc: true, requires: ['writable'], label: 'Add signature…', run: () => doc()?.textEditor?.addSignature() },
+    'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, requires: ['writable'], label: 'Insert picture…', run: inEditMode((editor) => editor.insertPicture()) },
+    'edit.addSignature': { group: 'Edit', icon: 'pen-line', doc: true, requires: ['writable'], label: 'Add signature…', run: inEditMode((editor) => editor.addSignature()) },
     'edit.redactSelection': { group: 'Edit', icon: 'square', doc: true, requires: ['writable', 'selection.objects'], label: 'Redact selection', run: () => doc()?.textEditor?.redactSelected() },
     'edit.replacePicture': { group: 'Edit', icon: 'image', doc: true, requires: ['writable', 'selection.picture'], label: 'Replace picture…', run: () => doc()?.textEditor?.replacePicture() },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
@@ -206,6 +212,8 @@ export function createCommands(app, ui, actions) {
     'edit.selectAll': { group: 'Edit', icon: 'text-select', doc: true, label: 'Select all text', hint: 'Ctrl+A', run: () => doc()?.selectAllText() },
 
     'app.palette': { group: 'App', icon: 'zap', palette: false, label: 'Command palette', keys: ['Ctrl+K'], global: true, run: () => actions.palette() },
+    // Tools (ui/tools.js) is modal: it never opens over a dialog, and its own keys close it again.
+    'app.tools': { group: 'App', icon: 'layout-grid', label: 'All tools…', keys: ['Ctrl+Shift+A'], global: true, when: () => ui.tools.canOpen(), run: () => actions.tools() },
     'app.settings': { group: 'App', icon: 'settings', label: 'Settings…', keys: ['Ctrl+,'], global: true, run: () => actions.settings() },
     'view.theme': { group: 'App', icon: 'moon', label: 'Switch light / dark', keys: ['Ctrl+Shift+L'], global: true, run: (e) => actions.toggleTheme(e) },
     'app.shortcuts': { group: 'App', icon: 'keyboard', label: 'Keyboard shortcuts', run: () => actions.settings('shortcuts') },

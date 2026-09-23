@@ -47,7 +47,8 @@ export class Toolbar {
       return h('button', { class: 'seg-btn', title: commandTitle(c), 'aria-label': c.label, onClick: () => c.run() },
         h('span', { html: icon(iconName, 17) }), h('span', { class: 'seg-label', text: short }));
     });
-    this.toolSeg = h('div', { class: 'seg tool-seg', role: 'group', 'aria-label': 'Tools' }, ...this.toolButtons);
+    // "Modes", not "Tools": Tools is the sheet of everything Vellum can do (ui/tools.js).
+    this.toolSeg = h('div', { class: 'seg tool-seg', role: 'group', 'aria-label': 'Modes' }, ...this.toolButtons);
     this.toolSeg.style.setProperty('--seg-count', String(TOOL_BUTTONS.length));
     this.colorBtn = h('button', { class: 'tb-btn color-btn', title: 'Colour', 'aria-label': 'Annotation colour', 'aria-haspopup': 'menu', onClick: () => this.#openPalette() },
       h('span', { class: 'color-dot' }));

@@ -80,7 +80,8 @@ export class CommandPalette {
 
   get isOpen() { return Boolean(this.backdrop); }
 
-  open() {
+  /** `query`: what to start searching for (Tools passes on a search that found no tool). */
+  open(query = '') {
     if (this.backdrop) {
       this.input.select();
       return;
@@ -89,7 +90,7 @@ export class CommandPalette {
     this.input = h('input', {
       class: 'palette-input', type: 'text', spellcheck: 'false', autocomplete: 'off',
       placeholder: 'What do you want to do?', 'aria-label': 'Search commands and recent files',
-      role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'palette-list',
+      role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'palette-list', value: query || null,
     });
     this.list = h('div', { class: 'palette-list', id: 'palette-list', role: 'listbox' });
     const panel = h('div', { class: 'palette', role: 'dialog', 'aria-label': 'Command palette' },

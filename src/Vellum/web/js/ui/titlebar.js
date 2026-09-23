@@ -28,6 +28,12 @@ export class TitleBar {
     });
 
     this.maxBtn = control('maximize', 'Maximize', 'window.toggleMaximize');
+    // Tools, named as the sheet it opens; the label hides on narrow windows (app.css).
+    const tools = commands['app.tools'];
+    this.toolsBtn = h('button', {
+      class: 'tb-btn small tools-btn', title: commandTitle(tools), 'aria-label': 'Tools', 'aria-haspopup': 'dialog',
+      'aria-keyshortcuts': tools.keys[0].replace(/\bCtrl\b/g, 'Control'), onClick: (e) => tools.run(e),
+    }, h('span', { html: icon('layout-grid', 16) }), h('span', { class: 'tools-btn-label', text: 'Tools' }));
     this.paletteBtn = action('app.palette', 'zap');
     this.settingsBtn = action('app.settings', 'settings');
     this.themeBtn = h('button', { class: 'tb-btn small', onClick: (e) => commands['view.theme'].run(e) });
@@ -39,7 +45,7 @@ export class TitleBar {
     root.append(
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark', html: appIconSvg(28) }), h('span', { class: 'brand-name', text: 'Vellum' })),
       this.tabHost,
-      h('div', { class: 'titlebar-actions' }, this.updateBtn, this.paletteBtn, this.settingsBtn, this.themeBtn),
+      h('div', { class: 'titlebar-actions' }, this.updateBtn, this.toolsBtn, this.paletteBtn, this.settingsBtn, this.themeBtn),
       h('div', { class: 'window-controls' },
         control('minimize', 'Minimize', 'window.minimize'), this.maxBtn, control('close', 'Close', 'window.close')));
 

@@ -21,7 +21,7 @@ import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
 import { showSettings } from './ui/settings.js';
 import { CommandPalette } from './ui/palette.js';
-import { setFocusFallback } from './ui/focus.js';
+import { modalOpen, setFocusFallback } from './ui/focus.js';
 import { markPageBoxWhenReady } from './ui/page-mark.js';
 import { showKnowledgeGraph } from './ui/knowledge-graph.js';
 import { showAttachments } from './ui/attachments.js';
@@ -412,6 +412,11 @@ const actions = {
   palette() {
     ui.palette.open();
   },
+  /** Tools. Asked for from the palette (Ctrl+Shift+A there), it takes the palette's place. */
+  tools() {
+    if (ui.palette.isOpen) ui.palette.close();
+    ui.tools.open();
+  },
   settings(section) {
     showSettings(settingsContext, typeof section === 'string' ? section : undefined);
   },
@@ -479,6 +484,38 @@ ui.start = new StartScreen(stage, {
 });
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
 ui.palette = new CommandPalette({ app, commands, bridge, snapshot: () => snapshot(app, ui, actions), onOpenRecent: (p) => actions.openRecent(p) });
+
+/** The pages selected in the thumbnails, as page numbers in order; none when nothing is selected there. */
+function selectedPages() {
+  const view = app.active;
+  const ids = new Set(ui.sidebar.thumbs?.selectedIds ?? []);
+  if (view?.status !== 'ready' || !ids.size) return [];
+  return view.shownPlan.flatMap((entry, i) => (ids.has(entry.id) ? [i + 1] : []));
+}
+
+// Tools (ui/tools.js): everything Vellum can do, by what you want to get done. It loads, with the catalog
+// and its search, the first time it opens; nothing of it at startup.
+let toolsSheet = null;
+ui.tools = {
+  /** Tools is modal: not while another modal (a dialog, Compare) is open. */
+  canOpen: () => !modalOpen(),
+  /** Opens Tools on its landing, on a category or on a search: open({ category, query }). */
+  async open(options) {
+    if (modalOpen()) return false;
+    toolsSheet ??= import('./ui/tools.js').then(({ ToolsSheet }) => new ToolsSheet({
+      app,
+      commands,
+      snapshot: () => snapshot(app, ui, actions),
+      selectedPages,
+      findInDocument: (text) => ui.findbar.open(text),
+      searchCommands: (text) => ui.palette.open(text),
+    })).catch((err) => {
+      toolsSheet = null; // try again next time
+      throw err;
+    });
+    return (await toolsSheet).open(options);
+  },
+};
 installShortcuts(commands);
 
 // Files dropped on the page thumbnails are inserted there; anywhere else they open as tabs.
@@ -569,6 +606,8 @@ ui.toolbar.onMenu = async (anchor) => {
   const snap = snapshot(app, ui, actions);
   const off = (id) => !availability(commands[id], snap).available;
   openMenu([
+    menuItem('app.tools'),
+    '-',
     menuItem('file.open'),
     ...(recent.length ? ['-', ...recent.map((e) => ({ label: e.path.slice(e.path.lastIndexOf('\\') + 1), icon: 'clock', action: () => actions.openRecent(e.path) }))] : []),
     '-',
@@ -738,3 +777,5 @@ window.__vellum.app = app;
 window.__vellum.actions = actions;
 window.__vellum.ui = ui;
 window.__vellum.setAppearance = setAppearance;
+// For the e2e suites, which swap a command's run for a spy: every surface reads run when it calls it.
+window.__vellum.commands = commands;

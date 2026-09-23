@@ -980,7 +980,10 @@ transition.
 - Every colour comes from a token. The Obsidian dark variant is derived automatically; the rules below
   are the checks.
 - **Contrast:** descriptions and reasons use `--ink-3` (at least 4.5:1 on surfaces by construction,
-  as the comment in `app.css` says). Never `--ink-4` for text a user needs to read.
+  as the comment in `app.css` says). Never `--ink-4` for text a user needs to read. *Measured in Phase 2:*
+  over a white page (pages stay white in dark mode), `--glass-float`'s 86 % left them at 4.37–4.47:1 in
+  Mist and Graphite dark, so in dark mode the sheet is 94 % opaque (DESIGN_SYSTEM.md, Materials): 4.56 to
+  5.19:1, and more over the app's background.
 - **Selection in dark mode:** `--accent-soft` alone can be too faint on smoked glass, so selected
   rail items also carry `--accent-line`. Focus always shows the 2 px `--accent-ink` outline.
 - **Clay wells in dark mode:** `--clay` over `--glass-float` must stay distinguishable. The check is at
@@ -1216,7 +1219,9 @@ The questions this spec raised, as the owner answered them after the architectur
    don't contain categories, so a later rename is a data edit.
 2. **Form:** the modal **sheet** (§6.1).
 3. **Shortcut:** **Ctrl+T is not used.** Ctrl+Shift+A is the proposed Tools shortcut, pending one check
-   before Phase 2 that WebView2 doesn't reserve it. It is free in `commands.js`.
+   before Phase 2 that WebView2 doesn't reserve it. It is free in `commands.js`. *Checked in Phase 2:*
+   WebView2's browser keys are off (`AreBrowserAcceleratorKeysEnabled = false`, `MainWindow.xaml.cs`) and
+   the window binds no keys of its own, so Ctrl+Shift+A reaches the page. It is the Tools shortcut.
 4. **Commands with arguments:** **deferred.** Tools needs none (each variant and export format is its
    own command). If the menus are consolidated later, the channel is `run(e, args)`, never
    `run(args)`: the first parameter is already the triggering event.

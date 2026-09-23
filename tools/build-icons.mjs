@@ -25,6 +25,7 @@ const names = [
   'image', 'image-plus',
   'bold', 'italic', 'text-align-start', 'text-align-center', 'text-align-end', 'blend',
   'text-cursor-input',
+  'star', 'house',
 ];
 
 const icons = {};

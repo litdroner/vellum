@@ -34,11 +34,16 @@ accents. PDF pages stay white (faithful to the file) unless the user picks dark 
 | Material | Where | Recipe (tokens) |
 |---|---|---|
 | Glass | tool bar, sidebar, recent cards | `--glass` fill, `--glass-shadow` (lit top edge, hairline, long soft shadow). No blur: it sits on the static background. |
-| Floating glass | view bar, menus, dialogs, palette, find bar, toasts, contextual bars | `--glass-float` + `backdrop-filter: var(--blur)` + `--float-shadow`. Blur only on these small or temporary surfaces. |
+| Floating glass | view bar, menus, dialogs, palette, Tools, find bar, toasts, contextual bars | `--glass-float` + `backdrop-filter: var(--blur)` + `--float-shadow`. Blur only on these small or temporary surfaces. |
 | Clay | primary buttons, brand tile, theme tiles, Open card "+" | `--clay-accent` gradient + `--accent-shadow`; neutral clay is `--clay` + `--clay-shadow` |
 | Paper | PDF pages, thumbnails, recent covers | white, `--paper-shadow` / `--page-shadow`, 4–6 px radius |
 
 **Reduce transparency** (`data-glass="off"`) makes glass solid and removes blur everywhere.
+
+**One exception, the Tools sheet in dark mode:** 94 % opaque (`color-mix(in srgb, var(--surface) 94%, transparent)`)
+instead of `--glass-float`'s 86 %. It is large and text-heavy, and in a document it lies over white pages,
+where 86 % leaves `--ink-3` descriptions under 4.5:1 (measured 4.37–4.47; 94 % gives 4.56 or more).
+Reduce transparency still makes it solid.
 
 ## Tokens
 
