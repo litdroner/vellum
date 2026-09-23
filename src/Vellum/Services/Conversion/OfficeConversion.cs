@@ -36,6 +36,9 @@ public static class OfficeFormats
     /// <summary>Every extension Vellum converts, with its dot: ".docx", ".doc", …</summary>
     public static IReadOnlyCollection<string> Extensions => ByExtension.Keys;
 
+    /// <summary>Why anything else is refused (UnsupportedFormat).</summary>
+    public const string Unsupported = "Only Word (.docx, .doc), Excel (.xlsx, .xls) and PowerPoint (.pptx, .ppt) documents can be converted to PDF.";
+
     /// <summary>The kind of document a path names, by its extension; null for anything else.</summary>
     public static OfficeFormat? Of(string path) => ByExtension.TryGetValue(Path.GetExtension(path), out var format) ? format : null;
 
@@ -227,7 +230,7 @@ public sealed class OfficeConversion
             return Refused(ConversionStatus.InvalidInput, "Vellum needs the full path of the document to convert.");
         var source = Path.GetFullPath(request.Source);
         if (OfficeFormats.Of(source) is not { } format)
-            return Refused(ConversionStatus.UnsupportedFormat, "Only Word (.docx, .doc), Excel (.xlsx, .xls) and PowerPoint (.pptx, .ppt) documents can be converted to PDF.");
+            return Refused(ConversionStatus.UnsupportedFormat, OfficeFormats.Unsupported);
         if (!File.Exists(source))
             return Refused(ConversionStatus.InvalidInput, "That document is no longer there.");
         if (CheckDestination(request.Destination, source) is { } badDestination) return badDestination;

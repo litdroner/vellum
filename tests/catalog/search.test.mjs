@@ -65,6 +65,9 @@ const GOLDEN = [
   ['text', 'edit-text'],
   ['merge into one', 'merge-pdfs'],
   ['split every 2 pages', 'split-pdf'],
+  ['word to pdf', 'word-to-pdf'], ['docx to pdf', 'word-to-pdf'], ['excel to pdf', 'excel-to-pdf'], ['xlsx 2 pdf', 'excel-to-pdf'],
+  ['powerpoint to pdf', 'powerpoint-to-pdf'], ['slides to pdf', 'powerpoint-to-pdf'],
+  ['powerpoint', 'pdf-to-powerpoint'],
 ];
 
 test('golden queries: the right tool first', () => {
@@ -86,6 +89,12 @@ test('direction: the order of the words decides between opposite conversions', (
   assert.deepEqual(ids('pictures to pdf', 2), ['images-to-pdf', 'pdf-to-images']);
   assert.deepEqual(ids('pdf to pictures', 2), ['pdf-to-images', 'images-to-pdf']);
   assert.equal(find('pictures to pdf')[0].band, BAND.PHRASE);
+  assert.deepEqual(ids('word to pdf', 2), ['word-to-pdf', 'pdf-to-word']);
+  assert.deepEqual(ids('pdf to word', 2), ['pdf-to-word', 'word-to-pdf']);
+});
+
+test('office: the three Office tools, and nothing else', () => {
+  assert.deepEqual(ids('office', 5).sort(), ['excel-to-pdf', 'powerpoint-to-pdf', 'word-to-pdf']);
 });
 
 test('"to", "into" and numbers never leave a result out', () => {
@@ -147,7 +156,7 @@ test('palette: the phrases the e2e suites type still find their command', () => 
     'Document history': 'file.history', 'HTML to PDF': 'pages.htmlToPdf', 'Images to PDF': 'pages.imagesToPdf',
     'Merge PDFs': 'pages.merge', 'Rotate page left': 'pages.rotateLeft', 'Rotate page right': 'pages.rotateRight',
     'Duplicate page': 'pages.duplicate', 'Watermark': 'pages.watermark', 'Page numbers': 'pages.numbers',
-    'Crop pages': 'pages.crop', 'Space evenly down': 'arrange.spaceDown', 'About Vellum': 'app.about',
+    'Crop pages': 'pages.crop', 'Word to PDF': 'office.wordToPdf', 'Excel to PDF': 'office.excelToPdf', 'Space evenly down': 'arrange.spaceDown', 'About Vellum': 'app.about',
   };
   for (const [query, id] of Object.entries(typed)) assert.equal(paletteTop(query), id, query);
   // And a partial label still works as it did: a word at the start of a label counts more.

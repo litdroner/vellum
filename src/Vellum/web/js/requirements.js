@@ -3,7 +3,8 @@
 //   doc: true           it needs an open, ready document: the requirement `document`, always tested first
 //   requires: [names]   more requirements, all of which must be met (REQUIREMENTS below)
 //   presentIf: name     a provider this PC must have (an engine, a local AI model); without one the
-//                       command is hidden everywhere instead of shown as unavailable. None exists yet.
+//                       command is hidden everywhere instead of shown as unavailable. The feature that
+//                       owns the provider says what is there (office/actions.js: engine.office.word…).
 // A requirement is a name, a synchronous test of a snapshot of the app's state, and the sentence that says
 // why it isn't met. It reads getters that exist, once: never the pages, never the file. Anything that needs
 // the document's contents stays the action's own refusal. When a condition needs logic, the feature
@@ -43,9 +44,9 @@ export function snapshot(app, ui, actions) {
     selectedText: Boolean(view?.getSelectedText()),
     selectedObjects: Boolean(editing && view.objectSelection.size > 0),
     selectedPicture: Boolean(editing && view.textEditor?.pictureSelected),
-    // Providers on this PC by name (engine.office, engine.signing, ai.local…), each true once it is
-    // known to be there. No provider exists yet, so nothing is present.
-    presence: Object.freeze({}),
+    // Providers on this PC by name (engine.office.word, engine.signing, ai.local…), each true once it is
+    // known to be there, as the features that own them report it.
+    presence: Object.freeze({ ...actions.office?.presence() }),
   };
 }
 

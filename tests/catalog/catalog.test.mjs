@@ -19,12 +19,12 @@ const words = (text) => tokenise(text).join(' ');
 const FORBIDDEN = [
   'encrypt', 'decrypt', 'password', 'unlock', 'permission', 'bates', 'translate', 'translation', 'ai', 'chat',
   'summarize', 'summary', 'cloud', 'share', 'upload', 'certificate', 'digital signature', 'repair', 'batch',
-  'workflow', 'template', 'word to pdf', 'excel to pdf', 'powerpoint to pdf', 'office to pdf',
+  'workflow', 'template',
 ];
 const RECORD_KEYS = ['id', 'name', 'blurb', 'category', 'section', 'command', 'variants', 'aliases', 'fits', 'scope', 'icon'];
 
-test('49 tools, each a discovery record and nothing more', () => {
-  assert.equal(TOOLS.length, 49);
+test('52 tools, each a discovery record and nothing more', () => {
+  assert.equal(TOOLS.length, 52);
   for (const t of TOOLS) {
     assert.deepEqual(Object.keys(t).sort(), [...RECORD_KEYS].sort(), `${t.id}: no requires, presentIf, preset or run on a tool`);
     assert.ok(Object.isFrozen(t), t.id);

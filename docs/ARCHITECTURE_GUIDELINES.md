@@ -135,7 +135,13 @@ ProcessRunner                the only way a provider starts a program: time limi
 - **One operation, no UI in it.** `office.toPdf` takes full paths and returns a structured result (status,
   message, provider, output, diagnostics). The bridge's `office.toPdf` adds the Open and Save dialogs; Batch
   and Flow will call the operation with their own files, never through a tool id. `office.providers` reports
-  what the PC has, starting nothing; the presence name `engine.office` comes from it.
+  what the PC has, starting nothing (off the UI thread).
+- **The tools** (`js/office/`): Word, Excel and PowerPoint to PDF, one per format, each `presentIf`
+  `engine.office.word` / `.excel` / `.powerpoint`: present when an installed provider can convert the format,
+  busy or not, read once from `office.providers` and again when a run finds no provider. A tool passes its
+  format to the bridge, which refuses before any dialog when that format can't be converted now, and refuses a
+  second request while one runs (never queued). `office-converting` tells the page the dialogs are done, so it
+  shows the running conversion with Cancel (`office.cancel`); the page says the outcome from the result alone.
 - **Files.** The source is only read: the provider converts a private copy under a plain name, in a work
   folder under the data folder that is removed afterwards (and swept at startup). The PDF must start as a PDF,
   is written beside its destination and moved into place, so a failure never touches an existing file. A
@@ -180,7 +186,9 @@ catalog and the shared search (golden queries, the palette's exact-label promise
 may import which; it needs no app and no PDF.
 `dotnet run --project tests/host` covers the host's services, the Office conversion providers among them
 (a fake registry and runner, and the real process runner's limits); `VELLUM_OFFICE_SMOKE=1` adds a real
-conversion with whatever this PC has, skipped when it has none.
+conversion with whatever this PC has, skipped when it has none. The Office tools' presence and outcomes are in
+`tests/catalog`; their wiring in the app (presence, the running dialog, Cancel, one at a time, Home, Recent
+and Favorites) is the e2e suite `office-tools`, with the host stubbed on the page: no dialog, no Office.
 
 **The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
 build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in

@@ -116,6 +116,10 @@ export function createCommands(app, ui, actions) {
     // Nor does making a PDF out of pictures, or out of a web page saved on this PC.
     'pages.imagesToPdf': { group: 'Pages', icon: 'image', label: 'Images to PDF…', run: () => pages.imagesToPdf() },
     'pages.htmlToPdf': { group: 'Pages', icon: 'file-text', label: 'HTML to PDF…', run: () => pages.htmlToPdf() },
+    // Through an Office application already on this PC (office/actions.js); each only where one can convert it.
+    'office.wordToPdf': { group: 'Pages', icon: 'file-text', label: 'Word to PDF…', presentIf: 'engine.office.word', run: () => actions.office.toPdf('word') },
+    'office.excelToPdf': { group: 'Pages', icon: 'file-text', label: 'Excel to PDF…', presentIf: 'engine.office.excel', run: () => actions.office.toPdf('excel') },
+    'office.powerpointToPdf': { group: 'Pages', icon: 'file-text', label: 'PowerPoint to PDF…', presentIf: 'engine.office.powerpoint', run: () => actions.office.toPdf('powerpoint') },
     'pages.split': { group: 'Pages', icon: 'scissors', doc: true, requires: ['writable'], label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
     'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 

@@ -102,11 +102,11 @@ export const TOOLS = Object.freeze([
 
   // Convert
   tool({ id: 'pdf-to-word', name: 'PDF to Word', blurb: 'An editable Word document (.docx)', category: 'convert', section: 'from',
-    command: 'export.word', scope: 'pages', aliases: ['docx', 'word document', 'editable document', 'convert to word'] }),
+    command: 'export.word', scope: 'pages', aliases: ['word', 'docx', 'word document', 'editable document', 'convert to word'] }),
   tool({ id: 'pdf-to-excel', name: 'PDF to Excel', blurb: 'The tables as an Excel workbook (.xlsx)', category: 'convert', section: 'from',
-    command: 'export.excel', scope: 'pages', aliases: ['xlsx', 'spreadsheet', 'tables to excel', 'extract tables to excel'] }),
+    command: 'export.excel', scope: 'pages', aliases: ['excel', 'xlsx', 'spreadsheet', 'tables to excel', 'extract tables to excel'] }),
   tool({ id: 'pdf-to-powerpoint', name: 'PDF to PowerPoint', blurb: 'A PowerPoint deck, one slide per page (.pptx)', category: 'convert', section: 'from',
-    command: 'export.powerpoint', scope: 'pages', aliases: ['pptx', 'slides', 'presentation', 'deck'] }),
+    command: 'export.powerpoint', scope: 'pages', aliases: ['powerpoint', 'pptx', 'slides', 'presentation', 'deck'] }),
   tool({ id: 'pdf-to-images', name: 'PDF to images', blurb: 'Each page as a JPEG or PNG picture', category: 'convert', section: 'from',
     command: 'export.images', scope: 'pages', aliases: ['pdf to jpg', 'pdf to png', 'pdf to pictures', 'pictures', 'save page as image'] }),
   tool({ id: 'pdf-to-markdown', name: 'PDF to Markdown', blurb: 'The text and tables as Markdown (.md)', category: 'convert', section: 'from',
@@ -115,6 +115,12 @@ export const TOOLS = Object.freeze([
     command: 'pages.imagesToPdf', scope: 'files', aliases: ['pictures to pdf', 'photos to pdf', 'jpg to pdf', 'png to pdf'] }),
   tool({ id: 'html-to-pdf', name: 'HTML to PDF', blurb: 'A web page saved on this PC, as a PDF', category: 'convert', section: 'to',
     command: 'pages.htmlToPdf', scope: 'files', aliases: ['web page to pdf', 'html file', 'webpage', 'website to pdf'] }),
+  tool({ id: 'word-to-pdf', name: 'Word to PDF', blurb: 'A Word document (.docx, .doc) as a PDF, converted on this PC', category: 'convert', section: 'to',
+    command: 'office.wordToPdf', scope: 'files', aliases: ['docx to pdf', 'doc to pdf', 'word document to pdf', 'office to pdf'] }),
+  tool({ id: 'excel-to-pdf', name: 'Excel to PDF', blurb: 'An Excel workbook (.xlsx, .xls) as a PDF, converted on this PC', category: 'convert', section: 'to',
+    command: 'office.excelToPdf', scope: 'files', aliases: ['xlsx to pdf', 'xls to pdf', 'spreadsheet to pdf', 'workbook to pdf', 'office to pdf'] }),
+  tool({ id: 'powerpoint-to-pdf', name: 'PowerPoint to PDF', blurb: 'A PowerPoint presentation (.pptx, .ppt) as a PDF, converted on this PC', category: 'convert', section: 'to',
+    command: 'office.powerpointToPdf', scope: 'files', aliases: ['pptx to pdf', 'ppt to pdf', 'slides to pdf', 'presentation to pdf', 'office to pdf'] }),
 
   // Fill & Sign
   tool({ id: 'fill-form', name: 'Fill in form', blurb: 'Go to the next form field to fill', category: 'sign', section: 'fill',
@@ -162,7 +168,9 @@ export const TOOLS = Object.freeze([
 export const HOME_TOOLS = Object.freeze(['merge-pdfs', 'images-to-pdf', 'compare-documents', 'html-to-pdf']);
 
 /** Aliases two tools may share: [alias, [toolId, toolId]]. Everything else is one tool's own. */
-export const SHARED_ALIASES = Object.freeze([]);
+export const SHARED_ALIASES = Object.freeze([
+  ['office to pdf', ['word-to-pdf', 'excel-to-pdf', 'powerpoint-to-pdf']],
+]);
 
 /** Every command a tool runs: its own, then its variants'. */
 export const toolCommands = (t) => [...new Set([t.command, ...(t.variants ?? []).map((v) => v.command)])];

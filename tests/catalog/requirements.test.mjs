@@ -10,6 +10,7 @@ import { webModule } from '../editing/harness.mjs';
 const { REQUIREMENTS, availability, snapshot } = await webModule('requirements.js');
 const { NO_FORM_FIELDS } = await webModule('forms/fields.js');
 const { createCommands } = await webModule('commands.js');
+const { presenceFrom, describeOutcome } = await webModule('office/formats.js');
 
 const commands = createCommands({}, {}, {});
 const PROTECTED = 'This PDF is protected (encrypted). Vellum opens it with the right password but can’t rewrite it, so its text can’t be edited.';
@@ -90,11 +91,46 @@ test('selections: objects and one picture count only in Edit mode', () => {
   assert.equal(REQUIREMENTS['selection.text'].met(snap(STATES.ready)), false);
 });
 
-test('presence hides a command everywhere; nothing is present yet', () => {
+test('presence hides a command everywhere; only what a feature reports is present', () => {
   const ai = { label: 'Summarize…', doc: true, presentIf: 'ai.local', run() {} };
   assert.deepEqual(availability(ai, snap(STATES.ready)), { present: false, available: false, reason: null, unmet: null });
   assert.equal(availability(ai, { ...snap(STATES.ready), presence: { 'ai.local': true } }).available, true);
   assert.deepEqual(Object.keys(snap(STATES.ready).presence), []);
+});
+
+// office.providers as the host sends it (MainWindow.OfficeConversion.cs), one answer per format.
+const report = (word, excel, powerpoint) => ({
+  providers: [],
+  formats: [['word', word], ['excel', excel], ['powerpoint', powerpoint]].map(([format, status]) => ({ format, status })),
+});
+const OFFICE = ['office.wordToPdf', 'office.excelToPdf', 'office.powerpointToPdf'];
+
+test('Office tools: present where a provider can convert the format, busy or not; needing no document', () => {
+  const withOffice = (r, active = null) => snapshot({ active }, {}, { ...actions, office: { presence: () => presenceFrom(r) } });
+  const shown = (r, active) => OFFICE.filter((id) => availability(commands[id], withOffice(r, active)).present);
+  // Before office.providers has answered, and on a PC with nothing that converts: none of them.
+  assert.deepEqual(OFFICE.filter((id) => availability(commands[id], snap(null)).present), []);
+  assert.deepEqual(shown(report('noProvider', 'noProvider', 'noProvider')), []);
+  // Office without PowerPoint: that one isn't a tool here. PowerPoint open: still one, its reason said when run.
+  assert.deepEqual(shown(report('ready', 'ready', 'notSupported')), OFFICE.slice(0, 2));
+  assert.deepEqual(shown(report('ready', 'ready', 'unavailable')), OFFICE);
+  // They convert files, so they run with or without a document open.
+  for (const id of OFFICE) assert.equal(availability(commands[id], withOffice(report('ready', 'ready', 'ready'))).available, true, id);
+  // A report that can't be read, or names something else, makes nothing present.
+  for (const bad of [null, {}, { formats: 'x' }, { formats: [{ format: 'visio', status: 'ready' }] }]) assert.deepEqual(presenceFrom(bad), {});
+});
+
+test('Office outcomes: a PDF, a quiet cancel, or the host’s reason under a title that fits', () => {
+  assert.equal(describeOutcome({ status: 'converted', message: 'Converted with Microsoft Office.' }).kind, 'converted');
+  assert.deepEqual(describeOutcome({ status: 'cancelled', message: 'The conversion was cancelled; nothing was saved.' }),
+    { kind: 'cancelled', title: null, message: 'The conversion was cancelled; nothing was saved.', recheck: false });
+  const busy = describeOutcome({ status: 'unavailable', message: 'PowerPoint is open. Close it and try again.' });
+  assert.deepEqual([busy.kind, busy.title, busy.message, busy.recheck], ['refused', 'Can’t convert right now', 'PowerPoint is open. Close it and try again.', false]);
+  assert.equal(describeOutcome({ status: 'protected', message: 'x' }).title, 'Can’t convert a protected document');
+  assert.equal(describeOutcome({ status: 'noProvider', message: 'x' }).recheck, true);
+  for (const status of ['failed', 'timedOut', 'somethingNew']) assert.equal(describeOutcome({ status, message: 'x' }).title, 'Couldn’t make the PDF', status);
+  // Never an empty dialog.
+  assert.ok(describeOutcome({ status: 'failed' }).message.length > 0);
 });
 
 test('an unknown requirement is an error, not a silent pass', () => {

@@ -602,6 +602,11 @@ any command's whole label puts that command first (tested over every command, §
 | text | Edit text (the 41 *New text in …* font commands stay in the palette) |
 | font | No tool: fonts are formatting, found in the palette |
 | convert to word / pdf 2 word | PDF to Word |
+| powerpoint | PDF to PowerPoint (the direction a PDF reader is asked for most; *PowerPoint to PDF* next) |
+| word to pdf / docx to pdf | Word to PDF (and *pdf to word* stays PDF to Word: word order decides) |
+| excel to pdf / xlsx 2 pdf | Excel to PDF |
+| powerpoint to pdf / slides to pdf | PowerPoint to PDF |
+| office | The three Office tools present on this PC, and nothing else |
 
 ### 9.7 Results view and fallback
 
@@ -765,7 +770,7 @@ These rules apply to every future feature (see also §28).
 | **Search metadata** | Part of the tool | `aliases`, `blurb` on the tool; labels and keys read from the command |
 | **Shortcut** | No, it stays on the command | `command.keys`/`hint`, shown through `prettyKeys()`. A tool never repeats a key |
 | **Requirement** (can it run now?) | Yes (new, a small vocabulary) | Named on the **command** (`doc`, `requires`); `web/js/requirements.js` evaluates them for every surface |
-| **Presence** (is its provider on this PC?) | Yes (reserved) | `presentIf` on the command; unmet hides it everywhere, the palette included. No provider exists yet |
+| **Presence** (is its provider on this PC?) | Yes | `presentIf` on the command; unmet hides it everywhere, the palette included. First used by Word, Excel and PowerPoint to PDF |
 | **Relevance / fit** (does it suit what is on screen?) | Yes (new, data) | `fits` on the tool. Suggests only (§14); never gates |
 | **Recommendation** | Yes (new, rules as data) | `catalog/recommend.js` (Phase 4) |
 | **UI entry point** | No | Toolbar, menus, palette, Tools, Home: each calls commands |
@@ -858,8 +863,9 @@ evaluator, and none of them needs to know a feature's conditions.
 - **`presentIf: name`**: the provider isn't on this PC at all (an Office engine, a signing engine, a
   local AI model). The command is **hidden everywhere**, the palette included, per Vision §3.9: "with
   no provider, AI entry points simply don't appear". Presence names are their own small namespace
-  (`engine.office`, `engine.signing`, `engine.encryption`, `ai.local`), each resolved by its provider
-  and read synchronously. None exists yet, so nothing is present and no command uses it.
+  (`engine.office.word` / `.excel` / `.powerpoint`, `engine.signing`, `engine.encryption`, `ai.local`),
+  each resolved by the feature that owns the provider and read synchronously from the snapshot. The Office
+  names are the only ones in use: `office/actions.js` reads them once from the host's `office.providers`.
 - **`fits`** (on the tool, not the command): what on screen the tool *suits*. Relevance only: it feeds
   the selection strip and recommendations (§11, §14) and never gates anything.
 
@@ -1201,7 +1207,7 @@ The Gate column below is always on the command.
 
 | Future capability | Category / section | Gate (on the command) | Notes |
 |---|---|---|---|
-| Office → PDF (Word, Excel, PowerPoint) | Convert / To PDF | `presentIf: 'engine.office'` | One tool per source format. The host's `office.providers` decides presence (ARCHITECTURE_GUIDELINES.md, *Office conversion providers*): present when an installed provider can convert the format; a provider that is only busy (PowerPoint open) leaves the tool shown with its reason. With no provider, the tool isn't shown at all |
+| Office → PDF (Word, Excel, PowerPoint) — **built** | Convert / To PDF | `presentIf: 'engine.office.word'` (`.excel`, `.powerpoint`) | One tool per source format (`word-to-pdf`, `excel-to-pdf`, `powerpoint-to-pdf`; commands `office.wordToPdf`…), sharing the alias *office to pdf*. The host's `office.providers` decides presence (ARCHITECTURE_GUIDELINES.md, *Office conversion providers*): present when an installed provider can convert the format; a provider that is only busy (PowerPoint open) leaves the tool shown, and running it says why before any dialog. With no provider, the tool isn't shown at all. Not on Home by default and not in the More menu (§29 Q5); Home shows them once run, as any tool |
 | Additional conversion providers | Convert | provider presence | Providers never add their own tools: the *format* is the tool, and the provider is chosen inside the workflow |
 | PDF → JPG/PNG as a standalone (no Export dialog) | Convert | – | Stays *PDF to images*; don't add a second tool |
 | Repair | Optimize | `document` | Joins the *Large/problematic* recommendation rule when it exists |

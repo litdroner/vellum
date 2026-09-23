@@ -36,6 +36,7 @@ import { createHealthActions } from './health/actions.js';
 import { createHistoryActions } from './history/actions.js';
 import { createExportActions } from './export/actions.js';
 import { createOptimizeActions } from './optimize/actions.js';
+import { createOfficeActions } from './office/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -448,6 +449,7 @@ actions.compare = createCompareActions({ app, pdfjsLib: libs.pdfjsLib });
 actions.health = createHealthActions({ app });
 actions.export = createExportActions({ pdfjsLib: libs.pdfjsLib });
 actions.optimize = createOptimizeActions();
+actions.office = createOfficeActions({ onOpenFile: (file) => app.open(file) });
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 actions.attachments = { show: (view) => showAttachments(view) };
 
@@ -497,7 +499,8 @@ function loadToolPrefs() {
 
 /** The Home row's tools (docs/TOOLS_UX_SPEC.md §8): the catalog's, those whose command needs nothing and can run. */
 async function homeTools() {
-  const prefs = await loadToolPrefs();
+  // Presence first: a Word to PDF run recently belongs on the row only on a PC that can still convert.
+  const [prefs] = await Promise.all([loadToolPrefs(), actions.office.probe()]);
   const snap = snapshot(app, ui, actions);
   const fits = (t) => {
     const c = commands[t.command];
@@ -545,7 +548,7 @@ ui.tools = {
   /** Opens Tools on its landing, on a category or on a search: open({ category, query }). */
   async open(options) {
     if (modalOpen()) return false;
-    toolsSheet ??= Promise.all([import('./ui/tools.js'), loadToolPrefs()]).then(([{ ToolsSheet }, prefs]) => new ToolsSheet({
+    toolsSheet ??= Promise.all([import('./ui/tools.js'), loadToolPrefs(), actions.office.probe()]).then(([{ ToolsSheet }, prefs]) => new ToolsSheet({
       app,
       commands,
       prefs,
@@ -808,6 +811,9 @@ try {
   setAppearance(); // tells the host the saved appearance (window frame, Chromium controls)
   ui.start.setName(name ?? '');
   if (updatedFrom) ui.updates.announce(version);
+  // What this PC can convert Office documents with (the host reads it off the UI thread, starting nothing),
+  // for the palette; Home and Tools wait for the same answer.
+  actions.office.probe();
   if (files.length) await openAll(files);
   else ui.start.refresh();
   if (updateFailed) ui.updates.failed(updateFailed, version);
