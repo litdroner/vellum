@@ -1,6 +1,6 @@
 // Per-document edit store with undo/redo and "unsaved changes" tracking. It holds the annotations,
-// the page plan (see pages/plan.js) and content edits such as changed text (see editing/edits.js),
-// so one Ctrl+Z undoes any kind of edit.
+// the page plan (see pages/plan.js), the outline (see pages/outline.js) and content edits such as
+// changed text (see editing/edits.js), so one Ctrl+Z undoes any kind of edit.
 //
 // An annotation is plain data. Geometry is in PDF user space (points, y pointing up), so it's
 // independent of zoom and rotation and can be written straight into the file.
@@ -39,6 +39,7 @@ export class AnnotationStore extends EventTarget {
   #items = new Map();
   #edits = new Map();
   #plan = null;
+  #outline = null;
   #undo = [];
   #redo = [];
   #savedAt = 0;
@@ -56,6 +57,17 @@ export class AnnotationStore extends EventTarget {
 
   /** Sets the starting page plan. Not undoable, not dirty. */
   initPlan(plan) { this.#plan = plan; }
+
+  /** The document's outline as the editable list (null until the document has loaded). */
+  get outline() { return this.#outline; }
+
+  /** Sets the outline the document was opened with. Not undoable, not dirty. */
+  initOutline(list) { this.#outline = list; }
+
+  /** Changes the outline: one undo step, like any other edit. */
+  applyOutline(list) {
+    this.apply([{ outline: { before: this.#outline, after: list } }]);
+  }
 
   /** Changes the page plan, plus the annotation changes that go with it, as one undo step. */
   applyPlan(plan, changes = []) {
@@ -222,6 +234,10 @@ export class AnnotationStore extends EventTarget {
         this.#plan = change.plan[side];
         continue;
       }
+      if (change.outline) {
+        this.#outline = change.outline[side];
+        continue;
+      }
       if (change.edit) {
         const value = change.edit[side];
         const id = (change.edit.after ?? change.edit.before).id;
@@ -240,21 +256,24 @@ export class AnnotationStore extends EventTarget {
     const pages = new Set();
     let plan = false;
     let edits = false;
+    let outline = false;
     for (const c of changes) {
       if (c.plan) plan = true;
       if (c.edit) edits = true;
+      if (c.outline) outline = true;
       if (c.before) pages.add(c.before.page);
       if (c.after) pages.add(c.after.page);
     }
-    this.#emit(pages, plan, edits);
+    this.#emit(pages, plan, edits, outline);
   }
 
   /**
    * detail.plan: the page list itself changed; detail.edits: page content changed. Either way the
-   * document must be rebuilt.
+   * document must be rebuilt. detail.outline: the bookmarks changed, which only the outline panel
+   * and the save care about.
    */
-  #emit(pages, plan = false, edits = false) {
-    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits } }));
+  #emit(pages, plan = false, edits = false, outline = false) {
+    this.dispatchEvent(new CustomEvent('change', { detail: { pages, plan, edits, outline } }));
   }
 }
 

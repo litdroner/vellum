@@ -4,6 +4,7 @@ import { applyObjectEdits } from '../editing/page-writer.js';
 import { writeFieldChanges, writeFormValues, writeNewFields } from '../forms/fields.js';
 import { writeLinkChanges, writeNewLinks } from '../links/links.js';
 import { writePageSettings } from '../pages/stamps.js';
+import { writeOutline } from '../pages/outline.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
 //
@@ -53,9 +54,11 @@ export function writeAnnotations(bytes, annotations) {
  *                links (type 'link') as real /Link annotations (links/links.js)
  *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/page-writer.js
  *   forms        values of the file's own form fields, by field name (forms/fields.js)
+ *   outline      the document's bookmarks as the editable list (pages/outline.js); null leaves the
+ *                file's own outline exactly as it is
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
  */
-export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], forms = [], clean = true }) {
+export async function composeDocument({ base, plan = null, sources = new Map(), annotations = [], edits = [], forms = [], outline = null, clean = true }) {
   const lib = await pdfLib();
   const doc = await loadForWriting(lib, base);
   const ctx = doc.context;
@@ -93,6 +96,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     const links = annotations.filter((a) => a.type === 'link');
     await writeLinkChanges(lib, doc, pages, links.filter((a) => a.existing));
     await writeNewLinks(lib, doc, pages, links.filter((a) => !a.existing));
+    if (outline) writeOutline(lib, doc, pages, outline);
   } catch (err) {
     throw new AnnotationSaveError(err.message);
   }

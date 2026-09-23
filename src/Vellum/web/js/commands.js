@@ -133,6 +133,9 @@ export function createCommands(app, ui, actions) {
     'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
     'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
 
+    'bookmarks.show': { group: 'Bookmarks', icon: 'list-tree', doc: true, label: 'Show outline', run: () => ui.sidebar.showOutline() },
+    'bookmarks.add': { group: 'Bookmarks', icon: 'plus', doc: true, label: 'Add bookmark for this page', run: () => ui.sidebar.showOutline({ add: true }) },
+
     'links.add': { group: 'Links', icon: 'link', doc: true, label: 'Add link', run: () => doc()?.annotLayer.startLink() },
     'links.addOverSelection': {
       group: 'Links', icon: 'link', doc: true, palette: false, label: 'Link selected text',

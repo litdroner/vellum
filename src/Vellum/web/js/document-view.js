@@ -11,6 +11,7 @@ import { newId } from './annotations/model.js';
 import {
   identityPlan, setPageSetting, rotateEntries, removeEntries, moveEntries, insertEntries, duplicateEntries, copyEntries, followPages,
 } from './pages/plan.js';
+import { followOutlinePages, readOutline } from './pages/outline.js';
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
 import { ObjectSelection } from './editing/objects/selection.js';
@@ -413,6 +414,8 @@ export class DocumentView extends EventTarget {
     }
 
     this.annotations.initPlan(identityPlan(this.pdf.numPages));
+    // The outline is read once, here, and edited as one list from then on (pages/outline.js).
+    readOutline(this.pdf).then((list) => { this.annotations.initOutline(list); });
     this.#shownPlan = this.annotations.plan;
     this.viewer.setDocument(this.pdf);
     readFields(this.pdf).then((fields) => { this.#fields = fields; });
@@ -594,6 +597,7 @@ export class DocumentView extends EventTarget {
     const bytes = await composeDocument({
       base: await this.#baseBytes(), plan: this.annotations.plan, sources: this.sources,
       annotations: this.annotations.all, edits: this.annotations.edits, forms: this.annotations.formValues,
+      outline: this.annotations.outline,
     });
     await this.writeFile(target, bytes);
     this.annotations.markSaved();
@@ -626,6 +630,7 @@ export class DocumentView extends EventTarget {
     this.annotations.applyPlan(plan, [
       ...followPages(this.annotations.all, before, plan, copies),
       ...followEdits(this.annotations.edits, plan, copies),
+      ...(this.annotations.outline?.length ? [{ outline: { before: this.annotations.outline, after: followOutlinePages(this.annotations.outline, before, plan) } }] : []),
     ]);
     return true;
   }
@@ -689,7 +694,11 @@ export class DocumentView extends EventTarget {
       const page = position.get(current[a.page - 1]?.id);
       if (page) annotations.push({ ...a, page });
     }
-    return composeDocument({ base: await this.#baseBytes(), plan, sources: this.sources, annotations, edits: this.annotations.edits, forms: this.annotations.formValues });
+    return composeDocument({
+      base: await this.#baseBytes(), plan, sources: this.sources, annotations,
+      edits: this.annotations.edits, forms: this.annotations.formValues,
+      outline: followOutlinePages(this.annotations.outline ?? [], current, plan),
+    });
   }
 
   async #baseBytes() {

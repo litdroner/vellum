@@ -649,6 +649,25 @@ kbd {
 .outline-link:active { background: var(--press); }
 .outline-link.bold { font-weight: 600; }
 .outline-link.italic { font-style: italic; }
+.outline-link-empty { color: var(--ink-3); font-style: italic; }
+.outline-bar { display: flex; padding: 8px 4px 6px; }
+.outline-bar .btn { display: inline-flex; gap: 6px; align-items: center; }
+.outline-title-input { flex: 1; min-width: 0; height: 26px; margin: 1px 0; padding: 0 8px; border-radius: 7px; font-size: 13px; }
+.outline-tools { display: none; gap: 1px; padding-inline-end: 2px; }
+.outline-row:hover .outline-tools, .outline-row:focus-within .outline-tools { display: flex; }
+.outline-tool {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.outline-tool:hover { background: var(--hover); color: var(--ink); }
+.outline-tool:active { background: var(--press); }
 
 /* ---- stage: the desk the pages lie on ------------------------------------------------------ */
 
