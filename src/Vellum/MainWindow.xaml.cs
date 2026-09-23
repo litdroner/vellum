@@ -229,19 +229,26 @@ public partial class MainWindow : Window
 
         // Replace or insert a picture: the chosen image's bytes come back in the answer itself, so the file
         // is only read, never registered with the resource server (which would make it writable by the page).
+        // With "multiple" the person may pick several (Images to PDF); `files` is then all of them, in the
+        // order the dialog gives them, and `file` is still the first, for the callers that want just one.
         bridge.Register("pictureDialog", request =>
         {
             const long MaxPictureBytes = 25 * 1024 * 1024;
             var dialog = new OpenFileDialog
             {
-                Title = OptionalString(request, "purpose") switch { "insert" => "Insert picture", "signature" => "Choose a signature picture", "watermark" => "Choose a watermark picture", _ => "Replace picture with" },
+                Title = OptionalString(request, "purpose") switch { "insert" => "Insert picture", "signature" => "Choose a signature picture", "watermark" => "Choose a watermark picture", "images" => "Choose pictures", _ => "Replace picture with" },
                 Filter = "Pictures (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg|All files (*.*)|*.*",
+                Multiselect = OptionalBool(request, "multiple") == true,
                 InitialDirectory = LastFolder(),
             };
-            if (dialog.ShowDialog(this) != true) return Done(new { file = (object?)null });
-            var info = new FileInfo(dialog.FileName);
-            if (info.Length > MaxPictureBytes) throw new InvalidDataException("it is larger than 25 MB.");
-            return Done(new { file = new { name = info.Name, data = Convert.ToBase64String(File.ReadAllBytes(info.FullName)) } });
+            if (dialog.ShowDialog(this) != true) return Done(new { file = (object?)null, files = Array.Empty<object>() });
+            var files = dialog.FileNames.Select(name =>
+            {
+                var info = new FileInfo(name);
+                if (info.Length > MaxPictureBytes) throw new InvalidDataException($"“{info.Name}” is larger than 25 MB.");
+                return new { name = info.Name, path = info.FullName, data = Convert.ToBase64String(File.ReadAllBytes(info.FullName)) };
+            }).ToArray();
+            return Done(new { file = files.FirstOrDefault(), files });
         });
 
         // Attach a file to the PDF: the chosen file's bytes come back in the answer itself, so the file is

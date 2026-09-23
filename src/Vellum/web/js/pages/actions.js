@@ -9,6 +9,7 @@ import { readPicture } from '../editing/objects/image.js';
 import { decodeBase64 } from '../ui/text-editor.js';
 import { PAGE_NUMBER_POSITIONS, PAGE_NUMBER_STYLES, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 import { MINIMUM_INPUTS, countInputs, mergeDocuments, mergedFileName, mergedPageCount, moveInput, removeInput, withoutDuplicates } from './merge.js';
+import { PAGE_SIZES, imagePdfFileName, imagesToPdf as composeImagesPdf, readImages } from './images-to-pdf.js';
 import { bookmarkSections, sectionFileNames, topLevelBookmarks } from './outline.js';
 import { CROP_SIDES as SIDES, cropProblem, isCrop, ownSides, quarterTurns, rectFromMargins, scopeIds, shownSides } from './crop.js';
 import { cropPreview } from '../ui/crop.js';
@@ -389,6 +390,36 @@ export function createPageActions({ onOpenFile }) {
       }
     },
 
+    /**
+     * Images to PDF: JPEG and PNG files chosen from disk into one new file, a page per picture. Like
+     * Merge it needs no open document — the chosen files are only read, and the pages themselves are
+     * pages/images-to-pdf.js over the writer every other page operation uses.
+     */
+    async imagesToPdf() {
+      const { files } = await bridge.request('pictureDialog', { purpose: 'images', multiple: true });
+      if (!files?.length) return;
+      // A file that isn't a picture Vellum can use has already said so by name.
+      const chosen = await readForImages(files);
+      if (!chosen.length) return;
+      const answer = await askWhatImages(chosen);
+      if (!answer) return;
+      const { inputs, size } = answer;
+
+      const target = await bridge.request('saveAsDialog', {
+        path: inputs[0].path, name: imagePdfFileName(inputs[0].name), title: 'Save the PDF as',
+      });
+      const file = target?.file;
+      if (!file) return;
+      try {
+        await writePdfFile(file, await composeImagesPdf(inputs, { size }));
+        toast(`Put ${plural(inputs.length, 'picture')} into “${file.name}”`, {
+          kind: 'success', action: { label: 'Open', run: () => onOpenFile(file) },
+        });
+      } catch (err) {
+        showDialog({ title: 'Couldn’t make the PDF', message: err.message, iconName: 'triangle-alert' });
+      }
+    },
+
     /** Right-click menu on thumbnails. `index` is the page right-clicked (inserts go after it). */
     contextMenu(view, ids, { x, y, index }) {
       const off = !view.canEditPages;
@@ -733,6 +764,92 @@ async function askWhatToMerge(initial) {
     },
   });
   return result === 'ok' && inputs.length >= MINIMUM_INPUTS ? inputs : null;
+}
+
+/**
+ * Reads the chosen pictures and measures them, so a file that isn't a PNG or JPEG Vellum can embed is
+ * named and left out before the list is even shown. Pictures already listed are not read twice.
+ */
+async function readForImages(files, existing = []) {
+  const wanted = withoutDuplicates([...existing, ...(files ?? []).map((f) => ({ ...f, id: newId() }))]);
+  const kept = [];
+  for (const f of wanted) {
+    if (existing.includes(f)) { kept.push(f); continue; }
+    const { data, ...rest } = f;
+    try {
+      const [measured] = await readImages([{ ...rest, bytes: decodeBase64(data) }]);
+      kept.push(measured);
+    } catch (err) {
+      toast(err.message, { kind: 'error', timeout: 6000 });
+    }
+  }
+  return kept;
+}
+
+/** The picture list: the images in the order they become pages, with the page size to give them. */
+async function askWhatImages(initial) {
+  let inputs = initial;
+  let selected = inputs[0].id;
+  const list = h('div', { class: 'merge-list', role: 'listbox', 'aria-label': 'Pictures to put into the PDF' });
+  const summary = h('p', { class: 'dialog-note' });
+  const sizes = h('select', { class: 'field' }, ...PAGE_SIZES.map(([value, text]) => h('option', { value, text })));
+  const settings = h('div', { class: 'page-settings' },
+    h('label', { class: 'page-setting wide' }, 'Page size', h('div', { class: 'page-setting-input' }, sizes)));
+  let primary = null;
+
+  const button = (name, label, disabled, run) => h('button', {
+    class: 'merge-btn', type: 'button', title: label, 'aria-label': label, disabled, html: icon(name, 16),
+    onClick: (e) => { e.stopPropagation(); run(); },
+  });
+
+  const render = () => {
+    list.replaceChildren(...inputs.map((f, i) => h('div', {
+      class: `merge-item${f.id === selected ? ' selected' : ''}`, role: 'option', tabindex: '0',
+      'aria-selected': f.id === selected ? 'true' : 'false',
+      onClick: () => { selected = f.id; render(); },
+      onKeydown: (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); selected = f.id; render(); } },
+    },
+    h('span', { class: 'merge-order', text: String(i + 1) }),
+    h('span', { class: 'merge-name', text: f.name, title: f.path ?? f.name }),
+    h('span', { class: 'merge-pages', text: `${f.width} × ${f.height} ${f.format === 'png' ? 'PNG' : 'JPEG'}` }),
+    h('span', { class: 'merge-buttons' },
+      button('chevron-up', 'Move up', i === 0, () => { inputs = moveInput(inputs, f.id, -1); selected = f.id; render(); }),
+      button('chevron-down', 'Move down', i === inputs.length - 1, () => { inputs = moveInput(inputs, f.id, 1); selected = f.id; render(); }),
+      button('x', 'Remove from the list', inputs.length <= 1, () => {
+        inputs = removeInput(inputs, f.id);
+        selected = inputs[Math.min(i, inputs.length - 1)]?.id ?? null;
+        render();
+      })),
+    )));
+    if (primary) primary.disabled = !inputs.length;
+    summary.textContent = `${plural(inputs.length, 'picture')} · ${plural(inputs.length, 'page')} in the new PDF`;
+  };
+
+  const add = h('button', {
+    class: 'btn small', type: 'button',
+    onClick: async () => {
+      const { files } = await bridge.request('pictureDialog', { purpose: 'images', multiple: true });
+      if (!files?.length) return;
+      inputs = await readForImages(files, inputs);
+      render();
+    },
+  }, 'Add pictures…');
+
+  render();
+  const result = await showDialog({
+    title: 'Images to PDF',
+    message: 'Each picture becomes one page, in this order. The pictures you chose aren’t changed.',
+    iconName: 'image',
+    className: 'merge-dialog images-dialog',
+    content: [list, h('div', { class: 'merge-add' }, add), settings, summary],
+    buttons: [{ id: 'cancel', label: 'Cancel' }, { id: 'ok', label: 'Save as…', primary: true }],
+    onOpen: (dialog) => {
+      primary = dialog.querySelector('.btn.primary');
+      render();
+      return primary;
+    },
+  });
+  return result === 'ok' && inputs.length ? { inputs, size: sizes.value } : null;
 }
 
 function range(a, b) {
