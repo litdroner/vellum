@@ -158,6 +158,9 @@ export const TOOLS = Object.freeze([
     command: 'tools.copyTables', scope: 'page', aliases: ['extract table', 'table to clipboard', 'tsv'] }),
 ]);
 
+/** The Home row's tools when none has been run yet, in order (docs/TOOLS_UX_SPEC.md §8): tool ids. */
+export const HOME_TOOLS = Object.freeze(['merge-pdfs', 'images-to-pdf', 'compare-documents', 'html-to-pdf']);
+
 /** Aliases two tools may share: [alias, [toolId, toolId]]. Everything else is one tool's own. */
 export const SHARED_ALIASES = Object.freeze([]);
 

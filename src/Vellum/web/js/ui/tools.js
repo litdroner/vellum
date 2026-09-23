@@ -4,7 +4,7 @@ import { availability } from '../requirements.js';
 import { comboFromEvent } from '../shortcuts.js';
 import { CATEGORIES, TOOLS, COMMAND_FIELDS, toolCommands, toolFields } from '../catalog/catalog.js';
 import { indexItems, rank } from '../catalog/search.js';
-import { createToolPrefs, FAVORITES_LIMIT } from '../catalog/store.js';
+import { FAVORITES_LIMIT } from '../catalog/store.js';
 import { modalOpen, openModal } from './focus.js';
 import { toast } from './dialogs.js';
 
@@ -28,11 +28,6 @@ const TOOL_COMMANDS = new Set(TOOLS.flatMap(toolCommands));
 let serial = 0;
 const nextId = (what) => `tools-${what}-${++serial}`;
 
-/** localStorage, or nothing where the page may not use it (favourites and recent then aren't kept). */
-function pageStorage() {
-  try { return localStorage; } catch { return null; }
-}
-
 export class ToolsSheet {
   #app;
   #commands;
@@ -40,7 +35,7 @@ export class ToolsSheet {
   #selectedPages;
   #findInDocument;
   #searchCommands;
-  #prefs = createToolPrefs(pageStorage());
+  #prefs; // recent and favourite tools (catalog/store.js), shared with Home and the palette
   #narrow = matchMedia('(max-width: 719px)');
   #toolIndex = null; // the catalog, indexed for search once
   #commandIndex = null; // commands that aren't tools, indexed per opening (they depend on the document)
@@ -58,10 +53,12 @@ export class ToolsSheet {
 
   /**
    * snapshot(): the app's state for requirements.js; selectedPages(): the page numbers selected in the
-   * thumbnails; findInDocument(text), searchCommands(text): where an empty search can go on.
+   * thumbnails; findInDocument(text), searchCommands(text): where an empty search can go on; prefs:
+   * recent and favourite tools (catalog/store.js createToolPrefs).
    */
-  constructor({ app, commands, snapshot, selectedPages, findInDocument, searchCommands }) {
+  constructor({ app, commands, prefs, snapshot, selectedPages, findInDocument, searchCommands }) {
     this.#app = app;
+    this.#prefs = prefs;
     this.#commands = commands;
     this.#snapshot = snapshot;
     this.#selectedPages = selectedPages;

@@ -476,6 +476,25 @@ ui.toolbar.onPageTone = setPageTone;
 ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages);
 ui.findbar = new FindBar(stage, app);
 ui.viewbar = new ViewBar(stage, app, commands);
+// Recent and favourite tools (catalog/store.js, kept in localStorage): one store for Tools, Home and the
+// palette. It loads with the catalog after the first paint, when Tools first needs it, or when the
+// palette runs a command; never at startup. If it can't load, those surfaces simply go without it.
+let toolPrefs = null;
+function loadToolPrefs() {
+  toolPrefs ??= new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)))
+    .then(() => import('./catalog/store.js'))
+    .then(({ createToolPrefs }) => {
+      let storage = null;
+      try { storage = localStorage; } catch { /* not kept: recent and favourites start empty each time */ }
+      return createToolPrefs(storage);
+    })
+    .catch((err) => {
+      toolPrefs = null; // try again next time
+      throw err;
+    });
+  return toolPrefs;
+}
+
 ui.start = new StartScreen(stage, {
   bridge,
   onOpenDialog: () => actions.openDialog(),
@@ -483,7 +502,11 @@ ui.start = new StartScreen(stage, {
   onOpenEvidence: (e) => actions.openEvidence(e),
 });
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
-ui.palette = new CommandPalette({ app, commands, bridge, snapshot: () => snapshot(app, ui, actions), onOpenRecent: (p) => actions.openRecent(p) });
+ui.palette = new CommandPalette({
+  app, commands, bridge, snapshot: () => snapshot(app, ui, actions), onOpenRecent: (p) => actions.openRecent(p),
+  // A command that is a tool's goes to Tools' Recent; the palette runs it exactly as before.
+  onRunCommand: (id) => { loadToolPrefs().then((prefs) => prefs.recordCommand(id), () => {}); },
+});
 
 /** The pages selected in the thumbnails, as page numbers in order; none when nothing is selected there. */
 function selectedPages() {
@@ -502,9 +525,10 @@ ui.tools = {
   /** Opens Tools on its landing, on a category or on a search: open({ category, query }). */
   async open(options) {
     if (modalOpen()) return false;
-    toolsSheet ??= import('./ui/tools.js').then(({ ToolsSheet }) => new ToolsSheet({
+    toolsSheet ??= Promise.all([import('./ui/tools.js'), loadToolPrefs()]).then(([{ ToolsSheet }, prefs]) => new ToolsSheet({
       app,
       commands,
+      prefs,
       snapshot: () => snapshot(app, ui, actions),
       selectedPages,
       findInDocument: (text) => ui.findbar.open(text),

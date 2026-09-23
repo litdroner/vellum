@@ -68,13 +68,17 @@ export class CommandPalette {
   /** Enter was pressed on a query before search had loaded: run the top result when it has. */
   #enterWhenReady = false;
 
-  /** snapshot(): the app's state for requirements.js, which says which commands to leave out. */
-  constructor({ app, commands, bridge, snapshot, onOpenRecent }) {
+  /**
+   * snapshot(): the app's state for requirements.js, which says which commands to leave out;
+   * onRunCommand(id): told each command it runs (Tools' Recent keeps the ones that are tools).
+   */
+  constructor({ app, commands, bridge, snapshot, onOpenRecent, onRunCommand }) {
     this.app = app;
     this.commands = commands;
     this.bridge = bridge;
     this.snapshot = snapshot;
     this.onOpenRecent = onOpenRecent;
+    this.onRunCommand = onRunCommand;
     this.backdrop = null;
   }
 
@@ -144,7 +148,7 @@ export class CommandPalette {
       const { present, unmet } = availability(c, snap);
       if (!present || unmet === 'document') continue;
       items.push({
-        id, group: c.group ?? 'App', icon: c.icon ?? 'command', label: c.label, keys: c.hint ?? c.keys?.[0],
+        id, command: id, group: c.group ?? 'App', icon: c.icon ?? 'command', label: c.label, keys: c.hint ?? c.keys?.[0],
         aliases: this.#search?.aliases.get(id) ?? null, run: () => c.run(),
       });
     }
@@ -224,6 +228,7 @@ export class CommandPalette {
     const item = this.#results[index];
     if (!item) return;
     this.close();
+    if (item.command) this.onRunCommand?.(item.command);
     // After the palette has handed focus back, so commands that focus something keep it.
     requestAnimationFrame(() => item.run());
   }
