@@ -38,7 +38,7 @@ export async function run(t) {
   await clickAt(entry);
   check('the Export dialog opens', await waitFor(`Boolean(document.querySelector('.export-dialog'))`, 3000));
   const formats = await q(`[...document.querySelectorAll('.export-dialog input[name="export-format"]')].map((i) => i.value).join(',')`);
-  check('with the formats the Export Center offers', formats === 'jpg,png,markdown,excel,word', formats);
+  check('with the formats the Export Center offers', formats === 'jpg,png,markdown,excel,word,powerpoint', formats);
   check('and the document’s own folder to start with', await q(`document.querySelector('.export-folder-path').textContent === ${J(folder)}`));
   const note = await q(`document.querySelector('.export-dialog .dialog-note').textContent`);
   check('the note names the files it will create', note.includes(`${base} (page 001).jpg`), note);
@@ -82,6 +82,15 @@ export async function run(t) {
   const word = read(`${base}.docx`);
   check('and it is a real .docx package', word[0] === 0x50 && word[1] === 0x4b && word.includes(Buffer.from('word/document.xml')), `${word.length} bytes`);
   check('with no picture of the page in it', !word.includes(Buffer.from('word/media/')));
+
+  area('powerpoint');
+  const deck = await exportTo('powerpoint', [1, 2]);
+  check('PowerPoint export writes one file', deck?.ok === true && deck.written.join(', ') === `${base}.pptx`, JSON.stringify(deck));
+  const pptx = read(`${base}.pptx`);
+  check('and it is a real .pptx package', pptx[0] === 0x50 && pptx[1] === 0x4b && pptx.includes(Buffer.from('ppt/presentation.xml')), `${pptx.length} bytes`);
+  check('with one slide per page', pptx.includes(Buffer.from('ppt/slides/slide1.xml')) && pptx.includes(Buffer.from('ppt/slides/slide2.xml'))
+    && !pptx.includes(Buffer.from('ppt/slides/slide3.xml')));
+  check('and no picture of the page in it', !pptx.includes(Buffer.from('ppt/media/')));
 
   area('overwriting');
   const again = await exportTo('markdown', [1, 2], 'keepBoth');

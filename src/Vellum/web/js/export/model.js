@@ -14,7 +14,7 @@
 // order, whatever was exported before. A per-page format names each file after the document and the page,
 // zero-padded to the document's page count (at least three digits) so the files sort as the pages read.
 //
-// Adding a format (PDF → PowerPoint later) means adding an entry here and a producer for it;
+// Adding a format means adding an entry here and a producer for it;
 // pages, names, targets, overwriting, progress, cancellation and the result stay exactly as they are.
 
 export const EXPORT_FORMATS = Object.freeze({
@@ -39,6 +39,11 @@ export const EXPORT_FORMATS = Object.freeze({
     id: 'word', label: 'Word document', extension: 'docx',
     mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', kind: 'binary', perPage: false,
     note: 'One editable document: the text Vellum already reads, its confident tables, page by page.',
+  }),
+  powerpoint: Object.freeze({
+    id: 'powerpoint', label: 'PowerPoint deck', extension: 'pptx',
+    mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', kind: 'binary', perPage: false,
+    note: 'One editable slide per page: the text Vellum already reads, in boxes where it sits.',
   }),
 });
 
