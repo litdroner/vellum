@@ -2191,8 +2191,9 @@ kbd {
 .health-message { margin: 4px 0 0; color: var(--ink); line-height: 1.45; }
 .health-details { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
 
-/* PDF operations that write a new file: Compress (ui/optimize.js) */
+/* PDF operations that write a new file: Compress and PDF/A (ui/optimize.js) */
 .optimize-dialog { width: min(520px, calc(100vw - 32px)); }
+.optimize-dialog .choice-note { flex-basis: 100%; color: var(--ink-3); font-size: 12px; }
 .optimize-destination { margin-top: 12px; }
 .optimize-filename { margin: 6px 0 0; color: var(--ink-3); font-size: 12px; }
 .optimize-filename strong { color: var(--ink-2); font-weight: 500; }

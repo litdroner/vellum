@@ -1,5 +1,5 @@
-// Compress PDF (optimize/compress.js) as the command offers it: the PDF operations that write a new
-// file beside the document all run through here.
+// The two PDF operations that write a new file beside the document, as the commands offer them:
+// Compress (optimize/compress.js) and PDF/A (optimize/pdfa.js).
 //
 // Both follow the Export Center exactly: the dialog asks (ui/optimize.js), the host says where a file
 // may be written (export.folder / export.targets, MainWindow.Export.cs), the bytes go to the
@@ -7,14 +7,17 @@
 // The document being worked on is read from the file on disk and is never opened for writing; an
 // operation only ever creates a new file.
 //
-// No operation writes anything it could not verify: compression reopens its own output and compares
-// it with an inventory of the source. A refusal writes nothing at all and says what it found.
+// Neither operation writes anything it could not verify: compression reopens its own output and
+// compares it with an inventory of the source, and the PDF/A conversion checks its output against the
+// profile it claims and compares it with the source too. A refusal writes nothing and says what it found.
 
 import { bridge } from '../bridge.js';
-import { loadPdfLib } from '../annotations/persist.js';
+import { composeDocument, loadPdfLib } from '../annotations/persist.js';
+import { newId } from '../annotations/model.js';
 import { askAboutExisting, exportProgress } from '../ui/export.js';
-import { askAboutCompression, showCompressionResult, showRefusal } from '../ui/optimize.js';
+import { askAboutCompression, askAboutPdfa, showCompressionResult, showPdfaResult, showRefusal } from '../ui/optimize.js';
 import { CompressError, compressDocument } from './compress.js';
+import { PDFA_PROFILE, PdfaError, convertToPdfa } from './pdfa.js';
 
 const folderOf = (path) => path.slice(0, Math.max(0, path.lastIndexOf('\\')));
 const baseName = (name) => name.replace(/\.pdf$/i, '');
@@ -114,6 +117,36 @@ export function createOptimizeActions() {
         produce: async ({ bytes, level, onProgress, signal }) =>
           compressDocument({ lib: await loadPdfLib(), bytes, level, onProgress, signal }),
         present: showCompressionResult,
+      });
+    },
+
+    /** Convert to PDF/A: the one profile Vellum can produce and check (optimize/pdfa.js). */
+    pdfa(view) {
+      return run(view, {
+        title: `Converting to ${PDFA_PROFILE.label}`,
+        suffix: ' (PDF-A)',
+        refusalTitle: `Couldn’t convert to ${PDFA_PROFILE.label}`,
+        isRefusal: (err) => err instanceof PdfaError,
+        ask: ({ outputName, folder }) => askAboutPdfa({
+          fileName: view.file.name,
+          outputName,
+          folder,
+          profile: PDFA_PROFILE,
+          pageCount: view.pdf.numPages,
+          currentPage: view.state.pageNumber,
+          dirty: view.state.dirty,
+          chooseFolder: () => chooseFolder(folder),
+        }),
+        // Fewer pages than the document has: the page writer makes that document first, from a plan of
+        // the file's own pages (annotations/persist.js), and the conversion works on its bytes.
+        produce: async ({ bytes, pages, onProgress, signal }) => {
+          const lib = await loadPdfLib();
+          const chosen = pages?.length === view.pdf.numPages
+            ? bytes
+            : await composeDocument({ base: bytes, plan: pages.map((n) => ({ id: newId(), src: 'base', index: n - 1, rotate: 0 })) });
+          return convertToPdfa({ lib, bytes: chosen, onProgress, signal });
+        },
+        present: showPdfaResult,
       });
     },
 

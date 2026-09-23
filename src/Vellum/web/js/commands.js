@@ -116,6 +116,7 @@ export function createCommands(app, ui, actions) {
     'tools.health': { group: 'Tools', icon: 'list-checks', doc: true, label: 'PDF health…', run: () => doc() && actions.health.show(doc()) },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
     'tools.compress': { group: 'Tools', icon: 'minimize-2', doc: true, label: 'Compress PDF…', run: () => doc() && actions.optimize.compress(doc()) },
+    'tools.pdfa': { group: 'Tools', icon: 'list-checks', doc: true, label: 'Convert to PDF/A…', run: () => doc() && actions.optimize.pdfa(doc()) },
 
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
     'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },

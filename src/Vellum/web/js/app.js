@@ -585,6 +585,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('tools.graph', null, { disabled: !ready }),
     menuItem('tools.health', null, { disabled: !ready }),
     menuItem('tools.compress', null, { disabled: !ready || Boolean(app.active?.encrypted) }),
+    menuItem('tools.pdfa', null, { disabled: !ready || Boolean(app.active?.encrypted) }),
     menuItem('tools.compare'),
     '-',
     menuItem('app.palette'),
