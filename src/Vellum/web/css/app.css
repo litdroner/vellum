@@ -1674,6 +1674,45 @@ kbd {
   object-position: left center;
 }
 
+/* the crop rectangle, drawn on the page itself (ui/crop.js) */
+.crop-preview { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.crop-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 22%);
+  background: #fff;
+  touch-action: none;
+  cursor: crosshair;
+}
+.crop-page { display: block; width: 100%; height: 100%; }
+.crop-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 42%);
+  cursor: move;
+}
+.crop-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: #fff;
+}
+.crop-nw, .crop-n, .crop-ne { top: -5px; }
+.crop-sw, .crop-s, .crop-se { bottom: -5px; }
+.crop-nw, .crop-w, .crop-sw { left: -5px; }
+.crop-ne, .crop-e, .crop-se { right: -5px; }
+.crop-n, .crop-s { left: calc(50% - 5px); }
+.crop-w, .crop-e { top: calc(50% - 5px); }
+.crop-nw, .crop-se { cursor: nwse-resize; }
+.crop-ne, .crop-sw { cursor: nesw-resize; }
+.crop-n, .crop-s { cursor: ns-resize; }
+.crop-w, .crop-e { cursor: ew-resize; }
+.crop-hint { margin: 0; color: var(--ink-3); font-size: 12px; }
+
 /* ---- export (ui/export.js) ------------------------------------------------------------------ */
 
 .export-dialog { width: min(480px, calc(100vw - 40px)); }

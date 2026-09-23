@@ -10,6 +10,8 @@ import { decodeBase64 } from '../ui/text-editor.js';
 import { PAGE_NUMBER_POSITIONS, PAGE_NUMBER_STYLES, WATERMARK_POSITIONS, pageNumberText, unsupportedCharacters } from './stamps.js';
 import { MINIMUM_INPUTS, countInputs, mergeDocuments, mergedFileName, mergedPageCount, moveInput, removeInput, withoutDuplicates } from './merge.js';
 import { bookmarkSections, sectionFileNames, topLevelBookmarks } from './outline.js';
+import { CROP_SIDES as SIDES, cropProblem, isCrop, ownSides, quarterTurns, rectFromMargins, scopeIds, shownSides } from './crop.js';
+import { cropPreview } from '../ui/crop.js';
 
 // Page operations as the UI offers them: the DocumentView methods plus the dialogs, menus and
 // messages around them. Used by the thumbnail panel, the menus and keyboard shortcuts.
@@ -104,29 +106,92 @@ export function createPageActions({ onOpenFile }) {
       if (view.deletePages(ids)) toast(`Deleted ${plural(ids.length, 'page')}`, { action: undo(view) });
     },
 
-    /** Crop: margins as the pages are shown, kept per page in the page's own (unrotated) sides. */
+    /**
+     * Crop: a rectangle drawn on the page as it is shown, or the same four margins typed in — one and
+     * the same crop, kept per page in the page's own (unrotated) sides, which the page writer turns
+     * into the page's /CropBox when the document is saved. Nothing is deleted or rasterized, and the
+     * file on disk is untouched until it is saved.
+     */
     async crop(view, ids) {
       if (!ids.length || !(await allowed(view))) return;
       const plan = view.annotations.plan;
       const entries = plan.filter((e) => ids.includes(e.id));
-      // Quarter turns each page is shown at (its own rotation plus the plan's), from the pages on screen.
-      const turns = new Map(await Promise.all(view.shownPlan.map(async (e, i) => [e.id, Math.round((await view.pdf.getPage(i + 1)).rotate / 90) % 4])));
-      const turnsOf = (e) => turns.get(e.id) ?? 0;
-      const first = entries[0];
-      const shown = first.crop ? SIDES.map((_, i) => first.crop[SIDES[(i - turnsOf(first) + 4) % 4]] ?? 0) : [0, 0, 0, 0];
-      const answer = await askForPageSetting({
-        title: 'Crop pages', iconName: 'minimize-2', count: ids.length, total: plan.length, removable: entries.some((e) => e.crop),
-        message: 'Trims the edges of the pages as they’re shown. Nothing is deleted: the hidden parts stay in the file.',
-        fields: SIDES.map((side, i) => ({ key: side, label: side[0].toUpperCase() + side.slice(1), type: 'number', unit: 'mm', value: toMm(shown[i]), min: 0 })),
-      });
-      if (!answer) return;
-      const targets = answer.all ? plan.map((e) => e.id) : ids;
-      const value = answer.remove ? null : (e) => {
-        const k = turnsOf(e);
-        const crop = Object.fromEntries(SIDES.map((side, j) => [side, fromMm(answer.values[SIDES[(j + k) % 4]])]));
-        return Object.values(crop).some((v) => v > 0) ? crop : null;
-      };
-      if (view.setPageSetting(targets, 'crop', value)) toast(answer.remove ? 'Crop removed' : `Cropped ${plural(targets.length, 'page')}`, { action: undo(view) });
+      // How each page is shown — its quarter turns and its size — from the pages on screen.
+      const shownPages = await Promise.all(view.shownPlan.map(async (e, i) => {
+        const page = await view.pdf.getPage(i + 1);
+        const { width, height } = page.getViewport({ scale: 1, rotation: page.rotate });
+        return [e.id, { index: i, turns: quarterTurns(page.rotate), size: { width, height }, page }];
+      }));
+      const shownById = new Map(shownPages);
+      const turnsOf = (e) => shownById.get(e.id)?.turns ?? 0;
+
+      // The page the rectangle is drawn on: the one being read, when it is one of the chosen, else the
+      // first chosen page. Its crop, as it is shown, is where the rectangle starts.
+      const current = view.shownPlan[view.state.pageNumber - 1];
+      const on = entries.find((e) => e.id === current?.id) ?? entries[0];
+      const info = shownById.get(on.id) ?? { turns: 0, size: { width: 612, height: 792 }, page: null };
+      const start = shownSides(on.crop, info.turns);
+
+      let bound = null;
+      const ui = cropPreview({ page: info.page, size: info.size, margins: start });
+      const mmOf = (margins) => Object.fromEntries(SIDES.map((side) => [side, toMm(margins[side])]));
+      ui.node.addEventListener('input', () => bound?.setValues(mmOf(ui.margins())));
+
+      const typed = (v) => Object.fromEntries(SIDES.map((side) => [side, fromMm(v[side])]));
+      const scopeCount = (v) => scopeIds(v.scope, { plan, selected: ids }).length;
+
+      try {
+        const answer = await askForPageSetting({
+          title: 'Crop pages', iconName: 'minimize-2', count: ids.length, total: plan.length, removable: entries.some((e) => e.crop),
+          message: 'Drag the rectangle to choose what to keep. Nothing is deleted: the hidden parts stay in the file.',
+          fields: [
+            { key: 'rect', type: 'custom', label: `Page ${(info.index ?? 0) + 1}`, wide: true, node: ui.node },
+            ...SIDES.map((side) => ({ key: side, label: side[0].toUpperCase() + side.slice(1), type: 'number', unit: 'mm', value: toMm(start[side]), min: 0 })),
+          ],
+          scopes: [
+            ['selected', ids.length === 1 ? 'This page' : `Selected pages (${ids.length})`],
+            ['odd', `Odd pages (${scopeIds('odd', { plan }).length})`],
+            ['even', `Even pages (${scopeIds('even', { plan }).length})`],
+            ['all', `All pages (${plan.length})`],
+          ],
+          bind: (api) => { bound = api; },
+          // The four fields and the rectangle are one crop: whichever was edited, the other follows.
+          preview: (v) => {
+            const wanted = mmOf(typed(v));
+            const drawn = mmOf(ui.margins());
+            if (SIDES.some((side) => Math.abs(wanted[side] - drawn[side]) > 0.05)) ui.set(typed(v));
+            const rect = rectFromMargins(typed(v), info.size);
+            const pages = plural(scopeCount(v), 'page');
+            return `Keeps ${toMm(rect.width)} × ${toMm(rect.height)} mm of ${pages}.`;
+          },
+          // An empty crop, or one that leaves nothing of a page it would be applied to, is refused here
+          // rather than failing when the document is saved.
+          check: (v) => {
+            const margins = typed(v);
+            const targets = scopeIds(v.scope, { plan, selected: ids });
+            if (!targets.length) return 'No pages are chosen.';
+            if (!isCrop(margins)) return 'Drag a rectangle, or enter a margin, to crop.';
+            for (const id of targets) {
+              const page = shownById.get(id);
+              const problem = page && cropProblem(margins, page.size);
+              if (problem) return `${problem.replace(/the page/, `page ${page.index + 1}`)}`;
+            }
+            return null;
+          },
+        });
+        if (!answer) return;
+        const targets = scopeIds(answer.scope, { plan, selected: ids });
+        const margins = typed(answer.values);
+        const value = answer.remove ? null : (e) => {
+          const crop = ownSides(margins, turnsOf(e));
+          return isCrop(crop) ? crop : null;
+        };
+        if (view.setPageSetting(targets, 'crop', value)) {
+          toast(answer.remove ? 'Crop removed' : `Cropped ${plural(targets.length, 'page')}`, { action: undo(view) });
+        }
+      } finally {
+        ui.close();
+      }
     },
 
     async pageNumbers(view, ids) {
@@ -373,7 +438,6 @@ export function createPageActions({ onOpenFile }) {
   return actions;
 }
 
-const SIDES = ['top', 'right', 'bottom', 'left']; // clockwise, as shown
 const toMm = (pt) => Math.round((pt * 25.4 / 72) * 10) / 10;
 const fromMm = (mm) => Math.max(0, Number(mm) || 0) * 72 / 25.4;
 const label = (position) => position.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
@@ -418,9 +482,11 @@ function picturePicker(current, choose) {
  * The dialog for crop, page numbers and watermarks: a few fields, which pages, Apply or Remove.
  * `modes` ({ value, options, label }) adds a segmented choice above the fields; a field with a `mode`
  * shows only in that mode, and values.mode says which was chosen. A 'custom' field is its own `node`.
- * Resolves { all, remove, values } or null if cancelled.
+ * `scopes` ([value, label]) replaces the two the other settings offer; `bind` is handed
+ * { values, setValues } once the dialog is open, for a field that is edited two ways at once.
+ * Resolves { all, scope, remove, values } or null if cancelled.
  */
-async function askForPageSetting({ title, message, iconName, count, total, preferAll = false, removable, modes, fields, preview, check }) {
+async function askForPageSetting({ title, message, iconName, count, total, preferAll = false, removable, modes, fields, scopes, preview, check, bind }) {
   const inputs = new Map();
   let mode = modes?.value;
   const rows = fields.map((f) => {
@@ -435,12 +501,16 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
   });
   const option = (value, text, checked) => h('label', { class: 'choice' },
     h('input', { type: 'radio', name: 'page-scope', value, checked }), h('span', { class: 'choice-label', text }));
-  const scope = h('div', { class: 'choices' },
-    option('selected', count === 1 ? 'This page' : `Selected pages (${count})`, !preferAll),
-    option('all', `All pages (${total})`, preferAll));
+  const choices = scopes ?? [
+    ['selected', count === 1 ? 'This page' : `Selected pages (${count})`],
+    ['all', `All pages (${total})`],
+  ];
+  const preferred = preferAll ? 'all' : choices[0][0];
+  const scope = h('div', { class: 'choices' }, ...choices.map(([value, text]) => option(value, text, value === preferred)));
+  const chosenScope = () => scope.querySelector('input:checked')?.value ?? preferred;
   const note = h('p', { class: 'dialog-note' });
   const settings = h('div', { class: 'page-settings' }, rows);
-  const values = () => ({ ...Object.fromEntries([...inputs].map(([k, el]) => [k, el.value])), mode, all: scope.querySelector('input:checked')?.value === 'all' });
+  const values = () => ({ ...Object.fromEntries([...inputs].map(([k, el]) => [k, el.value])), mode, scope: chosenScope(), all: chosenScope() === 'all' });
   const shown = (f) => !f.mode || f.mode === mode;
   let switcher = null;
   if (modes) {
@@ -471,6 +541,15 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
     if (primary) primary.disabled = !valid;
     note.textContent = problem ?? preview?.(v) ?? '';
   };
+  /** Writes values back into the fields, for a field two things edit at once (the crop rectangle). */
+  const setValues = (patch) => {
+    let touched = false;
+    for (const [key, value] of Object.entries(patch)) {
+      const el = inputs.get(key);
+      if (el && el.value !== String(value)) { el.value = String(value); touched = true; }
+    }
+    if (touched) update();
+  };
   settings.addEventListener('input', update);
   // The preview can depend on how many pages are being numbered, so it follows the scope too.
   scope.addEventListener('change', update);
@@ -483,13 +562,14 @@ async function askForPageSetting({ title, message, iconName, count, total, prefe
     buttons,
     onOpen: (dialog) => {
       primary = dialog.querySelector('.btn.primary');
+      bind?.({ values, setValues });
       update();
       return dialog.querySelector('.page-settings input, .page-settings select');
     },
   });
-  const all = scope.querySelector('input:checked')?.value === 'all';
-  if (result === 'remove') return { all, remove: true, values: values() };
-  return result === 'ok' && valid ? { all, remove: false, values: values() } : null;
+  const all = chosenScope() === 'all';
+  if (result === 'remove') return { all, scope: chosenScope(), remove: true, values: values() };
+  return result === 'ok' && valid ? { all, scope: chosenScope(), remove: false, values: values() } : null;
 }
 
 /** The Split dialog. Resolves with groups of page numbers, or null if cancelled. */

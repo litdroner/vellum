@@ -207,4 +207,51 @@ export async function run(t) {
   check('the roman numerals are in the file, once each', romanPage.filter((s) => s === 'Page ii of iv').length === 1, JSON.stringify(romanPage));
   check('and the stamp written before them was not doubled either', romanPage.filter((s) => s === 'Page 2 of 4').length === 1, JSON.stringify(romanPage));
   check('still no page errors', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
+
+  // 0.25: the crop drawn as a rectangle on the page itself, and applied to the even pages.
+  area('the crop rectangle');
+  const beforeCrop = await Promise.all([1, 2, 3, 4].map((n) => view(n)));
+  await q(`${V(DOC)}.goToPage(1)`);
+  await sleep(300);
+  await palette('Crop pages');
+  check('the dialog shows the page it will be drawn on', await q(`Boolean(document.querySelector('.page-setting-dialog .crop-frame canvas'))`));
+  const frame = JSON.parse(await q(`JSON.stringify(document.querySelector('.crop-frame').getBoundingClientRect())`));
+  // Drag out a rectangle over the middle of the page: a quarter in on every side.
+  const at = (fx, fy) => [Math.round(frame.left + frame.width * fx), Math.round(frame.top + frame.height * fy)];
+  await c.drag(at(0.25, 0.25), at(0.75, 0.75));
+  await sleep(350);
+  const typed = JSON.parse(await q(`JSON.stringify(['Top', 'Right', 'Bottom', 'Left']
+    .map((l) => Number(document.querySelector('.page-setting-dialog [aria-label="' + l + '"]').value)))`));
+  check('the margins beside it follow the rectangle', typed.every((mm) => mm > 5), JSON.stringify(typed));
+  check('and the dialog says what would be kept', /^Keeps [\d.]+ × [\d.]+ mm of/
+    .test(await q(`document.querySelector('.page-setting-dialog .dialog-note').textContent`)),
+  await q(`document.querySelector('.page-setting-dialog .dialog-note').textContent`));
+  await shot('crop-rectangle-dialog');
+  await q(`(() => { const el = [...document.querySelectorAll('.page-setting-dialog input[name="page-scope"]')]
+    .find((i) => i.value === 'even'); el.click(); return el.value; })()`);
+  await sleep(250);
+  await c.key('Enter');
+  await rest();
+  const afterCrop = await Promise.all([1, 2, 3, 4].map((n) => view(n)));
+  const smaller = (a, b) => b[2] - b[0] < a[2] - a[0] && b[3] - b[1] < a[3] - a[1];
+  check('the even pages are cropped', smaller(beforeCrop[1], afterCrop[1]) && smaller(beforeCrop[3], afterCrop[3]),
+    JSON.stringify(afterCrop));
+  check('and the odd pages are not', JSON.stringify([afterCrop[0], afterCrop[2]]) === JSON.stringify([beforeCrop[0], beforeCrop[2]]),
+    JSON.stringify([afterCrop[0], afterCrop[2]]));
+  const inside = (a, b) => b[0] >= a[0] && b[1] >= a[1] && b[2] <= a[2] && b[3] <= a[3];
+  check('each crop box sits inside its own page', inside(beforeCrop[1], afterCrop[1]) && inside(beforeCrop[3], afterCrop[3]));
+  // The four margins the dialog showed, in points, on a page shown upright and on one shown turned.
+  const trimmed = (i) => [afterCrop[i][0] - beforeCrop[i][0], afterCrop[i][1] - beforeCrop[i][1],
+    beforeCrop[i][2] - afterCrop[i][2], beforeCrop[i][3] - afterCrop[i][3]].map((v) => Math.round(v * 10) / 10);
+  const mm = (n) => Math.round((n * 72 / 25.4) * 10) / 10;
+  check('an upright page is trimmed by the margins the dialog showed',
+    JSON.stringify(trimmed(1)) === JSON.stringify([mm(typed[3]), mm(typed[2]), mm(typed[1]), mm(typed[0])]), JSON.stringify(trimmed(1)));
+  // Page 4 is shown turned, so what a person calls the top is trimmed off the page's own left.
+  check('a turned page is trimmed on the sides it is shown with',
+    JSON.stringify(trimmed(3)) === JSON.stringify([mm(typed[0]), mm(typed[3]), mm(typed[2]), mm(typed[1])]), JSON.stringify(trimmed(3)));
+  await q(`${V(DOC)}.focus()`);
+  await c.key('Ctrl+Z');
+  await rest();
+  check('undo takes the rectangle’s crop away', JSON.stringify(await Promise.all([1, 2, 3, 4].map((n) => view(n)))) === JSON.stringify(beforeCrop));
+  check('no page errors from the crop rectangle', (await q('__vellum.errors.length')) === 0, await q('JSON.stringify(__vellum.errors.slice(0, 3))'));
 }
