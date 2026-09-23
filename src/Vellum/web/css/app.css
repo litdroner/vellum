@@ -2191,6 +2191,21 @@ kbd {
 .health-message { margin: 4px 0 0; color: var(--ink); line-height: 1.45; }
 .health-details { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12px; line-height: 1.45; }
 
+/* PDF operations that write a new file: Compress (ui/optimize.js) */
+.optimize-dialog { width: min(520px, calc(100vw - 32px)); }
+.optimize-destination { margin-top: 12px; }
+.optimize-filename { margin: 6px 0 0; color: var(--ink-3); font-size: 12px; }
+.optimize-filename strong { color: var(--ink-2); font-weight: 500; }
+.optimize-warning { color: var(--accent-ink); }
+.optimize-steps { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; color: var(--ink); font-size: 12.5px; line-height: 1.45; }
+.optimize-steps li { display: flex; gap: 8px; align-items: baseline; }
+.optimize-steps li.none { color: var(--ink-3); }
+.optimize-step-glyph { flex: none; color: var(--accent-ink); }
+.optimize-steps li.none .optimize-step-glyph { color: var(--ink-3); }
+.optimize-step-count { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.optimize-step-note { color: var(--ink-3); }
+.optimize-reasons { margin: 4px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 12.5px; line-height: 1.45; }
+
 /* Document history (history/actions.js) */
 .history-dialog { width: min(560px, calc(100vw - 32px)); }
 

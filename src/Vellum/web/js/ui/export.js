@@ -107,8 +107,9 @@ export async function askAboutExisting(names) {
 /**
  * The progress modal. Returns { signal, progress(step), close() }: `signal` aborts when Cancel is pressed,
  * so the run stops before the next file (export/run.js).
+ * `describe` replaces the line under the title for a run whose steps aren’t files (ui/optimize.js).
  */
-export function exportProgress({ total, title = 'Exporting' }) {
+export function exportProgress({ total, title = 'Exporting', describe = null }) {
   const controller = new AbortController();
   const fill = h('div', { class: 'progress-fill' });
   const label = h('p', { class: 'dialog-message', text: `File 1 of ${total}` });
@@ -124,7 +125,8 @@ export function exportProgress({ total, title = 'Exporting' }) {
     signal: controller.signal,
     progress({ index, total: count, name }) {
       fill.style.width = `${(index / count) * 100}%`;
-      if (name) label.textContent = count === 1 ? name : `File ${index + 1} of ${count} \u2014 ${name}`;
+      if (describe) label.textContent = describe({ index, total: count, name });
+      else if (name) label.textContent = count === 1 ? name : `File ${index + 1} of ${count} \u2014 ${name}`;
     },
     close() {
       panel.remove();

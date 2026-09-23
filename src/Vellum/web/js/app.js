@@ -32,6 +32,7 @@ import { createCompareActions } from './compare/actions.js';
 import { createHealthActions } from './health/actions.js';
 import { createHistoryActions } from './history/actions.js';
 import { createExportActions } from './export/actions.js';
+import { createOptimizeActions } from './optimize/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -438,6 +439,7 @@ actions.ocr = createOcrActions({ openSettings: (section) => actions.settings(sec
 actions.compare = createCompareActions({ app, pdfjsLib: libs.pdfjsLib });
 actions.health = createHealthActions({ app });
 actions.export = createExportActions({ pdfjsLib: libs.pdfjsLib });
+actions.optimize = createOptimizeActions();
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 
 const commands = createCommands(app, ui, actions);
@@ -582,6 +584,7 @@ ui.toolbar.onMenu = async (anchor) => {
     menuItem('tools.structure', null, { disabled: !ready }),
     menuItem('tools.graph', null, { disabled: !ready }),
     menuItem('tools.health', null, { disabled: !ready }),
+    menuItem('tools.compress', null, { disabled: !ready || Boolean(app.active?.encrypted) }),
     menuItem('tools.compare'),
     '-',
     menuItem('app.palette'),

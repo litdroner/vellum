@@ -466,8 +466,10 @@ function followFormFields(doc, lib, firstOf, pages, plan, droppedPages) {
 /**
  * Deletes every object no longer reachable from the document, never following references into
  * removed pages. Without this, a "deleted" page would stay inside the file, just unlisted.
+ * Exported as `removeUnreachable` for the optimizer (optimize/compress.js), which sweeps a file
+ * nothing else has changed; it returns how many objects it deleted.
  */
-function collectGarbage(ctx, { PDFRef, PDFDict, PDFArray, PDFStream }, dropped) {
+export function collectGarbage(ctx, { PDFRef, PDFDict, PDFArray, PDFStream }, dropped = []) {
   const blocked = new Set(dropped.map((ref) => ref.toString()));
   const reachable = new Set();
   const stack = Object.values(ctx.trailerInfo).filter(Boolean);
@@ -487,10 +489,16 @@ function collectGarbage(ctx, { PDFRef, PDFDict, PDFArray, PDFStream }, dropped) 
       stack.push(obj.dict);
     }
   }
+  let removed = 0;
   for (const [ref] of ctx.enumerateIndirectObjects()) {
-    if (!reachable.has(ref.toString())) ctx.delete(ref);
+    if (reachable.has(ref.toString())) continue;
+    ctx.delete(ref);
+    removed++;
   }
+  return removed;
 }
+
+export { collectGarbage as removeUnreachable };
 
 // ---- reading -------------------------------------------------------------------
 
