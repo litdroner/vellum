@@ -1,11 +1,12 @@
-import { h, timeAgo } from '../dom.js';
+import { h, prettyKeys, timeAgo } from '../dom.js';
 import { icon } from '../icons.js';
 import { researchCollectionDialog } from './collection-research.js';
 import { showKnowledgeGraph } from './knowledge-graph.js';
 import { deleteSavedResearch, savedResearchMeta, showSavedResearch } from './saved-research.js';
 import { showDialog, toast } from './dialogs.js';
 
-// The home screen, shown when no document is open: a greeting, a large Open card and the documents
+// The home screen, shown when no document is open: a greeting, a large Open card with a row of quick tools
+// under it (tools that need no document, from Tools' catalog; docs/TOOLS_UX_SPEC.md §8), and the documents
 // opened recently, each with a picture of its first page (captured when it was last open), then the
 // person's collections: named lists of documents (only their paths; no file is copied, moved or changed),
 // each with Research: one question asked of every document in it (ui/collection-research.js), and the
@@ -79,8 +80,19 @@ const ART = `<svg viewBox="0 0 420 320" fill="none" aria-hidden="true">
 </svg>`;
 
 export class StartScreen {
-  constructor(root, { bridge, onOpenDialog, onOpenRecent, onOpenEvidence }) {
+  /**
+   * homeTools(): a promise of the quick tools for the row under the Open card ({ id, name, icon, blurb, run }),
+   * chosen by Tools' catalog (app.js); onAllTools(): opens Tools, whose keys are allToolsKeys.
+   */
+  constructor(root, { bridge, onOpenDialog, onOpenRecent, onOpenEvidence, homeTools, onAllTools, allToolsKeys }) {
     this.bridge = bridge;
+    this.homeTools = homeTools;
+    // Quick tools: filled in once the catalog has loaded (after the first paint); All tools is there from the start.
+    this.toolChips = h('div', { class: 'home-tool-chips' });
+    this.tools = h('div', { class: 'home-tools', role: 'group', 'aria-label': 'Quick tools' },
+      this.toolChips,
+      h('button', { class: 'link-btn home-all-tools', onClick: onAllTools },
+        'All tools', allToolsKeys ? h('kbd', { text: prettyKeys(allToolsKeys) }) : null));
     this.onOpenRecent = onOpenRecent;
     this.onOpenEvidence = onOpenEvidence ?? ((e) => onOpenRecent(e.path));
     // The last research shown for a collection, by its id: what the Graph lists as evidence. In memory only.
@@ -119,7 +131,8 @@ export class StartScreen {
               h('span', { class: 'open-text' },
                 h('span', { class: 'open-title', text: 'Open a PDF' }),
                 h('span', { class: 'open-hint', text: 'Drag and drop files anywhere, or click to browse' })),
-              h('kbd', { text: 'Ctrl+O' }))),
+              h('kbd', { text: 'Ctrl+O' })),
+            this.tools),
           h('div', { class: 'home-art', html: ART })),
         this.recent,
         this.collections,
@@ -134,8 +147,20 @@ export class StartScreen {
     this.#renderGreeting();
   }
 
+  /** The quick tools, recently used first; kept on the same tool when one of them has focus. */
+  async renderTools() {
+    let tools = [];
+    try { tools = (await this.homeTools?.()) ?? []; } catch { /* the catalog didn't load: All tools still works */ }
+    const focused = this.toolChips.contains(document.activeElement) ? document.activeElement.dataset.tool : null;
+    this.toolChips.replaceChildren(...tools.map((t) => h('button', {
+      class: 'tools-chip home-tool', dataset: { tool: t.id }, title: t.blurb, onClick: () => t.run(),
+    }, h('span', { class: 'tools-chip-icon', html: icon(t.icon, 16) }), t.name)));
+    if (focused) (this.toolChips.querySelector(`[data-tool="${focused}"]`) ?? this.tools.querySelector('button'))?.focus();
+  }
+
   async refresh() {
     this.#renderGreeting();
+    this.renderTools();
     let entries = [];
     try { ({ entries } = await this.bridge.request('recent.list')); } catch { /* no host (dev) */ }
     this.recent.hidden = entries.length === 0;

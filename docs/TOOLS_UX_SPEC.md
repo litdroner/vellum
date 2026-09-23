@@ -1266,9 +1266,11 @@ The questions this spec raised, as the owner answered them after the architectur
    empty and unavailable states, full keyboard and screen-reader model, reduced transparency and reduced
    motion, dark mode. *Exit:* e2e `tools` suite green; blur frame-time measured; screenshots reviewed in
    light, dark and reduced transparency (and forced colours and 560 × 400).
-3. **Phase 3: recent, favorites, and the Home row.** Recent and Favorites inside the sheet arrived with
-   Phase 2 (`catalog/store.js`, recorded from the sheet only, without tests of their own yet); Phase 3 adds
-   the Home row, recording from Home and the palette, and the store and e2e tests.
+3. **Phase 3: recent, favorites, and the Home row** (done). Recent and Favorites inside the sheet arrived
+   with Phase 2; Phase 3 made `catalog/store.js` the one store for Tools, Home and the palette (loaded after
+   the first paint, from `app.js`), added the Home row (§8; its defaults are `HOME_TOOLS` in the catalog),
+   recording from Home and the palette, and the store and e2e tests. *Exit:* Node `store` tests and the
+   e2e `tools-home` and `tools` suites green.
 4. **Phase 4: recommendations and the selection strip** (the scanned-page signal, Q9).
 5. **Phase 5: consolidation**, each item only on the owner's decision (Q4, Q5).
 6. **Then:** every new feature arrives with its catalog record (§28). Automate appears with the first

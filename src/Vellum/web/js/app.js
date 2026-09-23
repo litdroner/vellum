@@ -3,7 +3,7 @@ import { loadPdfjs } from './pdfjs.js';
 import { truncate, debounce } from './dom.js';
 import { DocumentView } from './document-view.js';
 import { createCommands, copySelection, copyText } from './commands.js';
-import { availability, snapshot } from './requirements.js';
+import { availability, requirementsOf, snapshot } from './requirements.js';
 import { installShortcuts } from './shortcuts.js';
 import { Toolbar } from './ui/toolbar.js';
 import { ViewBar } from './ui/viewbar.js';
@@ -477,7 +477,7 @@ ui.sidebar = new Sidebar(document.getElementById('sidebar'), app, actions.pages)
 ui.findbar = new FindBar(stage, app);
 ui.viewbar = new ViewBar(stage, app, commands);
 // Recent and favourite tools (catalog/store.js, kept in localStorage): one store for Tools, Home and the
-// palette. It loads with the catalog after the first paint, when Tools first needs it, or when the
+// palette. It loads with the catalog after the first paint, when Home or Tools first needs it, or when the
 // palette runs a command; never at startup. If it can't load, those surfaces simply go without it.
 let toolPrefs = null;
 function loadToolPrefs() {
@@ -486,7 +486,7 @@ function loadToolPrefs() {
     .then(({ createToolPrefs }) => {
       let storage = null;
       try { storage = localStorage; } catch { /* not kept: recent and favourites start empty each time */ }
-      return createToolPrefs(storage);
+      return createToolPrefs(storage, { onChange: () => { if (!app.active) ui.start.renderTools(); } });
     })
     .catch((err) => {
       toolPrefs = null; // try again next time
@@ -495,11 +495,31 @@ function loadToolPrefs() {
   return toolPrefs;
 }
 
+/** The Home row's tools (docs/TOOLS_UX_SPEC.md §8): the catalog's, those whose command needs nothing and can run. */
+async function homeTools() {
+  const prefs = await loadToolPrefs();
+  const snap = snapshot(app, ui, actions);
+  const fits = (t) => {
+    const c = commands[t.command];
+    return Boolean(c) && requirementsOf(c).length === 0 && availability(c, snap).available;
+  };
+  return prefs.homeTools(fits).map((t) => ({
+    id: t.id, name: t.name, icon: t.icon ?? commands[t.command].icon ?? 'command', blurb: t.blurb,
+    run: () => {
+      prefs.recordRun(t.id);
+      commands[t.command].run();
+    },
+  }));
+}
+
 ui.start = new StartScreen(stage, {
   bridge,
   onOpenDialog: () => actions.openDialog(),
   onOpenRecent: (p) => actions.openRecent(p),
   onOpenEvidence: (e) => actions.openEvidence(e),
+  homeTools,
+  onAllTools: () => commands['app.tools'].run(),
+  allToolsKeys: commands['app.tools'].keys[0],
 });
 ui.updates = new Updates({ bridge, titlebar: ui.titlebar, prepareToQuit, openFiles: () => app.views.map((v) => v.file.path) });
 ui.palette = new CommandPalette({
