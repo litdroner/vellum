@@ -7,11 +7,13 @@
 //   global: still fires while typing in a text field
 //   when:   optional extra condition, checked before the shortcut is consumed
 //   doc:    needs an open document (hidden from the palette otherwise)
+//   requires: what else it needs to run now, by name, and presentIf: a provider it needs on this PC
+//           (requirements.js decides both, for every surface)
 //   palette: false keeps it out of the palette
+// Commands reach features through `actions` only, never a UI module, so the registry loads anywhere.
 
 import { FAMILY_NAMES } from './editing/objects/text-format.js';
 import { BUNDLED_FONTS } from './editing/objects/bundled-fonts.js';
-import { showAttachments } from './ui/attachments.js';
 
 export function createCommands(app, ui, actions) {
   const doc = () => (app.active?.status === 'ready' ? app.active : null);
@@ -44,6 +46,8 @@ export function createCommands(app, ui, actions) {
   // The same test gives Ctrl+C and Ctrl+D to the selected objects; otherwise Ctrl+C copies text as it
   // always did. Ctrl+V pastes objects only in Edit mode, once some have been copied there.
   const objectsSelected = nudging;
+  // Export… starts on the dialog's first format; these start on their own (export/model.js ids).
+  const exportAs = (format) => () => actions.export.run(doc(), { format });
 
   return {
     'file.open': { group: 'File', icon: 'folder-open', label: 'Open…', keys: ['Ctrl+O'], global: true, run: () => actions.openDialog() },
@@ -51,8 +55,13 @@ export function createCommands(app, ui, actions) {
     'file.saveAs': { group: 'File', icon: 'save-all', doc: true, label: 'Save as…', keys: ['Ctrl+Shift+S'], global: true, run: () => actions.saveAs() },
     'file.print': { group: 'File', icon: 'printer', doc: true, label: 'Print…', keys: ['Ctrl+P'], global: true, run: () => actions.print() },
     'file.export': { group: 'File', icon: 'file-output', doc: true, label: 'Export…', keys: ['Ctrl+Shift+E'], global: true, run: () => actions.export.run(doc()) },
+    'export.word': { group: 'File', icon: 'file-output', doc: true, label: 'Export to Word…', run: exportAs('word') },
+    'export.excel': { group: 'File', icon: 'file-output', doc: true, label: 'Export to Excel…', run: exportAs('excel') },
+    'export.powerpoint': { group: 'File', icon: 'file-output', doc: true, label: 'Export to PowerPoint…', run: exportAs('powerpoint') },
+    'export.images': { group: 'File', icon: 'image', doc: true, label: 'Export pages as images…', run: exportAs('jpg') },
+    'export.markdown': { group: 'File', icon: 'file-text', doc: true, label: 'Export to Markdown…', run: exportAs('markdown') },
     'file.close': { group: 'File', icon: 'x', doc: true, label: 'Close document', keys: ['Ctrl+W', 'Ctrl+F4'], global: true, run: () => actions.close() },
-    'file.history': { group: 'File', icon: 'clock', doc: true, label: 'Document history…', run: () => actions.history.show(doc()) },
+    'file.history': { group: 'File', icon: 'clock', doc: true, requires: ['history'], label: 'Document history…', run: () => actions.history.show(doc()) },
     'file.showInFolder': { group: 'File', icon: 'folder-open', doc: true, label: 'Show in folder', run: () => actions.showInFolder() },
 
     'tab.next': { group: 'Tabs', icon: 'chevron-right', label: 'Next tab', keys: ['Ctrl+Tab', 'Ctrl+PageDown'], global: true, run: () => app.cycle(1) },
@@ -79,10 +88,10 @@ export function createCommands(app, ui, actions) {
     'page.last': { group: 'Page', icon: 'arrow-down-to-line', doc: true, label: 'Last page', keys: ['End', 'Ctrl+End'], run: () => doc()?.lastPage() },
     'page.goto': { group: 'Page', icon: 'arrow-right', doc: true, label: 'Go to page…', keys: ['Ctrl+G'], global: true, run: () => ui.viewbar.focusPageInput() },
 
-    'pages.rotateRight': { group: 'Pages', icon: 'rotate-cw', doc: true, label: 'Rotate page right', run: onPages((view, ids) => pages.rotate(view, ids, 90)) },
-    'pages.rotateLeft': { group: 'Pages', icon: 'rotate-ccw', doc: true, label: 'Rotate page left', run: onPages((view, ids) => pages.rotate(view, ids, -90)) },
-    'pages.delete': { group: 'Pages', icon: 'trash-2', doc: true, label: 'Delete page', keys: ['Delete'], when: inThumbs, run: onPages((view, ids) => pages.remove(view, ids)) },
-    'pages.duplicate': { group: 'Pages', icon: 'copy-plus', doc: true, label: 'Duplicate page', keys: ['Ctrl+D'], when: inThumbs, run: onPages((view, ids) => pages.duplicate(view, ids)) },
+    'pages.rotateRight': { group: 'Pages', icon: 'rotate-cw', doc: true, requires: ['writable'], label: 'Rotate page right', run: onPages((view, ids) => pages.rotate(view, ids, 90)) },
+    'pages.rotateLeft': { group: 'Pages', icon: 'rotate-ccw', doc: true, requires: ['writable'], label: 'Rotate page left', run: onPages((view, ids) => pages.rotate(view, ids, -90)) },
+    'pages.delete': { group: 'Pages', icon: 'trash-2', doc: true, requires: ['writable'], label: 'Delete page', keys: ['Delete'], when: inThumbs, run: onPages((view, ids) => pages.remove(view, ids)) },
+    'pages.duplicate': { group: 'Pages', icon: 'copy-plus', doc: true, requires: ['writable'], label: 'Duplicate page', keys: ['Ctrl+D'], when: inThumbs, run: onPages((view, ids) => pages.duplicate(view, ids)) },
     'pages.copy': { group: 'Pages', icon: 'copy', doc: true, label: 'Copy pages', keys: ['Ctrl+C'], when: inThumbs, run: onPages((view, ids) => pages.copy(view, ids)) },
     'pages.paste': {
       group: 'Pages', icon: 'files', doc: true, label: 'Paste pages after', keys: ['Ctrl+V'], when: (e) => pages.canPaste && inThumbs(e),
@@ -90,28 +99,28 @@ export function createCommands(app, ui, actions) {
     },
     'pages.moveUp': { group: 'Pages', icon: 'chevron-up', doc: true, label: 'Move page up', keys: ['Alt+ArrowUp'], when: inThumbs, run: onPages((view, ids) => pages.moveBy(view, ids, -1)) },
     'pages.moveDown': { group: 'Pages', icon: 'chevron-down', doc: true, label: 'Move page down', keys: ['Alt+ArrowDown'], when: inThumbs, run: onPages((view, ids) => pages.moveBy(view, ids, 1)) },
-    'pages.insertBlank': { group: 'Pages', icon: 'file-plus', doc: true, label: 'Insert blank page', run: () => doc() && pages.insertBlank(doc(), doc().state.pageNumber) },
-    'pages.insert': { group: 'Pages', icon: 'files', doc: true, label: 'Insert pages from file…', run: () => doc() && pages.insertFromFile(doc(), doc().state.pageNumber) },
-    'pages.crop': { group: 'Pages', icon: 'minimize-2', doc: true, label: 'Crop pages…', run: onPages((view, ids) => pages.crop(view, ids)) },
-    'pages.numbers': { group: 'Pages', icon: 'file-text', doc: true, label: 'Page numbers…', run: onPages((view, ids) => pages.pageNumbers(view, ids)) },
-    'pages.watermark': { group: 'Pages', icon: 'blend', doc: true, label: 'Watermark…', run: onPages((view, ids) => pages.watermark(view, ids)) },
-    'pages.extract': { group: 'Pages', icon: 'file-output', doc: true, label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
+    'pages.insertBlank': { group: 'Pages', icon: 'file-plus', doc: true, requires: ['writable'], label: 'Insert blank page', run: () => doc() && pages.insertBlank(doc(), doc().state.pageNumber) },
+    'pages.insert': { group: 'Pages', icon: 'files', doc: true, requires: ['writable'], label: 'Insert pages from file…', run: () => doc() && pages.insertFromFile(doc(), doc().state.pageNumber) },
+    'pages.crop': { group: 'Pages', icon: 'minimize-2', doc: true, requires: ['writable'], label: 'Crop pages…', run: onPages((view, ids) => pages.crop(view, ids)) },
+    'pages.numbers': { group: 'Pages', icon: 'file-text', doc: true, requires: ['writable'], label: 'Page numbers…', run: onPages((view, ids) => pages.pageNumbers(view, ids)) },
+    'pages.watermark': { group: 'Pages', icon: 'blend', doc: true, requires: ['writable'], label: 'Watermark…', run: onPages((view, ids) => pages.watermark(view, ids)) },
+    'pages.extract': { group: 'Pages', icon: 'file-output', doc: true, requires: ['writable'], label: 'Extract pages…', run: onPages((view, ids) => pages.extract(view, ids)) },
     // Merging needs no open document: it reads the files chosen and writes a new one.
     'pages.merge': { group: 'Pages', icon: 'combine', label: 'Merge PDFs…', run: () => pages.merge() },
     // Nor does making a PDF out of pictures, or out of a web page saved on this PC.
     'pages.imagesToPdf': { group: 'Pages', icon: 'image', label: 'Images to PDF…', run: () => pages.imagesToPdf() },
     'pages.htmlToPdf': { group: 'Pages', icon: 'file-text', label: 'HTML to PDF…', run: () => pages.htmlToPdf() },
-    'pages.split': { group: 'Pages', icon: 'scissors', doc: true, label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
+    'pages.split': { group: 'Pages', icon: 'scissors', doc: true, requires: ['writable'], label: 'Split into files…', run: () => doc() && pages.split(doc(), ui.sidebar.thumbs?.selectedIds ?? []) },
     'pages.organise': { group: 'Pages', icon: 'layout-grid', doc: true, label: 'Show page organiser', run: () => ui.sidebar.showPages() },
 
     'find.open': { group: 'Search', icon: 'search', doc: true, label: 'Find in document', keys: ['Ctrl+F'], global: true, run: () => ui.findbar.open(doc()?.getSelectedText()) },
-    'find.replace': { group: 'Search', icon: 'search', doc: true, label: 'Replace text', keys: ['Ctrl+H'], global: true, run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
+    'find.replace': { group: 'Search', icon: 'search', doc: true, requires: ['textEditing'], label: 'Replace text', keys: ['Ctrl+H'], global: true, run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
     'find.next': { group: 'Search', icon: 'chevron-down', doc: true, label: 'Find next', keys: ['F3'], global: true, run: () => ui.findbar.step(false) },
     'find.prev': { group: 'Search', icon: 'chevron-up', doc: true, label: 'Find previous', keys: ['Shift+F3'], global: true, run: () => ui.findbar.step(true) },
-    'find.redactAll': { group: 'Search', icon: 'square', doc: true, label: 'Redact all matches…', run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
+    'find.redactAll': { group: 'Search', icon: 'square', doc: true, requires: ['textEditing'], label: 'Redact all matches…', run: () => ui.findbar.openReplace(doc()?.getSelectedText()) },
 
-    'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR current page', run: () => actions.ocr.run(doc(), 'page') },
-    'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, label: 'OCR entire document', run: () => actions.ocr.run(doc(), 'document') },
+    'tools.ocrPage': { group: 'Tools', icon: 'text-select', doc: true, requires: ['writable'], label: 'OCR current page', run: () => actions.ocr.run(doc(), 'page') },
+    'tools.ocrDocument': { group: 'Tools', icon: 'text-select', doc: true, requires: ['writable'], label: 'OCR entire document', run: () => actions.ocr.run(doc(), 'document') },
 
     'tools.copyTables': { group: 'Tools', icon: 'copy', doc: true, label: 'Copy tables on this page', run: () => doc() && actions.copyPageTables(doc()) },
     'tools.structure': { group: 'Tools', icon: 'file-text', doc: true, label: 'Document structure', run: () => doc() && ui.sidebar.showStructure() },
@@ -119,8 +128,8 @@ export function createCommands(app, ui, actions) {
     'tools.graph': { group: 'Tools', icon: 'list-tree', doc: true, label: 'Document graph…', run: () => doc() && actions.showDocumentGraph() },
     'tools.health': { group: 'Tools', icon: 'list-checks', doc: true, label: 'PDF health…', run: () => doc() && actions.health.show(doc()) },
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
-    'tools.compress': { group: 'Tools', icon: 'minimize-2', doc: true, label: 'Compress PDF…', run: () => doc() && actions.optimize.compress(doc()) },
-    'tools.pdfa': { group: 'Tools', icon: 'list-checks', doc: true, label: 'Convert to PDF/A…', run: () => doc() && actions.optimize.pdfa(doc()) },
+    'tools.compress': { group: 'Tools', icon: 'minimize-2', doc: true, requires: ['writable'], label: 'Compress PDF…', run: () => doc() && actions.optimize.compress(doc()) },
+    'tools.pdfa': { group: 'Tools', icon: 'list-checks', doc: true, requires: ['writable'], label: 'Convert to PDF/A…', run: () => doc() && actions.optimize.pdfa(doc()) },
 
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
     'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },
@@ -132,23 +141,25 @@ export function createCommands(app, ui, actions) {
       when: (e) => !inThumbs(e) && Boolean(doc()?.annotLayer.selectedId), run: () => doc()?.annotLayer.deleteSelected(),
     },
 
-    'forms.addText': { group: 'Forms', icon: 'text-cursor-input', doc: true, label: 'Add form text field', run: () => doc()?.annotLayer.startField('text') },
-    'forms.addCheckbox': { group: 'Forms', icon: 'check', doc: true, label: 'Add checkbox', run: () => doc()?.annotLayer.startField('checkbox') },
-    'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
-    'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
+    'forms.addText': { group: 'Forms', icon: 'text-cursor-input', doc: true, requires: ['writable'], label: 'Add form text field', run: () => doc()?.annotLayer.startField('text') },
+    'forms.addCheckbox': { group: 'Forms', icon: 'check', doc: true, requires: ['writable'], label: 'Add checkbox', run: () => doc()?.annotLayer.startField('checkbox') },
+    'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, requires: ['writable'], label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
+    'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, requires: ['writable'], label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
+    // Filling needs no command of its own (the fields take typing); this one only finds the next field to fill.
+    'forms.fill': { group: 'Forms', icon: 'text-cursor-input', doc: true, requires: ['formFields'], label: 'Fill in form', run: () => doc()?.focusFormField() },
 
-    'tools.attachments': { group: 'Tools', icon: 'paperclip', doc: true, label: 'Attachments…', run: () => doc() && showAttachments(doc()) },
+    'tools.attachments': { group: 'Tools', icon: 'paperclip', doc: true, label: 'Attachments…', run: () => doc() && actions.attachments.show(doc()) },
 
     'bookmarks.show': { group: 'Bookmarks', icon: 'list-tree', doc: true, label: 'Show outline', run: () => ui.sidebar.showOutline() },
     'bookmarks.add': { group: 'Bookmarks', icon: 'plus', doc: true, label: 'Add bookmark for this page', run: () => ui.sidebar.showOutline({ add: true }) },
 
-    'links.add': { group: 'Links', icon: 'link', doc: true, label: 'Add link', run: () => doc()?.annotLayer.startLink() },
+    'links.add': { group: 'Links', icon: 'link', doc: true, requires: ['writable'], label: 'Add link', run: () => doc()?.annotLayer.startLink() },
     'links.addOverSelection': {
       group: 'Links', icon: 'link', doc: true, palette: false, label: 'Link selected text',
       when: () => Boolean(doc()?.getSelectedText()), run: () => doc()?.annotLayer.addLinkOverSelection(),
     },
 
-    'edit.text': { group: 'Edit', icon: 'type', doc: true, label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
+    'edit.text': { group: 'Edit', icon: 'type', doc: true, requires: ['textEditing'], label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
 
     'arrange.alignLeft': { group: 'Arrange', icon: 'align-start-vertical', doc: true, label: 'Align left edges', run: () => arrange('left') },
     'arrange.alignCenter': { group: 'Arrange', icon: 'align-center-vertical', doc: true, label: 'Align centres', run: () => arrange('center') },
@@ -158,7 +169,7 @@ export function createCommands(app, ui, actions) {
     'arrange.alignBottom': { group: 'Arrange', icon: 'align-end-horizontal', doc: true, label: 'Align bottom edges', run: () => arrange('bottom') },
     'arrange.spaceAcross': { group: 'Arrange', icon: 'align-horizontal-space-between', doc: true, label: 'Space evenly across', run: () => arrange('horizontal') },
     'arrange.spaceDown': { group: 'Arrange', icon: 'align-vertical-space-between', doc: true, label: 'Space evenly down', run: () => arrange('vertical') },
-    'edit.addText': { group: 'Edit', icon: 'type', doc: true, label: 'Add text box', run: () => doc()?.textEditor?.addText() },
+    'edit.addText': { group: 'Edit', icon: 'type', doc: true, requires: ['writable'], label: 'Add text box', run: () => doc()?.textEditor?.addText() },
     'edit.textBold': { group: 'Edit', icon: 'bold', doc: true, label: 'Bold text', run: () => doc()?.textEditor?.formatSelected('bold') },
     'edit.textItalic': { group: 'Edit', icon: 'italic', doc: true, label: 'Italic text', run: () => doc()?.textEditor?.formatSelected('italic') },
     'edit.textUnderline': { group: 'Edit', icon: 'underline', doc: true, label: 'Underline text', run: () => doc()?.textEditor?.formatSelected('underline') },
@@ -178,10 +189,10 @@ export function createCommands(app, ui, actions) {
     'edit.textAlignLeft': { group: 'Edit', icon: 'text-align-start', doc: true, label: 'Align new text left', run: () => doc()?.textEditor?.formatSelected('left') },
     'edit.textAlignCenter': { group: 'Edit', icon: 'text-align-center', doc: true, label: 'Centre new text', run: () => doc()?.textEditor?.formatSelected('center') },
     'edit.textAlignRight': { group: 'Edit', icon: 'text-align-end', doc: true, label: 'Align new text right', run: () => doc()?.textEditor?.formatSelected('right') },
-    'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, label: 'Insert picture…', run: () => doc()?.textEditor?.insertPicture() },
-    'edit.addSignature': { group: 'Edit', icon: 'pen-line', doc: true, label: 'Add signature…', run: () => doc()?.textEditor?.addSignature() },
-    'edit.redactSelection': { group: 'Edit', icon: 'square', doc: true, label: 'Redact selection', run: () => doc()?.textEditor?.redactSelected() },
-    'edit.replacePicture': { group: 'Edit', icon: 'image', doc: true, label: 'Replace picture…', run: () => doc()?.textEditor?.replacePicture() },
+    'edit.insertPicture': { group: 'Edit', icon: 'image-plus', doc: true, requires: ['writable'], label: 'Insert picture…', run: () => doc()?.textEditor?.insertPicture() },
+    'edit.addSignature': { group: 'Edit', icon: 'pen-line', doc: true, requires: ['writable'], label: 'Add signature…', run: () => doc()?.textEditor?.addSignature() },
+    'edit.redactSelection': { group: 'Edit', icon: 'square', doc: true, requires: ['writable', 'selection.objects'], label: 'Redact selection', run: () => doc()?.textEditor?.redactSelected() },
+    'edit.replacePicture': { group: 'Edit', icon: 'image', doc: true, requires: ['writable', 'selection.picture'], label: 'Replace picture…', run: () => doc()?.textEditor?.replacePicture() },
     'edit.undo': { group: 'Edit', icon: 'undo-2', doc: true, label: 'Undo', keys: ['Ctrl+Z'], run: () => doc()?.annotations.undo() },
     'edit.redo': { group: 'Edit', icon: 'redo-2', doc: true, label: 'Redo', keys: ['Ctrl+Y', 'Ctrl+Shift+Z'], run: () => doc()?.annotations.redo() },
     'edit.copy': { group: 'Edit', icon: 'copy', doc: true, palette: false, label: 'Copy', hint: 'Ctrl+C', run: () => copySelection() },

@@ -15,7 +15,7 @@ import { followOutlinePages, readOutline } from './pages/outline.js';
 import { followEdits, editSignature } from './editing/edits.js';
 import { TextEditing } from './editing/session.js';
 import { ObjectSelection } from './editing/objects/selection.js';
-import { readFields, valueOfInput } from './forms/fields.js';
+import { FILLABLE, NO_FORM_FIELDS, readFields, valueOfInput } from './forms/fields.js';
 import { nextSpreadPage, previousSpreadPage } from './spread.js';
 
 // One DocumentView per open PDF. It owns a pdf.js viewer plus all per-document state
@@ -165,6 +165,58 @@ export class DocumentView extends EventTarget {
 
   /** Names of the PDF's own form fields on screen (a created field must not reuse one). */
   get fieldNames() { return new Set([...this.#fields.values()].map((f) => f.name)); }
+
+  /** The PDF has a form field of its own that can be filled in (known a moment after it opens). */
+  get hasFormFields() {
+    for (const field of this.#fields.values()) if (FILLABLE.has(field.type) && field.editable) return true;
+    return false;
+  }
+
+  /**
+   * Fill in form: brings the first field still to fill into sight and puts the cursor in it, in Select
+   * mode: the first empty text field or list in page order, or the first field when each has a value.
+   * Changes nothing in the document. False, with the reason shown, when there is no field to fill.
+   */
+  async focusFormField() {
+    const fields = [...this.#fields].map(([id, field]) => ({ id, ...field }))
+      .filter((f) => FILLABLE.has(f.type) && f.editable && f.page !== null)
+      // Page by page, then top to bottom and left to right (PDF y grows upwards).
+      .sort((a, b) => a.page - b.page || (b.rect?.[3] ?? 0) - (a.rect?.[3] ?? 0) || (a.rect?.[0] ?? 0) - (b.rect?.[0] ?? 0));
+    if (!fields.length) {
+      this.notify(NO_FORM_FIELDS);
+      return false;
+    }
+    const kept = new Map(this.annotations.formValues.map((entry) => [entry.name, entry.value]));
+    const blank = (f) => {
+      if (f.type !== 'text' && f.type !== 'combobox' && f.type !== 'listbox') return false;
+      const value = kept.has(f.name) ? kept.get(f.name) : f.value;
+      return value === null || value === '' || (Array.isArray(value) && !value.length);
+    };
+    const target = fields.find(blank) ?? fields[0];
+    if (this.annotLayer.tool !== 'select') this.setTool('select');
+    this.goToPage(target.page + 1);
+    await this.pageShown(target.page + 1);
+    const element = await this.#formElement(target.id);
+    element?.focus({ preventScroll: true });
+    element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    return true;
+  }
+
+  /** The input pdf.js draws for form widget `id`, once its page's form layer is drawn; null after `ms`. */
+  #formElement(id, ms = 3000) {
+    const find = () => this.viewerEl.querySelector(`[data-element-id="${CSS.escape(id)}"]`);
+    if (find()) return Promise.resolve(find());
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        this.eventBus.off('annotationlayerrendered', onLayer);
+        resolve(find());
+      };
+      const onLayer = () => { if (find()) finish(); };
+      const timer = setTimeout(finish, ms);
+      this.eventBus.on('annotationlayerrendered', onLayer);
+    });
+  }
 
   /** Shows a message about this document (as its own notices are shown). */
   notify(message) { this.#notice(message); }

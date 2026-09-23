@@ -320,6 +320,13 @@ export class TextEditor {
 
   get active() { return this.#view.annotLayer?.tool === 'edit'; }
 
+  /** Exactly one picture is selected, and it can be replaced (the bar then offers "Replace picture…"). */
+  get pictureSelected() {
+    const selection = this.#selection;
+    const single = selection.size === 1 ? this.#liveObject(selection.page, selection.keys[0]) : null;
+    return single?.kind === 'image' && single.capabilities.replace === true;
+  }
+
   /** The document's selection: identity only, and the single record of what Edit mode is on. */
   get #selection() { return this.#view.objectSelection; }
 
@@ -1068,8 +1075,7 @@ export class TextEditor {
 
   #syncArrangeBar() {
     const selection = this.#selection;
-    const single = selection.size === 1 ? this.#liveObject(selection.page, selection.keys[0]) : null;
-    const replacing = single?.kind === 'image' && single.capabilities.replace === true;
+    const replacing = this.pictureSelected;
     const formats = this.#newTextFormats();
     const page = this.active && !this.#editor && !this.#drag?.moved && (selection.size >= MINIMUM.align || replacing || formats)
       ? this.#pages.get(selection.page) : null;

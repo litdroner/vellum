@@ -16,7 +16,16 @@
 // and deleting (`deleted: true`, so it can be undone) are written into that same field when the file
 // is saved (writeFieldChanges); its value, options, radio export values and appearance are kept.
 
-/** The fields pdf.js found, by widget id: { name, type, exportValue }. Empty when there is no form. */
+/** What the Fill in form command says when a PDF has no field to fill. */
+export const NO_FORM_FIELDS = 'This PDF has no form fields.';
+
+/** The kinds of field (pdf.js's `type`) a person fills in: the ones valueOfInput reads back. */
+export const FILLABLE = new Set(['text', 'checkbox', 'radiobutton', 'combobox', 'listbox']);
+
+/**
+ * The fields pdf.js found, by widget id: { name, type, exportValue, page, rect, value, editable }, where
+ * `page` is 0-based, `rect` in PDF user space and `value` the one the file holds. Empty when there is no form.
+ */
 export async function readFields(pdf) {
   const byId = new Map();
   const objects = await pdf.getFieldObjects().catch(() => null);
@@ -24,7 +33,11 @@ export async function readFields(pdf) {
   for (const [name, list] of objects instanceof Map ? objects : Object.entries(objects ?? {})) {
     for (const o of list) {
       if (!o.type || o.type === 'button' || !o.id) continue;
-      byId.set(o.id, { name, type: o.type, exportValue: o.exportValues ?? null });
+      byId.set(o.id, {
+        name, type: o.type, exportValue: o.exportValues ?? null,
+        page: Number.isInteger(o.page) ? o.page : null, rect: o.rect ?? null, value: o.value ?? null,
+        editable: o.editable !== false && !o.hidden,
+      });
     }
   }
   return byId;

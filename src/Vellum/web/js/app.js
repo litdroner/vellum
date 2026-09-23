@@ -3,6 +3,7 @@ import { loadPdfjs } from './pdfjs.js';
 import { truncate, debounce } from './dom.js';
 import { DocumentView } from './document-view.js';
 import { createCommands, copySelection, copyText } from './commands.js';
+import { availability, snapshot } from './requirements.js';
 import { installShortcuts } from './shortcuts.js';
 import { Toolbar } from './ui/toolbar.js';
 import { ViewBar } from './ui/viewbar.js';
@@ -23,6 +24,7 @@ import { CommandPalette } from './ui/palette.js';
 import { setFocusFallback } from './ui/focus.js';
 import { markPageBoxWhenReady } from './ui/page-mark.js';
 import { showKnowledgeGraph } from './ui/knowledge-graph.js';
+import { showAttachments } from './ui/attachments.js';
 import { TextEditor } from './ui/text-editor.js';
 import { toPdfPoint } from './page-space.js';
 import { readSessionPage } from './semantic/model.js';
@@ -442,6 +444,7 @@ actions.health = createHealthActions({ app });
 actions.export = createExportActions({ pdfjsLib: libs.pdfjsLib });
 actions.optimize = createOptimizeActions();
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
+actions.attachments = { show: (view) => showAttachments(view) };
 
 const commands = createCommands(app, ui, actions);
 
@@ -562,33 +565,35 @@ ui.toolbar.onMenu = async (anchor) => {
   try { ({ entries } = await bridge.request('recent.list')); } catch { /* ignore */ }
   const openPaths = new Set(app.views.map((v) => v.file.path.toLowerCase()));
   const recent = entries.filter((e) => e.exists && !openPaths.has(e.path.toLowerCase())).slice(0, 6);
-  const ready = app.active?.status === 'ready';
+  // What each command needs is declared on it and decided in requirements.js, as for every surface.
+  const snap = snapshot(app, ui, actions);
+  const off = (id) => !availability(commands[id], snap).available;
   openMenu([
     menuItem('file.open'),
     ...(recent.length ? ['-', ...recent.map((e) => ({ label: e.path.slice(e.path.lastIndexOf('\\') + 1), icon: 'clock', action: () => actions.openRecent(e.path) }))] : []),
     '-',
-    menuItem('file.save', null, { disabled: !ready || !app.active.annotations.dirty }),
-    menuItem('file.saveAs', null, { disabled: !ready }),
-    menuItem('file.print', null, { disabled: !ready }),
-    menuItem('file.export', null, { disabled: !ready }),
+    menuItem('file.save', null, { disabled: off('file.save') || !app.active.annotations.dirty }),
+    menuItem('file.saveAs', null, { disabled: off('file.saveAs') }),
+    menuItem('file.print', null, { disabled: off('file.print') }),
+    menuItem('file.export', null, { disabled: off('file.export') }),
     menuItem('file.showInFolder', null, { disabled: !app.active }),
-    menuItem('file.history', null, { disabled: !actions.history.canUse(app.active) }),
+    menuItem('file.history', null, { disabled: off('file.history') }),
     menuItem('file.close', null, { disabled: !app.active }),
     '-',
-    menuItem('pages.insert', null, { disabled: !app.active?.canEditPages }),
-    menuItem('pages.extract', null, { disabled: !app.active?.canEditPages }),
-    menuItem('pages.split', null, { disabled: !app.active?.canEditPages }),
+    menuItem('pages.insert', null, { disabled: off('pages.insert') }),
+    menuItem('pages.extract', null, { disabled: off('pages.extract') }),
+    menuItem('pages.split', null, { disabled: off('pages.split') }),
     menuItem('pages.merge'),
     menuItem('pages.imagesToPdf'),
     menuItem('pages.htmlToPdf'),
     '-',
-    menuItem('tools.ocrPage', null, { disabled: !app.active?.canEditPages }),
-    menuItem('tools.ocrDocument', null, { disabled: !app.active?.canEditPages }),
-    menuItem('tools.structure', null, { disabled: !ready }),
-    menuItem('tools.graph', null, { disabled: !ready }),
-    menuItem('tools.health', null, { disabled: !ready }),
-    menuItem('tools.compress', null, { disabled: !ready || Boolean(app.active?.encrypted) }),
-    menuItem('tools.pdfa', null, { disabled: !ready || Boolean(app.active?.encrypted) }),
+    menuItem('tools.ocrPage', null, { disabled: off('tools.ocrPage') }),
+    menuItem('tools.ocrDocument', null, { disabled: off('tools.ocrDocument') }),
+    menuItem('tools.structure', null, { disabled: off('tools.structure') }),
+    menuItem('tools.graph', null, { disabled: off('tools.graph') }),
+    menuItem('tools.health', null, { disabled: off('tools.health') }),
+    menuItem('tools.compress', null, { disabled: off('tools.compress') }),
+    menuItem('tools.pdfa', null, { disabled: off('tools.pdfa') }),
     menuItem('tools.compare'),
     '-',
     menuItem('app.palette'),

@@ -112,8 +112,11 @@ export function createExportActions({ pdfjsLib }) {
   }
 
   const actions = {
-    /** The Export command: ask, then export. */
-    async run(view) {
+    /**
+     * The Export commands: ask, then export. `format` is the format the dialog starts on (an id of
+     * export/model.js): Export… starts on the first, and "Export to Word…" and the like on their own.
+     */
+    async run(view, { format = null } = {}) {
       if (view?.status !== 'ready') return;
       const chosen = await askWhatToExport({
         fileName: view.file.name,
@@ -121,6 +124,7 @@ export function createExportActions({ pdfjsLib }) {
         currentPage: view.state.pageNumber,
         folder: folderOf(view.file.path),
         chooseFolder: () => chooseFolder(folderOf(view.file.path)),
+        formatId: format,
       });
       if (!chosen) return;
       const result = await actions.exportTo({ view, ...chosen });

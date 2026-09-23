@@ -13,14 +13,16 @@ import { EXPORT_FORMAT_IDS, EXPORT_FORMATS, describePlan, exportPlan, selectedPa
  *   fileName, pageCount, currentPage   the document
  *   folder                             where the files go to start with (the document's own folder)
  *   chooseFolder()                     opens the host's folder picker; resolves a folder or null
+ *   formatId                           the format chosen to start with (default: the first)
  */
-export async function askWhatToExport({ fileName, pageCount, currentPage, folder, chooseFolder }) {
+export async function askWhatToExport({ fileName, pageCount, currentPage, folder, chooseFolder, formatId = null }) {
   let destination = folder;
   const formats = EXPORT_FORMAT_IDS.map((id) => EXPORT_FORMATS[id]);
+  const start = EXPORT_FORMATS[formatId] ? formatId : formats[0].id;
   const formatChoice = (format, checked) => h('label', { class: 'choice' },
     h('input', { type: 'radio', name: 'export-format', value: format.id, checked }),
     h('span', { class: 'choice-label' }, format.label, h('span', { class: 'choice-note', text: format.note })));
-  const formatChoices = h('div', { class: 'choices' }, ...formats.map((f, i) => formatChoice(f, i === 0)));
+  const formatChoices = h('div', { class: 'choices' }, ...formats.map((f) => formatChoice(f, f.id === start)));
 
   const rangeInput = h('input', { class: 'field', type: 'text', spellcheck: 'false', placeholder: `e.g. 1-3, ${pageCount}` });
   const pageChoice = (value, label, extra = null, checked = false) => h('label', { class: 'choice' },
