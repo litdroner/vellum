@@ -2,6 +2,7 @@ import { bounds, underlineSegments } from './geometry.js';
 import { isIdentity } from '../pages/plan.js';
 import { applyObjectEdits } from '../editing/page-writer.js';
 import { writeFieldChanges, writeFormValues, writeNewFields } from '../forms/fields.js';
+import { writeLinkChanges, writeNewLinks } from '../links/links.js';
 import { writePageSettings } from '../pages/stamps.js';
 
 // Reading and writing Vellum's annotations inside the PDF itself, using pdf-lib.
@@ -48,7 +49,8 @@ export function writeAnnotations(bytes, annotations) {
  *   plan         page plan, or null for "the file's own pages, unchanged"
  *   sources      Map of sourceId → bytes: pages inserted from other PDFs, and images replacing pictures
  *   annotations  Vellum annotations to write; .page is the 1-based position in the plan. Created form
- *                fields (type 'field') among them are written as real fields (forms/fields.js)
+ *                fields (type 'field') among them are written as real fields (forms/fields.js), and
+ *                links (type 'link') as real /Link annotations (links/links.js)
  *   edits        content edits (editing/edits.js), attached to plan entries; written by editing/page-writer.js
  *   forms        values of the file's own form fields, by field name (forms/fields.js)
  *   clean        really remove replaced and deleted content from the file (not just unlink it)
@@ -72,7 +74,7 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
   if (plan) await writePageSettings({ lib, doc, pages, plan, sources });
 
   for (const a of annotations) {
-    if (a.type === 'field') continue;
+    if (a.type === 'field' || a.type === 'link') continue;
     const page = pages[a.page - 1];
     if (page) page.node.addAnnot(ctx.register(buildAnnotation(ctx, a, page.ref, lib)));
   }
@@ -87,6 +89,10 @@ export async function composeDocument({ base, plan = null, sources = new Map(), 
     const fields = annotations.filter((a) => a.type === 'field');
     await writeFieldChanges(lib, doc, fields.filter((a) => a.existing));
     await writeNewFields(lib, doc, pages, fields.filter((a) => !a.existing));
+    // Links last: the file's own are changed where they still are, then created ones are added.
+    const links = annotations.filter((a) => a.type === 'link');
+    await writeLinkChanges(lib, doc, pages, links.filter((a) => a.existing));
+    await writeNewLinks(lib, doc, pages, links.filter((a) => !a.existing));
   } catch (err) {
     throw new AnnotationSaveError(err.message);
   }

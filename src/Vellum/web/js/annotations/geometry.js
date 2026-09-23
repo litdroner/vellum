@@ -17,7 +17,7 @@ export function bounds(a, pad = 0) {
   };
   for (const q of a.quads ?? []) for (let i = 0; i < 8; i += 2) take(q[i], q[i + 1]);
   for (const p of a.paths ?? []) for (let i = 0; i < p.length; i += 2) take(p[i], p[i + 1]);
-  if (a.type === 'field') {
+  if (a.type === 'field' || a.type === 'link') {
     take(a.rect[0], a.rect[1]);
     take(a.rect[2], a.rect[3]);
   }
@@ -154,7 +154,7 @@ export function hitTest(annotations, [x, y], tolerance) {
     }
     const [x1, y1, x2, y2] = bounds(a, tolerance);
     if (x < x1 || x > x2 || y < y1 || y > y2) continue;
-    if (a.type === 'note' || a.type === 'field') return a;
+    if (a.type === 'note' || a.type === 'field' || a.type === 'link') return a;
     // Quads are axis-aligned in user space, so a per-quad box test is exact enough.
     const hit = a.quads.some((q) => {
       const xs = [q[0], q[2], q[4], q[6]];

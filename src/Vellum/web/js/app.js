@@ -14,6 +14,7 @@ import { TabStrip } from './ui/tabs.js';
 import { installDropZone } from './ui/dropzone.js';
 import { openMenu } from './ui/menu.js';
 import { FIELD_KINDS } from './forms/fields.js';
+import { linkLabel } from './links/links.js';
 import { promptPassword, showDialog, toast } from './ui/dialogs.js';
 import { printDocument } from './print.js';
 import { showAbout } from './ui/about.js';
@@ -610,6 +611,7 @@ document.addEventListener('contextmenu', (e) => {
     items.push(
       { label: 'Highlight', icon: 'highlighter', shortcut: 'H', action: () => layer.markSelection('highlight') },
       { label: 'Underline', icon: 'underline', shortcut: 'U', action: () => layer.markSelection('underline') },
+      { label: 'Add Link', icon: 'link', action: () => layer.addLinkOverSelection() },
       { label: 'Copy', icon: 'copy', shortcut: 'Ctrl+C', action: copySelection },
       { label: `Search for “${truncate(selected, 28)}”`, icon: 'search', action: () => ui.findbar.open(selected) },
       '-');
@@ -631,13 +633,21 @@ document.addEventListener('contextmenu', (e) => {
     if (hit.type === 'note') items.push({ label: 'Edit note', icon: 'sticky-note', action: () => layer.editNote(hit.id) });
     // A form field is named as one, so it is never taken for text on the page (a Text Box).
     if (hit.type === 'field') items.push({ heading: `Form Field · ${FIELD_KINDS[hit.kind]?.label ?? 'Field'}` });
-    items.push({ label: hit.type === 'field' ? 'Delete Form Field' : 'Delete annotation', icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
+    if (hit.type === 'link') items.push({ heading: `Link · ${linkLabel(hit)}` });
+    const what = hit.type === 'field' ? 'Delete Form Field' : hit.type === 'link' ? 'Delete Link' : 'Delete annotation';
+    items.push({ label: what, icon: 'trash-2', shortcut: 'Del', action: () => layer.deleteSelected() }, '-');
   }
   // One of the file's own form fields: moved, resized, renamed… like a created one (forms/fields.js).
   const ownField = !hit && !selected && layer.existingFieldAt(e.target);
   if (ownField) {
     items.push({ heading: 'Form Field' },
       { label: 'Edit Form Field', icon: 'text-cursor-input', action: () => layer.editExistingField(ownField) }, '-');
+  }
+  // One of the file's own links: given a new address or page, moved, resized or removed (links/links.js).
+  const ownLink = !hit && !selected && layer.existingLinkAt(e.target);
+  if (ownLink) {
+    items.push({ heading: 'Link' },
+      { label: 'Edit Link', icon: 'link', action: () => layer.editExistingLink(ownLink) }, '-');
   }
   // Sections, most common first: Page Content (editing what is on the page), Page Tools, then Form Fields
   // last and apart, so a Form Text Field is never taken for a Text Box.

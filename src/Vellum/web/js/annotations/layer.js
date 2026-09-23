@@ -4,7 +4,9 @@ import { copySelection } from '../commands.js';
 import { pageViewAt, toPdfPoint, tolerancePoints } from '../page-space.js';
 import { PALETTES } from './model.js';
 import { selectionToQuads, bounds, hitTest, inkPathD, simplify, underlineSegments, NOTE_SIZE } from './geometry.js';
+import { linkTargets } from '../semantic/model.js';
 import { FIELD_KINDS, MIN_FIELD_SIZE, existingFieldItem, uniqueFieldName, validFieldName } from '../forms/fields.js';
+import { MIN_LINK_SIZE, existingLinkItem, linkLabel, linkUrl } from '../links/links.js';
 
 // Vellum's own annotation layer, one per document.
 //
@@ -24,7 +26,15 @@ function svg(tag, attrs = {}) {
 
 // 'edit' (changing the page's own text) is handled by ui/text-editor.js; this layer only draws its outlines.
 // 'field' places a new form field of kind `fieldKind` (forms/fields.js) where the page is clicked.
-export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink', 'edit', 'field'];
+// 'link' places a new link (links/links.js) the same way; it is given its destination in its bar.
+export const TOOLS = ['select', 'highlight', 'underline', 'note', 'ink', 'edit', 'field', 'link'];
+
+// Annotations drawn as a rectangle, which is moved and resized with the pointer.
+const BOXED = new Set(['field', 'link']);
+const isBoxed = (a) => BOXED.has(a?.type);
+
+/** A created link's size where the page is clicked, in points. */
+const LINK_SIZE = [150, 18];
 
 /** Tool colours and pen width: shared by every document and remembered between sessions. */
 export const toolPrefs = (() => {
@@ -58,9 +68,9 @@ export class AnnotationLayer extends EventTarget {
   #lastInk = null;
   #hoverQueued = false;
   #suppressClick = false;
-  #liveField = null; // { id, rect } while a created field is dragged or resized
+  #liveBox = null; // { id, rect } while a field or link is dragged or resized
   #lastRadio = null; // the group the next radio button joins
-  #hidesFields = false; // some of pdf.js's own field widgets are hidden (see #hideEditedFields)
+  #hidesOwn = false; // some of pdf.js's own widgets and links are hidden (see #hideEdited)
 
   constructor(view, store) {
     super();
@@ -90,9 +100,9 @@ export class AnnotationLayer extends EventTarget {
     store.addEventListener('change', (e) => {
       for (const n of e.detail.pages) this.#render(n);
       if (this.selectedId && !store.get(this.selectedId)) this.select(null);
-      this.#hideEditedFields();
+      this.#hideEdited();
     });
-    bus.on('annotationlayerrendered', () => this.#hideEditedFields());
+    bus.on('annotationlayerrendered', () => this.#hideEdited());
 
     const opts = { signal: view.signal };
     const c = view.container;
@@ -279,15 +289,103 @@ export class AnnotationLayer extends EventTarget {
     return field;
   }
 
-  /** Hides pdf.js's own drawing of the fields being edited: Vellum draws them, where they now are. */
-  #hideEditedFields() {
-    const edited = new Set(this.store.all.filter((a) => a.type === 'field' && a.existing).map((a) => `${a.page}:${a.existing.id}`));
-    if (!edited.size && !this.#hidesFields) return;
-    this.#hidesFields = edited.size > 0;
+  /**
+   * Hides pdf.js's own drawing of the fields and links being edited: Vellum draws them, where they
+   * now are, and a hidden link no longer takes the click that selects it.
+   */
+  #hideEdited() {
+    const edited = new Set(this.store.all.filter((a) => isBoxed(a) && a.existing).map((a) => `${a.page}:${a.existing.id}`));
+    if (!edited.size && !this.#hidesOwn) return;
+    this.#hidesOwn = edited.size > 0;
     for (const el of this.view.container.querySelectorAll('.annotationLayer [data-annotation-id]')) {
       const n = el.closest('.page')?.dataset.pageNumber;
       el.classList.toggle('vl-field-edited', edited.has(`${n}:${el.dataset.annotationId}`));
     }
+  }
+
+  // ---- links -------------------------------------------------------------------
+
+  /** Picks the link tool: the next click on a page places a link there. */
+  startLink() {
+    this.setTool('link');
+  }
+
+  /**
+   * Places a link with its top-left corner at a screen point and selects it, so its bar can be given
+   * a destination. It becomes a real /Link annotation when the file is saved (links/links.js); until
+   * it has a destination it is drawn as unfinished and saving passes it over.
+   */
+  addLinkAt(clientX, clientY) {
+    const at = this.#pageAt(document.elementFromPoint(clientX, clientY));
+    if (!at) return null;
+    const [x, y] = this.#toPdf(at.pageView, clientX, clientY);
+    return this.#addLink(at.n, [x, y - LINK_SIZE[1], x + LINK_SIZE[0], y]);
+  }
+
+  /** Makes a link over the selected text — one per page the selection covers. */
+  addLinkOverSelection() {
+    const groups = selectionToQuads(this.view);
+    if (!groups.length) return null;
+    let first = null;
+    for (const g of groups) {
+      // The box of the selected text on that page, a point wider all round so the link covers it.
+      const made = this.#addLink(g.page, bounds({ type: 'highlight', quads: g.quads }, 1), { select: false });
+      first ??= made;
+    }
+    getSelection().removeAllRanges();
+    this.#closePopover();
+    if (first) this.select(first.id);
+    return first;
+  }
+
+  #addLink(page, rect, { select = true } = {}) {
+    if (this.view.rebuilding) return null;
+    if (!this.view.canEditPages) {
+      this.view.notify?.('This PDF is protected, so Vellum can’t add links to it.');
+      return null;
+    }
+    const link = this.store.create({ type: 'link', page, rect: rect.map((v) => Math.round(v * 100) / 100), url: null, target: null });
+    this.store.add(link);
+    if (this.tool === 'link') this.setTool('select');
+    if (select) this.select(link.id);
+    return link;
+  }
+
+  /** One of the file's own links under `element`, or null. */
+  existingLinkAt(element) {
+    return element?.closest?.('.annotationLayer .linkAnnotation[data-annotation-id]') ?? null;
+  }
+
+  /**
+   * Starts editing one of the file's own links: from now on it is drawn, moved, resized and
+   * redirected like a created one, and saving writes the change into that annotation
+   * (links/links.js writeLinkChanges). One undo step, which gives the link back as it was.
+   */
+  async editExistingLink(element) {
+    const el = this.existingLinkAt(element);
+    const at = el && this.#pageAt(el);
+    if (!at || this.view.rebuilding) return null;
+    if (!this.view.canEditPages) {
+      this.view.notify?.('This PDF is protected, so Vellum can’t change its links.');
+      return null;
+    }
+    const id = el.dataset.annotationId;
+    const own = (a) => a.type === 'link' && a.page === at.n && a.existing?.id === id;
+    const found = this.store.all.find(own);
+    if (found && !found.deleted) {
+      this.select(found.id);
+      return found;
+    }
+    const all = await at.pageView.pdfPage.getAnnotations().catch(() => []);
+    const data = all.find((d) => d.id === id);
+    // The page an internal link goes to is pdf.js's own reading of the destination, not a guess.
+    const targets = data ? await linkTargets(this.view.pdf, [data]) : new Map();
+    const item = existingLinkItem(data, at.n, targets.get(id) ?? null);
+    if (!item || this.store.all.some(own)) return null;
+    const link = this.store.create(item);
+    this.store.add(link);
+    this.select(link.id);
+    return link;
   }
 
   editNote(id) {
@@ -350,7 +448,7 @@ export class AnnotationLayer extends EventTarget {
     const seen = new Set();
     for (const stored of this.store.forPage(n)) {
       if (stored.deleted) continue;
-      const a =this.#liveField?.id === stored.id ? { ...stored, rect: this.#liveField.rect } : stored;
+      const a =this.#liveBox?.id === stored.id ? { ...stored, rect: this.#liveBox.rect } : stored;
       seen.add(a.id);
       const entry = layer.shapes.get(a.id);
       if (entry?.a === a) continue;
@@ -372,9 +470,9 @@ export class AnnotationLayer extends EventTarget {
     const ui = [];
     if (this.#pendingNote?.page === n) ui.push(this.#shape(this.#pendingNote));
     let selected = this.selectedId && this.store.get(this.selectedId);
-    if (selected && this.#liveField?.id === selected.id) selected = { ...selected, rect: this.#liveField.rect };
+    if (selected && this.#liveBox?.id === selected.id) selected = { ...selected, rect: this.#liveBox.rect };
     if (selected?.page === n) ui.push(this.#outline(selected));
-    if (selected?.page === n && selected.type === 'field') ui.push(this.#fieldHandle(selected));
+    if (selected?.page === n && isBoxed(selected)) ui.push(this.#boxHandle(selected));
     if (this.#stroke?.page === n) ui.push(this.#stroke.el);
     layer.uiGroup.replaceChildren(...ui);
   }
@@ -402,6 +500,9 @@ export class AnnotationLayer extends EventTarget {
         break;
       case 'field':
         el = this.#fieldShape(a);
+        break;
+      case 'link':
+        el = this.#linkShape(a);
         break;
       default:
         el = this.#noteShape(a);
@@ -452,8 +553,27 @@ export class AnnotationLayer extends EventTarget {
     return g;
   }
 
-  /** The corner a selected field is resized from (its bottom-right on an unrotated page). */
-  #fieldHandle(a) {
+  /** A link: a dashed box over the page, with where it goes written in it. */
+  #linkShape(a) {
+    const [x1, y1, x2, y2] = a.rect;
+    const w = x2 - x1;
+    const hgt = y2 - y1;
+    const g = svg('g', { class: `vl-link${a.url || Number.isInteger(a.target) ? '' : ' vl-link-empty'}` });
+    g.append(svg('rect', { class: 'vl-link-box', x: x1, y: y1, width: w, height: hgt, rx: 1.5 }));
+    const size = Math.max(4, Math.min(9, hgt * 0.5));
+    const label = svg('g', { transform: `translate(${x1} ${y2}) scale(1 -1)` });
+    const text = svg('text', { class: 'vl-link-label', x: 3, y: hgt / 2 + size * 0.36, 'font-size': size });
+    text.textContent = linkLabel(a);
+    label.append(text);
+    g.append(label);
+    const title = svg('title');
+    title.textContent = `Link · ${linkLabel(a)}`;
+    g.append(title);
+    return g;
+  }
+
+  /** The corner a selected field or link is resized from (its bottom-right on an unrotated page). */
+  #boxHandle(a) {
     const size = 7;
     return svg('rect', { class: 'vl-field-handle', 'data-id': a.id, x: a.rect[2] - size / 2, y: a.rect[1] - size / 2, width: size, height: size });
   }
@@ -505,13 +625,13 @@ export class AnnotationLayer extends EventTarget {
       const note = e.target.closest?.('.vl-note[data-id]');
       if (note) this.#startNoteDrag(e, note);
       const handle = e.target.closest?.('.vl-field-handle[data-id]');
-      const field = handle ?? e.target.closest?.('.vl-field[data-id]');
-      if (field) this.#startFieldDrag(e, field.dataset.id, handle ? 'resize' : 'move');
+      const box = handle ?? e.target.closest?.('.vl-field[data-id], .vl-link[data-id]');
+      if (box) this.#startBoxDrag(e, box.dataset.id, handle ? 'resize' : 'move');
     }
   }
 
   #onPointerUp(e) {
-    if (e.button !== 0 || this.tool === 'ink' || this.tool === 'note' || this.tool === 'edit' || this.tool === 'field') return;
+    if (e.button !== 0 || ['ink', 'note', 'edit', 'field', 'link'].includes(this.tool)) return;
     // Let the browser settle the selection first.
     setTimeout(() => {
       const selection = getSelection();
@@ -534,6 +654,10 @@ export class AnnotationLayer extends EventTarget {
     }
     if (this.tool === 'field') {
       if (at) this.addFieldAt(e.clientX, e.clientY);
+      return;
+    }
+    if (this.tool === 'link') {
+      if (at) this.addLinkAt(e.clientX, e.clientY);
       return;
     }
     if (this.tool !== 'select' || e.target.closest?.('.annotationLayer a')) return;
@@ -664,8 +788,8 @@ export class AnnotationLayer extends EventTarget {
     window.addEventListener('pointerup', up);
   }
 
-  /** Moves a created field with the pointer, or resizes it from its handle: one undo step when dropped. */
-  #startFieldDrag(e, id, mode) {
+  /** Moves a field or a link with the pointer, or resizes it from its handle: one undo step when dropped. */
+  #startBoxDrag(e, id, mode) {
     const a = this.store.get(id);
     const at = this.#pageAt(e.target);
     if (!a || !at) return;
@@ -673,6 +797,7 @@ export class AnnotationLayer extends EventTarget {
     const origin = this.#toPdf(at.pageView, e.clientX, e.clientY);
     const start = [e.clientX, e.clientY];
     const [x1, y1, x2, y2] = a.rect;
+    const minimum = a.type === 'link' ? MIN_LINK_SIZE : MIN_FIELD_SIZE;
     let moved = false;
     const move = (ev) => {
       if (!moved && Math.hypot(ev.clientX - start[0], ev.clientY - start[1]) < 4) return;
@@ -680,16 +805,16 @@ export class AnnotationLayer extends EventTarget {
       const [px, py] = this.#toPdf(at.pageView, ev.clientX, ev.clientY);
       const rect = mode === 'move'
         ? [x1 + px - origin[0], y1 + py - origin[1], x2 + px - origin[0], y2 + py - origin[1]]
-        : [x1, Math.min(py, y2 - MIN_FIELD_SIZE), Math.max(px, x1 + MIN_FIELD_SIZE), y2];
-      this.#liveField = { id, rect };
+        : [x1, Math.min(py, y2 - minimum), Math.max(px, x1 + minimum), y2];
+      this.#liveBox = { id, rect };
       this.#closePopover();
       this.#render(a.page);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      const live = this.#liveField;
-      this.#liveField = null;
+      const live = this.#liveBox;
+      this.#liveBox = null;
       if (!moved || !live) return;
       this.#suppressClick = true;
       setTimeout(() => { this.#suppressClick = false; });
@@ -733,6 +858,7 @@ export class AnnotationLayer extends EventTarget {
       })),
       h('div', { class: 'vl-sep' }),
       this.#popButton('underline', 'Underline', () => this.markSelection('underline')),
+      this.#popButton('link', 'Link', () => this.addLinkOverSelection()),
       this.#popButton('copy', 'Copy', () => {
         copySelection();
         this.#closePopover();
@@ -831,10 +957,80 @@ export class AnnotationLayer extends EventTarget {
     this.#openPopover(el, () => this.#clientRect(this.store.get(a.id) ?? a), 'annotation');
   }
 
+  /**
+   * Bar for a selected link: where it goes — an address, or a page of this document — and delete.
+   * Both the links Vellum creates and the file's own are edited here; an address Vellum wouldn't open
+   * (javascript:, file:, data:) is refused, and the link keeps the destination it had.
+   */
+  #showLinkBar(a) {
+    const current = () => this.store.get(a.id) ?? a;
+    const pageCount = this.view.pdf?.numPages ?? Infinity;
+    const urlInput = h('input', {
+      class: 'field vl-field-input', type: 'text', spellcheck: 'false', style: 'width:230px',
+      'aria-label': 'Link address', title: 'Web address, e-mail address or telephone number', placeholder: 'https://example.com',
+    });
+    const pageInput = h('input', {
+      class: 'field vl-field-input', type: 'text', spellcheck: 'false', style: 'width:52px',
+      'aria-label': 'Page in this document', title: 'Page in this document', placeholder: 'Page',
+    });
+    urlInput.value = current().url ?? '';
+    pageInput.value = Number.isInteger(current().target) ? String(current().target) : '';
+    const commitUrl = () => {
+      const text = urlInput.value.trim();
+      if (!text) {
+        urlInput.removeAttribute('aria-invalid');
+        if (current().url) this.store.update(a.id, { url: null });
+        return;
+      }
+      const url = linkUrl(text);
+      urlInput.toggleAttribute('aria-invalid', !url);
+      if (!url) return;
+      urlInput.value = url;
+      pageInput.value = '';
+      this.store.update(a.id, { url, target: null });
+    };
+    const commitPage = () => {
+      const text = pageInput.value.trim();
+      if (!text) {
+        pageInput.removeAttribute('aria-invalid');
+        if (Number.isInteger(current().target)) this.store.update(a.id, { target: null });
+        return;
+      }
+      const number = Number(text);
+      const ok = Number.isInteger(number) && number >= 1 && number <= pageCount;
+      pageInput.toggleAttribute('aria-invalid', !ok);
+      if (!ok) return;
+      urlInput.value = '';
+      this.store.update(a.id, { target: number, url: null });
+    };
+    for (const [el, commit] of [[urlInput, commitUrl], [pageInput, commitPage]]) {
+      el.addEventListener('change', commit);
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          commit();
+        }
+      });
+    }
+    const el = h('div', { class: 'vl-pop ui', role: 'toolbar', 'aria-label': 'Link' },
+      h('span', { class: 'vl-field-kind', text: 'Link' }),
+      urlInput,
+      h('span', { class: 'vl-field-kind', text: 'or' }),
+      pageInput,
+      h('div', { class: 'vl-sep' }),
+      this.#popButton('trash-2', 'Delete (Del)', () => this.deleteSelected()));
+    this.#openPopover(el, () => this.#clientRect(this.store.get(a.id) ?? a), 'annotation');
+    if (!a.url && !Number.isInteger(a.target)) urlInput.focus();
+  }
+
   /** Bar for a selected annotation: colour and delete. */
   #showAnnotationBar(a) {
     if (a.type === 'field') {
       this.#showFieldBar(a);
+      return;
+    }
+    if (a.type === 'link') {
+      this.#showLinkBar(a);
       return;
     }
     const el = h('div', { class: 'vl-pop ui', role: 'toolbar', 'aria-label': 'Annotation' },

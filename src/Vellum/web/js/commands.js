@@ -133,6 +133,12 @@ export function createCommands(app, ui, actions) {
     'forms.addRadio': { group: 'Forms', icon: 'list-checks', doc: true, label: 'Add radio button', run: () => doc()?.annotLayer.startField('radio') },
     'forms.addDropdown': { group: 'Forms', icon: 'chevron-down', doc: true, label: 'Add dropdown', run: () => doc()?.annotLayer.startField('dropdown') },
 
+    'links.add': { group: 'Links', icon: 'link', doc: true, label: 'Add link', run: () => doc()?.annotLayer.startLink() },
+    'links.addOverSelection': {
+      group: 'Links', icon: 'link', doc: true, palette: false, label: 'Link selected text',
+      when: () => Boolean(doc()?.getSelectedText()), run: () => doc()?.annotLayer.addLinkOverSelection(),
+    },
+
     'edit.text': { group: 'Edit', icon: 'type', doc: true, label: 'Edit text', keys: ['E'], run: () => doc()?.setTool('edit') },
 
     'arrange.alignLeft': { group: 'Arrange', icon: 'align-start-vertical', doc: true, label: 'Align left edges', run: () => arrange('left') },
