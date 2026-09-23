@@ -5,10 +5,18 @@
 // Document history (src/Vellum/Services/DocumentHistory.cs): Save As moves a document's history to its new path.
 // Document collections (src/Vellum/Services/DocumentCollections.cs): named lists of paths that persist; PDFs untouched.
 // Saved research (src/Vellum/Services/SavedResearch.cs): a result kept as the page made it, given back unchanged, deleted one at a time.
+// Office → PDF providers (src/Vellum/Services/Conversion): see OfficeConversionTests.cs.
 
 using System.Net;
 using System.Security.Cryptography;
 using Vellum.Services;
+
+// Run again by the process-runner tests: prints each argument it was given, escaped, one per line.
+if (args is ["--echo-args", .. var echo])
+{
+    foreach (var arg in echo) Console.WriteLine($"<{Uri.EscapeDataString(arg)}>");
+    return 0;
+}
 
 var failures = 0;
 void Check(string name, bool ok, string? detail = null)
@@ -280,6 +288,8 @@ Check("a file that can't be read at all starts over", broken.All.Count == 0);
 Check("… and is kept beside it, so nothing a person saved is lost for good", File.Exists(researchFile + ".bad"));
 broken.Save("After the damage", [reportA], result);
 Check("saving again works and rewrites the file", new SavedResearch(researchFolder).All.Count == 1);
+
+await OfficeConversionTests.Run(Check, root);
 
 try { Directory.Delete(root, true); } catch (IOException) { }
 Console.WriteLine(failures == 0 ? "all passed" : $"{failures} failed");

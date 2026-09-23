@@ -1201,7 +1201,7 @@ The Gate column below is always on the command.
 
 | Future capability | Category / section | Gate (on the command) | Notes |
 |---|---|---|---|
-| Office → PDF (Word, Excel, PowerPoint) | Convert / To PDF | `presentIf: 'engine.office'` | One tool per source format. The engine (Vision §13.3) decides presence. With no engine, the tool isn't shown at all |
+| Office → PDF (Word, Excel, PowerPoint) | Convert / To PDF | `presentIf: 'engine.office'` | One tool per source format. The host's `office.providers` decides presence (ARCHITECTURE_GUIDELINES.md, *Office conversion providers*): present when an installed provider can convert the format; a provider that is only busy (PowerPoint open) leaves the tool shown with its reason. With no provider, the tool isn't shown at all |
 | Additional conversion providers | Convert | provider presence | Providers never add their own tools: the *format* is the tool, and the provider is chosen inside the workflow |
 | PDF → JPG/PNG as a standalone (no Export dialog) | Convert | – | Stays *PDF to images*; don't add a second tool |
 | Repair | Optimize | `document` | Joins the *Large/problematic* recommendation rule when it exists |

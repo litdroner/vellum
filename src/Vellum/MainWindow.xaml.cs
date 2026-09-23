@@ -56,6 +56,7 @@ public partial class MainWindow : Window
         _updateFailed = relaunch.FailedVersion;
         _pendingFiles = [.. startupFiles, .. relaunch.Files.Except(startupFiles, StringComparer.OrdinalIgnoreCase)];
         _ = Task.Run(_updater.CleanUp);
+        _ = Task.Run(_office.CleanUp);
         RestorePlacement();
         ApplyThemeColors();
 
@@ -636,6 +637,7 @@ public partial class MainWindow : Window
         RegisterOcrLanguageHandlers(bridge);
         RegisterExportHandlers(bridge);
         RegisterHtmlToPdfHandlers(bridge);
+        RegisterOfficeConversionHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------

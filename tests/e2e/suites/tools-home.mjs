@@ -10,7 +10,7 @@ export const files = { doc: 'multipage' };
 export const timeoutMs = 90000;
 
 // Every bridge request that shows a Windows dialog (MainWindow*.cs).
-const NATIVE = ['openDialog', 'pictureDialog', 'attachDialog', 'collections.addDialog', 'saveAsDialog', 'splitTargets', 'export.folder', 'html.toPdf', 'history.move'];
+const NATIVE = ['openDialog', 'pictureDialog', 'attachDialog', 'collections.addDialog', 'saveAsDialog', 'splitTargets', 'export.folder', 'html.toPdf', 'office.toPdf', 'history.move'];
 const DEFAULTS = ['merge-pdfs', 'images-to-pdf', 'compare-documents', 'html-to-pdf'];
 // The commands the cases run, spied on: the four Home tools and two that need a document.
 const SPIED = ['pages.merge', 'pages.imagesToPdf', 'tools.compare', 'pages.htmlToPdf', 'tools.compress', 'pages.rotateRight', 'file.open'];

@@ -220,7 +220,10 @@ Editing real PDF content in place, under §2.2.
 
 ### 3.5 Convert
 
-All conversion runs locally, with vendored engines; nothing is sent anywhere.
+All conversion runs locally; nothing is sent anywhere. Conversions from PDF use Vellum's own vendored code.
+Word, Excel and PowerPoint → PDF use an Office application already on the PC — Microsoft Office when it is
+installed and usable, else LibreOffice — run locally; Vellum bundles no Office renderer and uses no
+conversion service, and says so plainly when neither is there (owner decision, 2026-09-24, §14).
 
 - PDF → JPG, PDF → PNG
 - PDF → Word, PDF → Excel, PDF → PowerPoint
@@ -536,7 +539,7 @@ Recorded so they are not decided silently. Each needs the owner.
    such as a page background or table rule, can't simply be deleted), and the repeated information the
    table in §3.6 lists (metadata, bookmarks, annotations, form values, tagged-structure text), which this
    subset refuses or doesn't touch.
-3. **Local engines** for Office conversions (§3.5), OCR (§3.8), digital certificate signatures (§3.7) and
+3. **Local engines** for OCR (§3.8), digital certificate signatures (§3.7) and
    local AI models (§3.9): each needs a vendored, offline, licence-compatible engine chosen before its
    feature starts.
 4. **Extensions and templates** (§3.11): what they are, and the security model for extensions (no network,
@@ -559,3 +562,4 @@ Recorded so they are not decided silently. Each needs the owner.
 | 2026-09-22 | Owner asked for downloadable OCR language packs: downloaded only on the user's click, from GitHub, verified before use, stored outside the install; this is the second kind of network activity Vellum itself has, after the updater (§3.8) |
 | 2026-09-15 | Themes: seven base themes, each with Light and an Obsidian-treated Dark variant; Obsidian Dark is not an eighth theme (§5) |
 | 2026-09-15 | OCR and digital certificate signatures are planned capabilities, not out of scope (README corrected) |
+| 2026-09-24 | Office → PDF (Word, Excel, PowerPoint) is done by an Office application already on the PC, run locally: Microsoft Office when installed and usable, else LibreOffice. No bundled Office renderer, no cloud conversion; with neither, Vellum says no local provider is available. This settles Office conversion in §13.3 (§3.5) |

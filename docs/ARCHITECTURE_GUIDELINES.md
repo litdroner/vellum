@@ -12,6 +12,7 @@ src/Vellum/                       C# host (WPF + WebView2)
   MainWindow.Updates.cs           bridge handlers for in-app updates (one partial file per host feature)
   Hosting/                        BridgeHost (JSON request/reply + events), AppResourceServer (serves UI and PDFs)
   Services/                       settings, recent files, updater, file association, single instance
+  Services/Conversion/            Office → PDF: providers, selection, the office.toPdf operation, process runner
   web/                            the UI, served from https://app.vellum
     js/app.js                     composition root: creates the app, wires features together
     js/commands.js                THE registry of user actions (label, keys, icon, group, run)
@@ -110,6 +111,45 @@ AIProvider              the interface features call (what it can do, whether it'
 - No document is sent to an external service. A cloud provider, if ever chosen, is its own opt-in
   decision and follows "Offline and privacy" above.
 
+## Office conversion providers
+
+Word, Excel and PowerPoint → PDF run in an Office application already on the PC, locally; Vellum bundles no
+Office renderer and uses no conversion service. The host owns it (`Services/Conversion/`):
+
+```
+IOfficeProvider              Detect (installed? which formats? starts nothing) · BusyReason (now?) · ConvertAsync
+├── MicrosoftOfficeProvider  Word / Excel / PowerPoint's own automation, in a child Vellum.exe --office-to-pdf
+└── LibreOfficeProvider      soffice --headless --convert-to pdf, in a throwaway profile
+OfficeConversion             selection, and the office.toPdf operation (OfficeToPdfRequest → ConversionResult)
+ProcessRunner                the only way a provider starts a program: time limit, cancellation, whole tree ended
+```
+
+- **Three questions, three answers.** Installed at all (else `noProvider`), can convert this format (else
+  `notSupported`: Office without PowerPoint), can run now (else `unavailable`: PowerPoint is open).
+  Detection reads the registry and files only, and claims a format only when the real application is there:
+  the COM server must be that application's own program, Office 2010 or later, each application on its own;
+  LibreOffice's Writer, Calc and Impress each on their own.
+- **Selection is fixed:** Microsoft Office, then LibreOffice — the first installed, capable and not busy. A
+  failure is reported with the provider named, never retried with the other. A request may name a provider;
+  there are no preference settings yet.
+- **One operation, no UI in it.** `office.toPdf` takes full paths and returns a structured result (status,
+  message, provider, output, diagnostics). The bridge's `office.toPdf` adds the Open and Save dialogs; Batch
+  and Flow will call the operation with their own files, never through a tool id. `office.providers` reports
+  what the PC has, starting nothing; the presence name `engine.office` comes from it.
+- **Files.** The source is only read: the provider converts a private copy under a plain name, in a work
+  folder under the data folder that is removed afterwards (and swept at startup). The PDF must start as a PDF,
+  is written beside its destination and moved into place, so a failure never touches an existing file. A
+  password-protected .docx/.xlsx/.pptx is refused before anything starts; nothing is ever prompted for.
+- **The process boundary.** One conversion at a time, each with a time limit (3 minutes by default, 30 at
+  most) and cancellation. Programs run with no window and no shell, arguments one by one, inside a Windows job
+  that ends whatever is left when the run ends or Vellum does. Past the limit the whole tree is ended, and so
+  is the Office application the helper started — never one it didn't start: Vellum converts only in an
+  instance it started itself. Macros are off and nothing is asked (alerts off); Excel leaves links to other
+  workbooks alone, and LibreOffice starts with a profile set to block links to untrusted content. No Office
+  setting that outlives the conversion is changed.
+- **Privacy.** Vellum uploads nothing. The provider is a third-party application: a document that links to
+  web content may make it fetch that content, as opening the document in that application would. Claim no more.
+
 ## Adding a feature
 
 1. Put its logic in its own module (`js/<feature>/` or `js/ui/<feature>.js`).
@@ -138,6 +178,9 @@ pdf.js for what's drawn). `VELLUM_TEST_PDFS="a.pdf;b.pdf"` adds real files, read
 `node --test "tests/catalog/*.test.mjs"` covers the command registry, `requirements.js`, the Tools
 catalog and the shared search (golden queries, the palette's exact-label promise) and which modules
 may import which; it needs no app and no PDF.
+`dotnet run --project tests/host` covers the host's services, the Office conversion providers among them
+(a fake registry and runner, and the real process runner's limits); `VELLUM_OFFICE_SMOKE=1` adds a real
+conversion with whatever this PC has, skipped when it has none.
 
 **The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
 build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in
