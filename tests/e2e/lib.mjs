@@ -5,7 +5,9 @@ import { sleep } from '../../tools/cdp-client.mjs';
 export function createContext({ c, dir, files, results }) {
   const q = (expr) => c.evaluate(expr);
   let area = null;
+  let stopped = false;
   const check = (label, ok, detail = '') => {
+    if (stopped) return Boolean(ok);
     const entry = { area, ok: Boolean(ok), label, detail: detail === undefined || detail === null ? '' : String(detail).slice(0, 600) };
     results.push(entry);
     console.log(`${entry.ok ? 'PASS' : 'FAIL'}  ${area ? `[${area}] ` : ''}${label}${entry.detail ? ` — ${entry.detail}` : ''}`);
@@ -27,6 +29,10 @@ export function createContext({ c, dir, files, results }) {
     file: (name) => files[name],
     /** Groups the following checks under a heading in the report. */
     area: (name) => { area = name; },
+    /** The heading checks are grouped under now (the runner names it when a suite runs out of time). */
+    currentArea: () => area,
+    /** The runner stopped this suite: whatever it still does is neither printed nor reported. */
+    stop: () => { stopped = true; },
     shot: (name) => c.shot(path.join(dir, 'shots', `${name}.png`)),
   };
 }

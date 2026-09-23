@@ -25,6 +25,8 @@ import { fileURLToPath } from 'node:url';
 import { connect, sleep } from '../../../tools/cdp-client.mjs';
 
 export const files = { 'update-doc': 'compare-a' };
+// Two builds, test installers, installs and restarts.
+export const timeoutMs = 900000;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const DEBUG_OUT = path.join(ROOT, 'src', 'Vellum', 'bin', 'Debug', 'net10.0-windows');
@@ -80,7 +82,7 @@ function compile(compiler, name, script) {
   fs.mkdirSync(out, { recursive: true });
   const file = path.join(out, 'UpdateTest.iss');
   fs.writeFileSync(file, script.replace('@OUT@', out));
-  const built = spawnSync(compiler, ['/Q', file], { encoding: 'utf8' });
+  const built = spawnSync(compiler, ['/Q', file], { encoding: 'utf8', timeout: 300000, killSignal: 'SIGKILL' });
   if (built.status !== 0) throw new Error(`the ${name} test installer didn’t build: ${built.stdout}${built.stderr}`);
   const bytes = fs.readFileSync(path.join(out, 'Vellum-Setup.exe'));
   installers[name] = { bytes, sha: sha256(bytes) };
@@ -106,8 +108,8 @@ export async function prepare({ dir }) {
   const hasLocal = fs.existsSync(path.join(local, 'dotnet.exe'));
   const build = spawnSync(hasLocal ? path.join(local, 'dotnet.exe') : 'dotnet',
     ['build', path.join(newSrc, 'Vellum.csproj'), '-c', 'Debug', `-p:Version=${VERSION}`, '-o', newBuild, '--nologo', '-v', 'q'],
-    { encoding: 'utf8', env: hasLocal ? { ...process.env, DOTNET_ROOT: local } : process.env });
-  if (build.status !== 0) throw new Error(`the ${VERSION} build failed: ${build.stdout}${build.stderr}`.slice(0, 2000));
+    { encoding: 'utf8', env: hasLocal ? { ...process.env, DOTNET_ROOT: local } : process.env, timeout: 600000, killSignal: 'SIGKILL' });
+  if (build.status !== 0) throw new Error(`the ${VERSION} build failed: ${build.error?.code === 'ETIMEDOUT' ? 'stopped after 10 minutes' : ''}${build.stdout}${build.stderr}`.slice(0, 2000));
 
   const setup = (appId) => `[Setup]
 AppId=${appId}
@@ -196,7 +198,7 @@ function page(c) {
 /** Vellum processes started from the temp "installed" folder. */
 function installedPids() {
   const ps = `Get-CimInstance Win32_Process -Filter "Name='Vellum.exe'" | Where-Object { $_.ExecutablePath -eq '${path.join(installed, 'Vellum.exe').replace(/'/g, "''")}' } | ForEach-Object { $_.ProcessId }`;
-  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8' }).stdout ?? '';
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' }).stdout ?? '';
   return out.split(/\s+/).filter(Boolean).map(Number);
 }
 
@@ -418,5 +420,5 @@ export async function cleanup() {
   server?.close();
   if (!runDir) return;
   const ps = `Get-CimInstance Win32_Process -Filter "Name='Vellum.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${runDir.replace(/'/g, "''")}', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { taskkill /PID $_.ProcessId /T /F | Out-Null }`;
-  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore' });
+  spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', timeout: 60000, killSignal: 'SIGKILL' });
 }

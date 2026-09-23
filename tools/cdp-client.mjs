@@ -15,34 +15,78 @@ const CODES = {
   ';': 'Semicolon', "'": 'Quote', '`': 'Backquote',
 };
 
-export async function connect({ port = 9222, timeoutMs = 20000 } = {}) {
+/**
+ * Connects to Vellum's page. Nothing here waits without a limit:
+ *   timeoutMs         for finding the page and opening the connection
+ *   requestTimeoutMs  for each request's answer (default 60 s; one call can ask for longer, as
+ *                     send(method, params, { timeoutMs }) and evaluate(expression, { timeoutMs }))
+ * A request that isn't answered in time, or is pending when the connection closes, fails with a short
+ * message naming it, so a hung page stops a test in seconds instead of holding it forever.
+ */
+export async function connect({ port = 9222, timeoutMs = 20000, requestTimeoutMs = 60000 } = {}) {
   let target;
   const deadline = Date.now() + timeoutMs;
   while (!target && Date.now() < deadline) {
     try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      const signal = AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now())));
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal })).json();
       target = list.find((t) => t.type === 'page' && t.url.startsWith('https://app.vellum'));
     } catch { /* not up yet */ }
-    if (!target) await sleep(250);
+    if (!target && Date.now() < deadline) await sleep(250);
   }
-  if (!target) throw new Error('No Vellum page target');
+  if (!target) throw new Error(`No Vellum page target within ${Math.round(timeoutMs / 1000)} s`);
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let openTimer;
+  try {
+    await new Promise((res, rej) => {
+      ws.onopen = res;
+      ws.onerror = () => rej(new Error('The DevTools connection couldn’t open'));
+      openTimer = setTimeout(() => rej(new Error('The DevTools connection didn’t open within 10 s')), 10000);
+    });
+  } catch (err) {
+    ws.close();
+    throw err;
+  } finally {
+    clearTimeout(openTimer);
+  }
+
   let nextId = 0;
+  let closed = null;
+  /** id → { resolve, reject, timer, what } of each request not answered yet. */
   const pending = new Map();
+  const take = (id) => {
+    const entry = pending.get(id);
+    pending.delete(id);
+    if (entry) clearTimeout(entry.timer);
+    return entry;
+  };
+  const failAll = (reason) => {
+    closed ??= reason;
+    for (const id of [...pending.keys()]) { const entry = take(id); entry.reject(new Error(`${closed} (${entry.what})`)); }
+  };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    if (m.id) take(m.id)?.resolve(m);
   };
-  const send = (method, params = {}) => new Promise((res) => {
+  ws.onclose = () => failAll('The DevTools connection closed');
+  ws.onerror = () => failAll('The DevTools connection failed');
+
+  /** Sends one DevTools request; rejects if it isn't answered within the limit, or the connection closes. */
+  const send = (method, params = {}, { timeoutMs: limit = requestTimeoutMs } = {}) => new Promise((resolve, reject) => {
+    const what = method === 'Runtime.evaluate' ? `${method}: ${String(params.expression).replace(/\s+/g, ' ').slice(0, 100)}` : method;
+    if (closed || ws.readyState !== WebSocket.OPEN) {
+      reject(new Error(`${closed ?? 'The DevTools connection is closed'} (${what})`));
+      return;
+    }
     const id = ++nextId;
-    pending.set(id, res);
+    const timer = setTimeout(() => take(id)?.reject(new Error(`${what} timed out after ${Math.round(limit / 1000)} s`)), limit);
+    pending.set(id, { resolve, reject, timer, what });
     ws.send(JSON.stringify({ id, method, params }));
   });
 
-  const evaluate = async (expression) => {
-    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  const evaluate = async (expression, { timeoutMs: limit } = {}) => {
+    const r = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, limit ? { timeoutMs: limit } : {});
     if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description ?? 'eval failed');
     return r.result?.result?.value;
   };

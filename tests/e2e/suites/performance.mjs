@@ -11,6 +11,9 @@ import path from 'node:path';
 
 export const files = { perf: 'large' };
 export const external = { perf: 'VELLUM_PERF_PDF' };
+// Opening and analysing a large document can take minutes, in one request as in the whole suite.
+export const timeoutMs = 900000;
+export const requestTimeoutMs = 600000;
 
 export async function run(t) {
   const { q, check, V, settled } = t;

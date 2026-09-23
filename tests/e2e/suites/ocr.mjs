@@ -7,6 +7,8 @@
 // and written over this suite's own copy of a fixture. Only when named: node tests/e2e/run.mjs ocr
 
 export const files = { scan: 'scanned' };
+// OCR of a page may take up to two minutes.
+export const timeoutMs = 300000;
 
 const LINES = ['Vellum reads scanned pages', 'Invoice number 4821', 'Searchable text stays invisible'];
 

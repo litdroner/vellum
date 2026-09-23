@@ -69,8 +69,9 @@ Start-Sleep -Milliseconds 200
 Start-Sleep -Milliseconds 300
 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
 `);
-  const typed = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, NEW], { encoding: 'utf8' });
-  check('the Save dialog took the new path', typed.status === 0, `${typed.status} ${typed.stdout} ${typed.stderr}`);
+  // The script looks for the dialog for 10 s; a minute is enough even when UI Automation is slow.
+  const typed = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, NEW], { encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL' });
+  check('the Save dialog took the new path', typed.status === 0, `${typed.error?.code === 'ETIMEDOUT' ? 'stopped after 60 s' : typed.status} ${typed.stdout} ${typed.stderr}`);
   check('the document now lives at the new path', await waitFor(`(() => { const v = ${V(NEW)}; return Boolean(v) && v.status === 'ready' && !v.rebuilding; })()`, 20000));
   check('the new file was written, the old one left where it was', fs.existsSync(NEW) && fs.existsSync(DOC));
 

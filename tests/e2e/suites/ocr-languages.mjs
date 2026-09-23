@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const files = { scan: 'scanned' };
+// A language installs (up to a minute) and two pages are recognised (up to two minutes each).
+export const timeoutMs = 600000;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'Vellum', 'web', 'js', 'ocr', 'languages.json'), 'utf8'));

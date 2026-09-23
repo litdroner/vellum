@@ -157,3 +157,39 @@ Updates are tested with a loopback release feed (`VELLUM_UPDATE_FEED`) and a tes
 own AppId, never against a real install: `node tests/e2e/run.mjs updates` (needs Inno Setup 6) builds one
 that shares `installer/InAppUpdate.iss` with Vellum.iss and fails on purpose, so the no-window install,
 the automatic restart and the failed-update message are all exercised.
+
+**Test safety (a permanent rule).** Quality is never traded away, and testing is never allowed to loop,
+hang or burn time (docs/TOOLS_UX_SPEC.md §25):
+
+1. Every operation that can block has a hard timeout: process start, DevTools connect and every
+   DevTools request (`tools/cdp-client.mjs`: 60 s unless a call or suite asks for longer), `waitFor`,
+   window discovery, file I/O waits, and the whole suite (`run.mjs`: 300 s, or the suite's own
+   `timeoutMs`).
+2. No unbounded retry, polling, wait, process-wait, dialog-wait or window-discovery loop, ever.
+3. Retries are bounded: **at most 1**, and only where a documented flake exists.
+4. If a test stops making progress, stop.
+5. Don't re-run a failing test hoping it passes.
+6. Don't start a second copy of a test because the first looks stuck.
+7. Never wait indefinitely for a native dialog, window, process, WebView, browser, PowerShell script or
+   file operation.
+8. **On timeout:** terminate the test process **and its process tree** (`taskkill /PID … /T /F`), capture
+   compact diagnostics (the area it was in, `__vellum.errors`, one screenshot if a bounded call can take
+   it), report, and stop. `run.mjs` does this for a suite past its deadline, and drops whatever the
+   stopped suite does afterwards.
+9. Prefer deterministic seams and stubs (the bridge stub for `openDialog` / `pictureDialog`, command
+   spies) over GUI automation whenever the GUI isn't what's under test.
+10. Native Windows dialogs are fail-fast infrastructure: a test that could open one must stub it or not
+    run.
+11. Never ask the user to click a dialog to unblock a test.
+12. Never continue exploratory debugging automatically after a timeout.
+13. No speculative multi-fix attempts: after one failed automated attempt, analyse before trying again.
+14. If the test infrastructure itself is broken, report **TEST INFRASTRUCTURE BLOCKED** and stop.
+15. Keep output compact: pass/fail lines, and details only for failures.
+16. Run targeted suites (`node tests/e2e/run.mjs <suite>`), not the full regression, unless a release
+    asks for it.
+17. No synchronous blocking call (`spawnSync`, `execSync`) without a `timeout` and `killSignal`: a
+    blocked event loop can't be interrupted by any deadline.
+
+`node tests/e2e/run.mjs selftest-timeout` (only when named) checks the limits themselves: it never
+finishes, and passes only when a never-answered request fails at its own limit and the runner stops
+the suite at its deadline.
