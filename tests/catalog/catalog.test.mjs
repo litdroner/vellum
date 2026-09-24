@@ -18,13 +18,13 @@ const words = (text) => tokenise(text).join(' ');
 // Words for features Vellum doesn't have. An alias may use them only once the feature ships.
 const FORBIDDEN = [
   'encrypt', 'decrypt', 'password', 'unlock', 'permission', 'bates', 'translate', 'translation', 'ai', 'chat',
-  'summarize', 'summary', 'cloud', 'share', 'upload', 'certificate', 'digital signature', 'repair', 'batch',
+  'summarize', 'summary', 'cloud', 'share', 'upload', 'certificate', 'digital signature', 'repair',
   'workflow', 'template',
 ];
 const RECORD_KEYS = ['id', 'name', 'blurb', 'category', 'section', 'command', 'variants', 'aliases', 'fits', 'scope', 'icon'];
 
-test('52 tools, each a discovery record and nothing more', () => {
-  assert.equal(TOOLS.length, 52);
+test('54 tools, each a discovery record and nothing more', () => {
+  assert.equal(TOOLS.length, 54);
   for (const t of TOOLS) {
     assert.deepEqual(Object.keys(t).sort(), [...RECORD_KEYS].sort(), `${t.id}: no requires, presentIf, preset or run on a tool`);
     assert.ok(Object.isFrozen(t), t.id);
@@ -78,12 +78,10 @@ test('the five PDF to … tools each have their own export command; Fill in form
   assert.ok(!TOOLS.some((t) => toolCommands(t).includes('file.export')), 'Export… itself stays off Tools');
 });
 
-test('categories: the eight, in order, then Automate reserved, hidden and empty', () => {
+test('categories: the nine, in order; Automate appeared with batch processing, and nothing is reserved', () => {
   assert.deepEqual(CATEGORIES.map((c) => c.name), ['Edit', 'Review', 'Organize', 'Convert', 'Fill & Sign', 'Protect', 'Optimize', 'Research', 'Automate']);
-  const automate = CATEGORIES.find((c) => c.id === 'automate');
-  assert.equal(automate.reserved, true);
-  assert.equal(TOOLS.filter((t) => t.category === 'automate').length, 0, 'Automate appears with its first real tool');
-  assert.deepEqual(CATEGORIES.filter((c) => c.reserved).map((c) => c.id), ['automate']);
+  assert.deepEqual(TOOLS.filter((t) => t.category === 'automate').map((t) => t.command), ['batch.compress', 'batch.officeToPdf']);
+  assert.deepEqual(CATEGORIES.filter((c) => c.reserved).map((c) => c.id), []);
   assert.equal(new Set(CATEGORIES.map((c) => c.id)).size, CATEGORIES.length);
   for (const c of CATEGORIES) {
     assert.doesNotThrow(() => icon(c.icon), c.id);

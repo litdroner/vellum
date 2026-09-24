@@ -37,6 +37,7 @@ import { createHistoryActions } from './history/actions.js';
 import { createExportActions } from './export/actions.js';
 import { createOptimizeActions } from './optimize/actions.js';
 import { createOfficeActions } from './office/actions.js';
+import { createBatchActions } from './batch/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -450,6 +451,7 @@ actions.health = createHealthActions({ app });
 actions.export = createExportActions({ pdfjsLib: libs.pdfjsLib });
 actions.optimize = createOptimizeActions();
 actions.office = createOfficeActions({ onOpenFile: (file) => app.open(file) });
+actions.batch = createBatchActions({ office: actions.office });
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 actions.attachments = { show: (view) => showAttachments(view) };
 
@@ -610,6 +612,8 @@ app.addEventListener('viewchange', updateTitle);
 
 /** Before quitting (closing the window, or restarting to update): offer to save unsaved changes. False if cancelled. */
 async function prepareToQuit() {
+  // A batch working on files is stopped first, when the person says so (batch/actions.js).
+  if (!(await actions.batch.stopForQuit())) return false;
   for (const view of app.views) await view.textEditor?.commitPending();
   const dirty = app.views.filter((v) => v.annotations.dirty);
   if (dirty.length) {

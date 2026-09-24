@@ -120,6 +120,15 @@ test('Office tools: present where a provider can convert the format, busy or not
   for (const bad of [null, {}, { formats: 'x' }, { formats: [{ format: 'visio', status: 'ready' }] }]) assert.deepEqual(presenceFrom(bad), {});
 });
 
+test('batch: Compress many PDFs always; Office files in bulk wherever any format converts, no document needed', () => {
+  const withOffice = (r) => snapshot({ active: null }, {}, { ...actions, office: { presence: () => presenceFrom(r) } });
+  assert.deepEqual(availability(commands['batch.compress'], snap(null)), { present: true, available: true, reason: null, unmet: null });
+  assert.equal(availability(commands['batch.officeToPdf'], snap(null)).present, false, 'before office.providers has answered');
+  assert.equal(availability(commands['batch.officeToPdf'], withOffice(report('noProvider', 'noProvider', 'noProvider'))).present, false);
+  assert.deepEqual(presenceFrom(report('noProvider', 'notSupported', 'unavailable')), { 'engine.office.powerpoint': true, 'engine.office': true });
+  assert.equal(availability(commands['batch.officeToPdf'], withOffice(report('noProvider', 'ready', 'noProvider'))).available, true);
+});
+
 test('Office outcomes: a PDF, a quiet cancel, or the host’s reason under a title that fits', () => {
   assert.equal(describeOutcome({ status: 'converted', message: 'Converted with Microsoft Office.' }).kind, 'converted');
   assert.deepEqual(describeOutcome({ status: 'cancelled', message: 'The conversion was cancelled; nothing was saved.' }),

@@ -638,6 +638,7 @@ public partial class MainWindow : Window
         RegisterExportHandlers(bridge);
         RegisterHtmlToPdfHandlers(bridge);
         RegisterOfficeConversionHandlers(bridge);
+        RegisterBatchHandlers(bridge);
     }
 
     // ---- window placement & theme ------------------------------------------

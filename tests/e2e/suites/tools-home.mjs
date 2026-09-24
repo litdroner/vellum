@@ -83,7 +83,8 @@ export async function run(t) {
   check('…and goes to Recent', await recentIs(['compress-pdf']), JSON.stringify(await stored()));
   await runFromTools('rotate-pages', 'organize');
   check('another run goes in front of it', await recentIs(['rotate-pages', 'compress-pdf']), JSON.stringify(await stored()));
-  await runFromTools('compress-pdf', 'optimize');
+  // The command runs a frame after Tools closes: wait for it, so it can't land in the next area's calls.
+  await runFromTools('compress-pdf', 'optimize') && await waitFor(`__homeCalls.filter((id) => id === 'tools.compress').length === 2`, 2000);
   check('running one again moves it to the front, once', JSON.stringify(await recent()) === JSON.stringify(['compress-pdf', 'rotate-pages']), JSON.stringify(await recent()));
   await openTools();
   let view = await landing();

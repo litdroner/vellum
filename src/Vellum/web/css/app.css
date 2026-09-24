@@ -1803,6 +1803,45 @@ kbd {
   font-size: 12.5px;
 }
 
+/* ---- batch (ui/batch.js) ------------------------------------------------------------------- */
+
+/* The dialog's own parts (choices, the folder path, progress, buttons) are the export dialog's; this only lays
+   out the file list, which takes the room the window has and scrolls, so the buttons stay in view. */
+.batch-dialog { display: flex; flex-direction: column; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); }
+.batch-dialog > * { flex: none; }
+.batch-dialog .dialog-icon { align-self: flex-start; }
+.batch-add { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.batch-count { margin-left: auto; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.batch-empty { margin: 0; padding: 18px 13px; border-radius: 12px; color: var(--ink-3); font-size: 12.5px; text-align: center; box-shadow: inset 0 0 0 1px var(--hairline); }
+.batch-dialog > .batch-list { flex: 0 1 auto; }
+.batch-list { display: flex; flex-direction: column; gap: 4px; min-height: 52px; max-height: min(40vh, 360px); margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.batch-list:empty { display: none; }
+.batch-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; border-radius: 11px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
+.batch-glyph { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--ink-3); }
+.batch-item[data-status="succeeded"] .batch-glyph { color: var(--accent-ink); }
+.batch-item:is([data-status="failed"], [data-status="timedOut"]) .batch-glyph { color: var(--danger); }
+.batch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.batch-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-2); font-size: 13px; }
+.batch-detail { color: var(--ink-3); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.batch-item:is([data-status="failed"], [data-status="timedOut"]) .batch-detail { color: var(--ink-2); }
+.batch-act { flex: none; display: flex; }
+.batch-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink-3);
+  transition: background-color var(--fast), color var(--fast);
+}
+.batch-btn:hover { background: var(--hover); color: var(--ink); }
+.batch-options { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.batch-options .choice-note { flex-basis: 100%; color: var(--ink-3); font-size: 12px; }
+.batch-folder { flex-basis: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.batch-dialog .progress { margin-top: 14px; }
+
 /* ---- signature (ui/signature.js) ----------------------------------------------------------- */
 
 .dialog.signature-dialog { width: min(540px, calc(100vw - 40px)); }

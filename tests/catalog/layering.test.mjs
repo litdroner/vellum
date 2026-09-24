@@ -2,6 +2,8 @@
 //   commands.js and requirements.js  no UI module, no bridge (they load anywhere, Node included)
 //   catalog/*                        nothing from the app at all: data and pure functions
 //   the palette                      loads the catalog only when it first opens, never at startup
+//   operations/ and batch/engine.js  no UI module, no bridge, no catalog, no commands: automation runs
+//                                    operations, never tools or commands (docs/TOOLS_UX_SPEC.md §29 Q13)
 // Run: node --test "tests/catalog/*.test.mjs"
 
 import test from 'node:test';
@@ -67,5 +69,12 @@ test('the palette loads search and the catalog on first open only, and startup n
 test('nothing imports the palette from the catalog side, and the catalog never imports commands', () => {
   for (const name of catalogModules) {
     assert.ok(!loadedBy(name).some((n) => n === 'ui/palette.js' || n === 'commands.js' || n === 'requirements.js'), name);
+  }
+});
+
+test('operations and the batch engine load no UI, bridge, catalog or command registry, however indirectly', () => {
+  for (const start of ['operations/registry.js', 'batch/engine.js']) {
+    const loaded = loadedBy(start);
+    assert.deepEqual(loaded.filter((n) => uiOrBridge(n) || n.startsWith('catalog/') || n === 'commands.js' || n === 'requirements.js'), [], start);
   }
 });

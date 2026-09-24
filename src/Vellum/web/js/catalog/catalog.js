@@ -33,8 +33,8 @@ export const CATEGORIES = Object.freeze([
     sections: [{ id: 'redact', name: 'Redact' }] },
   { id: 'optimize', name: 'Optimize', icon: 'minimize-2', blurb: 'Smaller, searchable, archive-ready, checked', sections: [] },
   { id: 'research', name: 'Research', icon: 'book-open', blurb: 'Understand a document and quote from it', sections: [] },
-  // Hidden until Batch Center or Vellum Flow exists: an empty category would promise a feature.
-  { id: 'automate', name: 'Automate', icon: 'sliders-horizontal', blurb: 'Run the same steps on many files', sections: [], reserved: true },
+  // Batch processing: one operation over many files (batch/). Vellum Flow will join it.
+  { id: 'automate', name: 'Automate', icon: 'sliders-horizontal', blurb: 'Run the same steps on many files', sections: [] },
 ].map((category) => Object.freeze({ reserved: false, ...category })));
 
 const tool = (fields) => Object.freeze({ variants: null, fits: null, icon: null, ...fields });
@@ -162,6 +162,12 @@ export const TOOLS = Object.freeze([
     command: 'tools.graph', scope: 'document', aliases: ['relationships', 'links between', 'knowledge graph'] }),
   tool({ id: 'copy-tables', name: 'Copy tables', blurb: 'The tables on this page, ready to paste', category: 'research', section: null,
     command: 'tools.copyTables', scope: 'page', aliases: ['extract table', 'table to clipboard', 'tsv'] }),
+
+  // Automate
+  tool({ id: 'batch-compress', name: 'Compress many PDFs', blurb: 'A smaller copy of each of several PDFs, in one go', category: 'automate', section: null,
+    command: 'batch.compress', scope: 'files', aliases: ['batch compress', 'bulk compress', 'compress folder', 'compress multiple pdfs', 'batch processing'] }),
+  tool({ id: 'batch-office-to-pdf', name: 'Convert many Office files to PDF', blurb: 'Word, Excel and PowerPoint files, each as a PDF, in one go', category: 'automate', section: null,
+    command: 'batch.officeToPdf', scope: 'files', aliases: ['batch convert', 'bulk convert', 'convert folder to pdf', 'many word files to pdf', 'batch processing'] }),
 ]);
 
 /** The Home row's tools when none has been run yet, in order (docs/TOOLS_UX_SPEC.md §8): tool ids. */
@@ -170,6 +176,7 @@ export const HOME_TOOLS = Object.freeze(['merge-pdfs', 'images-to-pdf', 'compare
 /** Aliases two tools may share: [alias, [toolId, toolId]]. Everything else is one tool's own. */
 export const SHARED_ALIASES = Object.freeze([
   ['office to pdf', ['word-to-pdf', 'excel-to-pdf', 'powerpoint-to-pdf']],
+  ['batch processing', ['batch-compress', 'batch-office-to-pdf']],
 ]);
 
 /** Every command a tool runs: its own, then its variants'. */

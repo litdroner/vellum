@@ -92,7 +92,7 @@ export async function run(t) {
   await openTools({ query: 'office' });
   await waitFor(`document.querySelectorAll('.tools-option[data-tool]').length > 0`, 5000);
   const found = await q(`[...new Set([...document.querySelectorAll('.tools-option[data-tool]')].map((el) => el.dataset.tool))]`);
-  check('searching Tools for “office” finds the two that are there, and nothing else', JSON.stringify(found.sort()) === JSON.stringify(OFFICE.slice(0, 2).sort()), JSON.stringify(found));
+  check('searching Tools for “office” finds the two that are there, and the batch one, and nothing else', JSON.stringify(found.sort()) === JSON.stringify([...OFFICE.slice(0, 2), 'batch-office-to-pdf'].sort()), JSON.stringify(found));
   await closeTools();
   const labels = await paletteLabels('Word to PDF');
   check('the palette finds Word to PDF… first', labels[0] === 'Word to PDF…', JSON.stringify(labels));

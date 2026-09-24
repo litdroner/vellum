@@ -6,6 +6,7 @@
 // Document collections (src/Vellum/Services/DocumentCollections.cs): named lists of paths that persist; PDFs untouched.
 // Saved research (src/Vellum/Services/SavedResearch.cs): a result kept as the page made it, given back unchanged, deleted one at a time.
 // Office → PDF providers (src/Vellum/Services/Conversion): see OfficeConversionTests.cs.
+// Export targets (src/Vellum/Services/ExportTargets.cs): where a file Vellum writes lands; never on a file it may only read.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -288,6 +289,25 @@ Check("a file that can't be read at all starts over", broken.All.Count == 0);
 Check("… and is kept beside it, so nothing a person saved is lost for good", File.Exists(researchFile + ".bad"));
 broken.Save("After the damage", [reportA], result);
 Check("saving again works and rewrites the file", new SavedResearch(researchFolder).All.Count == 1);
+
+// Export targets: a cleaned name in its own folder; Keep both numbers it; replacing never lands on a file the
+// page may only read (a batch's source), nor twice on one path in the same request.
+var targets = Path.Combine(root, "targets");
+Directory.CreateDirectory(targets);
+File.WriteAllText(Path.Combine(targets, "report.pdf"), "old");
+var batchSource = Path.Combine(targets, "source.pdf");
+File.WriteAllText(batchSource, "source");
+bool ReadOnly(string p) => string.Equals(p, batchSource, StringComparison.OrdinalIgnoreCase);
+Check("a name can't climb out of its folder", ExportTargets.CleanName(@"..\..\evil.pdf") == "evil.pdf" && ExportTargets.CleanName("re:port?.pdf") == "report.pdf" && ExportTargets.CleanName(@"C:\elsewhere\x.pdf") == "x.pdf");
+Exception? badName = null;
+try { ExportTargets.CleanName(" .. "); } catch (Exception refused) { badName = refused; }
+Check("an empty or dot name is refused", badName is ArgumentException, badName?.GetType().Name);
+var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+Check("replacing writes the name itself", ExportTargets.Resolve(targets, "report.pdf", false, taken, ReadOnly) == Path.Combine(targets, "report.pdf"));
+Check("… but not twice in one request", ExportTargets.Resolve(targets, "REPORT.pdf", false, taken, ReadOnly) == Path.Combine(targets, "REPORT (2).pdf"));
+Check("keep both numbers a name already there", ExportTargets.Resolve(targets, "report.pdf", true, new HashSet<string>(StringComparer.OrdinalIgnoreCase), ReadOnly) == Path.Combine(targets, "report (2).pdf"));
+Check("a read-only source is never a target, even when replacing", ExportTargets.Resolve(targets, "Source.pdf", false, new HashSet<string>(StringComparer.OrdinalIgnoreCase), ReadOnly) == Path.Combine(targets, "Source (2).pdf"));
+Check("… and is left as it was", File.ReadAllText(batchSource) == "source" && File.ReadAllText(Path.Combine(targets, "report.pdf")) == "old");
 
 await OfficeConversionTests.Run(Check, root);
 

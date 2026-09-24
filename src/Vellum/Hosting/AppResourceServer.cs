@@ -106,6 +106,16 @@ public sealed class AppResourceServer
 
     public string? ResolveDocument(string token) => _documents.TryGetValue(token, out var p) ? p : null;
 
+    /// <summary>
+    /// True if the page was given this file to read only (a history snapshot, a batch's source): nothing Vellum
+    /// writes for the person may land on it (Services/ExportTargets.cs).
+    /// </summary>
+    public bool IsReadOnly(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return _documents.Any(d => _readOnly.ContainsKey(d.Key) && string.Equals(d.Value, full, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>True if the page was given this file to open or save to (writable).</summary>
     public bool IsWritable(string path)
     {

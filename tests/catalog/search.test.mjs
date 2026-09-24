@@ -68,6 +68,8 @@ const GOLDEN = [
   ['word to pdf', 'word-to-pdf'], ['docx to pdf', 'word-to-pdf'], ['excel to pdf', 'excel-to-pdf'], ['xlsx 2 pdf', 'excel-to-pdf'],
   ['powerpoint to pdf', 'powerpoint-to-pdf'], ['slides to pdf', 'powerpoint-to-pdf'],
   ['powerpoint', 'pdf-to-powerpoint'],
+  ['batch', 'batch-compress'], ['compress many pdfs', 'batch-compress'], ['bulk compress', 'batch-compress'],
+  ['batch convert', 'batch-office-to-pdf'], ['many word files to pdf', 'batch-office-to-pdf'], ['convert folder to pdf', 'batch-office-to-pdf'],
 ];
 
 test('golden queries: the right tool first', () => {
@@ -93,8 +95,14 @@ test('direction: the order of the words decides between opposite conversions', (
   assert.deepEqual(ids('pdf to word', 2), ['pdf-to-word', 'word-to-pdf']);
 });
 
-test('office: the three Office tools, and nothing else', () => {
-  assert.deepEqual(ids('office', 5).sort(), ['excel-to-pdf', 'powerpoint-to-pdf', 'word-to-pdf']);
+test('office: the three Office tools and the batch one, and nothing else', () => {
+  assert.deepEqual(ids('office', 6).sort(), ['batch-office-to-pdf', 'excel-to-pdf', 'powerpoint-to-pdf', 'word-to-pdf']);
+});
+
+test('batch: both batch tools, and one PDF’s tool still comes first for its own words', () => {
+  assert.deepEqual(ids('batch processing', 2).sort(), ['batch-compress', 'batch-office-to-pdf']);
+  assert.equal(ids('compress pdf', 1)[0], 'compress-pdf');
+  assert.ok(ids('compress', 3).includes('batch-compress'));
 });
 
 test('"to", "into" and numbers never leave a result out', () => {
@@ -157,6 +165,7 @@ test('palette: the phrases the e2e suites type still find their command', () => 
     'Merge PDFs': 'pages.merge', 'Rotate page left': 'pages.rotateLeft', 'Rotate page right': 'pages.rotateRight',
     'Duplicate page': 'pages.duplicate', 'Watermark': 'pages.watermark', 'Page numbers': 'pages.numbers',
     'Crop pages': 'pages.crop', 'Word to PDF': 'office.wordToPdf', 'Excel to PDF': 'office.excelToPdf', 'Space evenly down': 'arrange.spaceDown', 'About Vellum': 'app.about',
+    'Compress many PDFs': 'batch.compress', 'Convert many Office files': 'batch.officeToPdf',
   };
   for (const [query, id] of Object.entries(typed)) assert.equal(paletteTop(query), id, query);
   // And a partial label still works as it did: a word at the start of a label counts more.

@@ -140,6 +140,9 @@ export function createCommands(app, ui, actions) {
     'tools.compare': { group: 'Tools', icon: 'files', label: 'Compare documents…', run: () => actions.compare.choose() },
     'tools.compress': { group: 'Tools', icon: 'minimize-2', doc: true, requires: ['writable'], label: 'Compress PDF…', run: () => doc() && actions.optimize.compress(doc()) },
     'tools.pdfa': { group: 'Tools', icon: 'list-checks', doc: true, requires: ['writable'], label: 'Convert to PDF/A…', run: () => doc() && actions.optimize.pdfa(doc()) },
+    // Batch processing (batch/actions.js): one operation over many files the person picks; no document needed.
+    'batch.compress': { group: 'Tools', icon: 'minimize-2', label: 'Compress many PDFs…', run: () => actions.batch.open('pdf.compress') },
+    'batch.officeToPdf': { group: 'Tools', icon: 'files', label: 'Convert many Office files to PDF…', presentIf: 'engine.office', run: () => actions.batch.open('office.toPdf') },
 
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
     'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },

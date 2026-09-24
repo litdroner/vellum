@@ -14,7 +14,7 @@ export const timeoutMs = 120000;
 
 // Every bridge request that shows a Windows dialog (MainWindow*.cs).
 const NATIVE = ['openDialog', 'pictureDialog', 'attachDialog', 'collections.addDialog', 'saveAsDialog', 'splitTargets', 'export.folder', 'html.toPdf', 'history.move'];
-const CATEGORIES = ['edit', 'review', 'organize', 'convert', 'sign', 'protect', 'optimize', 'research'];
+const CATEGORIES = ['edit', 'review', 'organize', 'convert', 'sign', 'protect', 'optimize', 'research', 'automate'];
 const PROTECTED = 'This PDF is protected (encrypted), so Vellum can’t rewrite it.';
 
 export async function run(t) {
@@ -118,9 +118,9 @@ export async function run(t) {
     return { title: panel.querySelector('.tools-title')?.textContent, tiles: [...panel.querySelectorAll('.tools-tile:not(.tools-card)')].map((el) => el.dataset.category),
       tabs: [...document.querySelectorAll('.tools-tab')].map((el) => el.dataset.view), selected: document.querySelector('.tools-tab[aria-selected="true"]')?.dataset.view };
   })()`);
-  check('with a document open, the landing is for it and shows the eight categories', landing.title === 'For “doc.pdf”'
+  check('with a document open, the landing is for it and shows the nine categories', landing.title === 'For “doc.pdf”'
     && JSON.stringify(landing.tiles) === JSON.stringify(CATEGORIES), JSON.stringify(landing));
-  check('the rail: Home (selected), then the eight categories; no Favorites or Recent before there are any', landing.selected === 'home'
+  check('the rail: Home (selected), then the nine categories; no Favorites or Recent before there are any', landing.selected === 'home'
     && JSON.stringify(landing.tabs) === JSON.stringify(['home', ...CATEGORIES]), JSON.stringify(landing.tabs));
   await snap('light-landing-document');
   await c.key('Escape');
@@ -341,7 +341,8 @@ export async function run(t) {
   await sleep(300);
   check('activating it runs nothing, and Tools stays open', (await calls()).length === 0 && await isOpen());
   await q(`document.querySelector('.tools-input').focus()`);
-  await typeQuery('compress');
+  // Its own name: for “compress” alone, Compress many PDFs (runnable without a document) rightly comes first.
+  await typeQuery('compress pdf');
   const lockedResults = await options();
   check('found by search it can’t run either', lockedResults[0]?.tool === 'compress-pdf' && lockedResults[0].off, JSON.stringify(lockedResults.slice(0, 2)));
   await c.key('Enter');
@@ -362,7 +363,7 @@ export async function run(t) {
   })()`);
   check('with no document, the landing starts with the tools that need none', start.title === 'Start without a document'
     && ['merge-pdfs', 'images-to-pdf', 'html-to-pdf', 'compare-documents'].every((id) => start.cards.includes(id)), JSON.stringify(start));
-  check('…then the eight categories, noting most tools need a PDF, with one Open a PDF button', start.tiles === 8 && start.note === 'Most tools work on an open PDF' && start.open === 1, JSON.stringify(start));
+  check('…then the nine categories, noting most tools need a PDF, with one Open a PDF button', start.tiles === 9 && start.note === 'Most tools work on an open PDF' && start.open === 1, JSON.stringify(start));
   await snap('light-landing-no-document');
   await showCategory('organize');
   const waiting = await q(`(() => {

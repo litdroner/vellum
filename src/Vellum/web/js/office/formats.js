@@ -4,19 +4,37 @@
 
 export const OFFICE_FORMATS = Object.freeze(['word', 'excel', 'powerpoint']);
 
+/** The extensions of each format, as the host takes them (Services/Conversion/OfficeConversion.cs OfficeFormats). */
+export const OFFICE_EXTENSIONS = Object.freeze({ word: ['.docx', '.doc'], excel: ['.xlsx', '.xls'], powerpoint: ['.pptx', '.ppt'] });
+
+/** The format a file name is, by its extension: 'word', 'excel', 'powerpoint', or null. */
+export function officeFormatOf(name) {
+  const dot = String(name ?? '').lastIndexOf('.');
+  const extension = dot < 0 ? '' : String(name).slice(dot).toLowerCase();
+  return OFFICE_FORMATS.find((f) => OFFICE_EXTENSIONS[f].includes(extension)) ?? null;
+}
+
+/** "Word document", "Excel workbook", "PowerPoint presentation": the host's own nouns. */
+export const OFFICE_NOUNS = Object.freeze({ word: 'Word document', excel: 'Excel workbook', powerpoint: 'PowerPoint presentation' });
+
 /** The presence name of one format's tool (requirements.js): `engine.office.word`… */
 export const presenceName = (format) => `engine.office.${format}`;
+
+/** Present when any format is: batch conversion (batch.officeToPdf), which takes all three. */
+export const ANY_OFFICE = 'engine.office';
 
 /**
  * The presence names office.providers makes true. A format is there when an installed provider can convert
  * it, even if that provider is busy right now (PowerPoint open): the tool stays, and says why when it runs.
- * With no provider for it, or a report that can't be read, it isn't there.
+ * With no provider for it, or a report that can't be read, it isn't there. `engine.office` is there when any
+ * format is.
  */
 export function presenceFrom(report) {
   const present = {};
   for (const f of Array.isArray(report?.formats) ? report.formats : []) {
     if (OFFICE_FORMATS.includes(f?.format) && (f.status === 'ready' || f.status === 'unavailable')) present[presenceName(f.format)] = true;
   }
+  if (Object.keys(present).length) present[ANY_OFFICE] = true;
   return Object.freeze(present);
 }
 
