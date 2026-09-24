@@ -133,8 +133,9 @@ ProcessRunner                the only way a provider starts a program: time limi
   failure is reported with the provider named, never retried with the other. A request may name a provider;
   there are no preference settings yet.
 - **One operation, no UI in it.** `office.toPdf` takes full paths and returns a structured result (status,
-  message, provider, output, diagnostics). The bridge's `office.toPdf` adds the Open and Save dialogs; Batch
-  and Flow will call the operation with their own files, never through a tool id. `office.providers` reports
+  message, provider, output, diagnostics). The bridge's `office.toPdf` adds the Open and Save dialogs; batch
+  processing calls the operation through `batch.office` with the files the person chose, and Flow will too,
+  never through a tool id. `office.providers` reports
   what the PC has, starting nothing (off the UI thread).
 - **The tools** (`js/office/`): Word, Excel and PowerPoint to PDF, one per format, each `presentIf`
   `engine.office.word` / `.excel` / `.powerpoint`: present when an installed provider can convert the format,
@@ -155,6 +156,50 @@ ProcessRunner                the only way a provider starts a program: time limi
   setting that outlives the conversion is changed.
 - **Privacy.** Vellum uploads nothing. The provider is a third-party application: a document that links to
   web content may make it fetch that content, as opening the document in that application would. Claim no more.
+
+## Operations and batch processing
+
+Automation runs **operations**, never tools or commands (docs/TOOLS_UX_SPEC.md §29 Q13). Batch processing is
+the first thing that does; Vellum Flow will compose the same operations.
+
+- **An operation** (`js/operations/registry.js`) is a feature's own core reached without its UI — never a
+  second implementation. It has a stable id (a Flow step will name it: never a tool id or a command id), the
+  files it takes (`accepts(name)`), the name of the file it makes, serialisable parameters with defaults and a
+  check, the choices a person picks them from, a time limit per file, a refusal for a file it can't take on this
+  PC now, and `run(job, env)`: one file, no dialog, no open document. It resolves an outcome — `succeeded`
+  (always with the file it wrote), `failed`, `skipped`, `cancelled` or `timedOut`, with a code, the reason in
+  the operation's own words, the provider and diagnostics — and a refusal is an outcome, never an exception.
+  `env` is how it reaches the host (the abort signal, progress, reading and writing files, pdf-lib), so the
+  registry imports no UI and no bridge and runs in Node. Two today: `pdf.compress` (Compress PDF V1,
+  `optimize/compress.js`, on the file's bytes) and `office.toPdf` (the host's operation, one file per
+  `batch.office`). A new one is added here, with its tests, when its feature's core can run without its UI.
+- **The engine** (`js/batch/engine.js`, pure, tested in Node) plans and runs one operation over many files.
+  Files run one at a time, in the order they were added: conversions are one at a time on the host anyway,
+  and the page's operations share one thread, so running two at once would only race. Each file has its own
+  abort signal and result; an error, refusal or time-out in one never changes another, and an exception is
+  reported without its text (kept as diagnostics). Every output name is fixed before anything runs: never a
+  source of the batch, never another output of it. Stop starts nothing new and stops the running file, which
+  ends as the operation reports it or, past a grace period (15 s), as stopped; files never started say so.
+  Nothing stopped, timed out or without a file counts as done. An outcome with `stopBatch` (no Office provider
+  left on this PC) skips the rest with its reason. A batch's outcome is done, partial, failed, stopped or
+  nothing; failed, stopped and timed-out files can run again.
+- **The host** (`MainWindow.Batch.cs`) adds no second way to convert, name or write a file. `batch.choose` is
+  the Windows dialog for files, or a folder (the files of that kind directly in it, in name order; hidden,
+  system and Office `~$` owner files left out; 1000 at most). Each file chosen is registered **read-only**:
+  the page may read it (`/doc/{token}`) and name it by its token, never write it. `batch.office` converts one
+  chosen file (by token only) through `office.toPdf` into the export destination contract, one conversion at
+  a time shared with the Office tools, `office.cancel` stopping it; it always answers with a structured result.
+- **Output.** New files go through the Export Center's destination contract: `export.targets` decides the
+  path (`Services/ExportTargets.cs`: a cleaned name in a folder the host already allowed — the source's own,
+  or one the person chose), and `/export/{token}` writes it atomically. What is already on disk is asked about
+  once, for the whole batch: Replace, or Keep both (the host numbers the name). A file the page may only read —
+  a batch's source, a history snapshot — is never a target, whatever was asked: its name is numbered too, so
+  an output can never overwrite an input.
+- **The UI** (`js/ui/batch.js`, `js/batch/actions.js`): one dialog per operation, opened from its Automate
+  tool, with three stages in place — setup (files, the operation's choices, where the new files go, and what
+  will be skipped and why), running (each file's state, the batch's progress, Stop; it can't be closed while
+  a file is being worked on) and finished (each file's outcome with Show in folder, a summary that says what
+  didn't work, Try again). One batch at a time; closing Vellum while one runs asks first.
 
 ## Adding a feature
 
@@ -189,6 +234,11 @@ may import which; it needs no app and no PDF.
 conversion with whatever this PC has, skipped when it has none. The Office tools' presence and outcomes are in
 `tests/catalog`; their wiring in the app (presence, the running dialog, Cancel, one at a time, Home, Recent
 and Favorites) is the e2e suite `office-tools`, with the host stubbed on the page: no dialog, no Office.
+`node --test "tests/batch/*.test.mjs"` covers the operations and the batch engine (planning, names, order,
+isolation, Stop, time limits, outcomes, Try again) with fake hosts; `tests/host` covers the export targets
+(no output on a read-only source). The e2e suite `batch` runs it in the app: a real Compress over copies,
+through the host's write path, and Office files, Stop, the quit question and a partial result with
+`batch.choose`, `batch.office` and `office.providers` stubbed on the page.
 
 **The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
 build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in
