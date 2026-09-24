@@ -72,7 +72,7 @@ export class Toolbar {
     root.append(
       h('div', { class: 'tb-group' }, this.sidebarBtn, this.openBtn),
       h('div', { class: 'tb-spacer' }),
-      h('div', { class: 'tb-group tools-group doc-only' }, this.toolSeg, this.colorBtn),
+      h('div', { class: 'tb-group mode-group doc-only' }, this.toolSeg, this.colorBtn),
       h('div', { class: 'tb-spacer' }),
       h('div', { class: 'tb-group doc-only' }, this.undoBtn, this.redoBtn, this.saveBtn, this.searchBtn, this.toneBtn, this.printBtn),
       h('div', { class: 'tb-sep' }),
