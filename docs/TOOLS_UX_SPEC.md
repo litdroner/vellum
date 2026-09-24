@@ -244,7 +244,7 @@ every other command in the registry. **75 meaningful capabilities inventoried.**
 | Protect | **Keep** | Only 2 tools today, but a very clear intent, and passwords, permissions and metadata cleaning are planned (Vision §3.6). |
 | Optimize | **Keep, under a clear rule** | **Still a PDF, made fitter for a purpose:** smaller, searchable, archival, checked. That puts PDF/A here, not in Convert. |
 | Research | **Keep** | Vellum's differentiator: structure, research, graph, tables. More concrete for first-time users than the pillar name "Understand". |
-| Automate | **Reserve, hidden** — now **shown** | Hidden while nothing existed: an empty category would fake a feature. It appeared with its first real tools, batch processing (Compress many PDFs, Convert many Office files to PDF); Vellum Flow joins it. |
+| Automate | **Reserve, hidden** — now **shown** | Hidden while nothing existed: an empty category would fake a feature. It appeared with its first real tools, batch processing (Compress many PDFs, Convert many Office files to PDF); Workflows (Vellum Flow V1) joined it. |
 | Review *(added)* | **Add** | Markup that doesn't change the page (highlight, underline, notes, drawing), plus Compare and History ("look at it, mark it, see what changed"). Annotating isn't editing, and first-time users keep the two apart. |
 | Fill & Sign *(added)* | **Add** | A top-three PDF intent. It matches the Vision's SIGN pillar and common usage. |
 | Read / View | **Don't add** | Zoom, layouts, page colours and navigation are controls, not tasks. They stay in the view bar and the palette; Tools search falls back to them (§9.7). |
@@ -287,8 +287,8 @@ OPTIMIZE      Smaller, searchable, archive-ready, checked                   4
 RESEARCH      Understand a document and quote from it                       4
                       Research this document · Document structure · Document graph · Copy tables
 
-AUTOMATE      Run the same steps on many files                              2
-                      Compress many PDFs · Convert many Office files to PDF
+AUTOMATE      Run the same steps on many files                              3
+                      Compress many PDFs · Convert many Office files to PDF · Workflows
 ```
 
 **Rules that keep it stable:**
@@ -751,7 +751,9 @@ These rules apply to every future feature (see also §28).
 6. **The palette** lists every command, as now, and gains tool aliases.
 7. **Settings** holds preferences and storage only, and never an action that changes a document.
 8. **Workflows** (Export, Crop, Split, Merge, Compare, Health, History, Watermark, Page numbers) own
-   their options. A tool opens the workflow and never re-implements a workflow option in Tools. A tool
+   their options. (Here "workflow" means a feature's own dialog; the saved, runnable *Workflows* of Vellum
+   Flow are a different thing, specified in ARCHITECTURE_GUIDELINES.md, *Operations, batch processing and
+   workflows*.) A tool opens the workflow and never re-implements a workflow option in Tools. A tool
    never carries run parameters: when one workflow serves several goals (Export → Word, Excel…), each
    goal is its own command, which opens the workflow on its choice (`export.word` →
    `actions.export.run(view, { format: 'word' })`).
@@ -790,7 +792,7 @@ the variant commands of the same goal), and the command registry does the rest.
                             (snapshot + availability)   (doc, requires, presentIf)
 ```
 
-Future automation (Batch, Flow) binds to **operation ids** in an operation registry over the pure core
+Automation (Batch, and workflows) binds to **operation ids** in an operation registry over the pure core
 modules, never to tool ids or commands (§29 Q13).
 
 ## 17. Registry / metadata proposal
@@ -1214,8 +1216,8 @@ The Gate column below is always on the command.
 | Repair | Optimize | `document` | Joins the *Large/problematic* recommendation rule when it exists |
 | Passwords, permissions, metadata cleaning | Protect (new section "Security", and a "Privacy" section for metadata) | `writable`; password tools need the correct password | Protect grows from 2 to about 6, still within limits |
 | Digital (certificate) signatures | Fill & Sign / new section "Digital signatures" | `presentIf: 'engine.signing'` | Picture signatures and certificate signatures stay separate tools, with names that say which |
-| Batch processing V1 — **built** | **Automate** appears | the Office one: `presentIf: 'engine.office'` | One tool per operation (`batch-compress` → `batch.compress` → operation `pdf.compress`; `batch-office-to-pdf` → `batch.officeToPdf` → operation `office.toPdf`), sharing the alias *batch processing*. The dialog runs **operations** from `operations/registry.js` (stable ids, serialisable parameters, no UI), never tools or commands (ARCHITECTURE_GUIDELINES.md, *Operations and batch processing*). No `batch: true` flag on tools. A Batch Center listing every operation, with task history, is still planned |
-| Vellum Flow (workflows) | Automate | – | A workflow step is an **operation id** plus its parameters, never a tool id or a command (§29 Q13). It composes the operations batch processing runs (`operations/registry.js`) |
+| Batch processing V1 — **built** | **Automate** appears | the Office one: `presentIf: 'engine.office'` | One tool per operation (`batch-compress` → `batch.compress` → operation `pdf.compress`; `batch-office-to-pdf` → `batch.officeToPdf` → operation `office.toPdf`), sharing the alias *batch processing*. The dialog runs **operations** from `operations/registry.js` (stable ids, serialisable parameters, no UI), never tools or commands (ARCHITECTURE_GUIDELINES.md, *Operations, batch processing and workflows*). No `batch: true` flag on tools. A Batch Center listing every operation, with task history, is still planned |
+| Vellum Flow (workflows) — **built** (V1) | Automate | – | One tool, `workflows` → `flow.open` (aliases *vellum flow*, *automation*, *pipeline*…; not "Flow" as a category name). A workflow step is an **operation id** plus its parameters, never a tool id or a command (§29 Q13); a saved workflow never becomes a tool or a command of its own. It composes the operations batch processing runs (`operations/registry.js`) and runs on many files *as* a batch (ARCHITECTURE_GUIDELINES.md, *Operations, batch processing and workflows*). The steps a person can add are the operations, filtered by what can follow and by this PC (`presentIf`), never the Tools catalog |
 | Local AI (summaries, Q&A) | Research | `presentIf: 'ai.local'` | No AI tool appears without a real `AIProvider`. Aliases are allowed to say "ai" only once one exists |
 | Structured extraction | Research (reading), Convert (file output) | per output | The same boundary rule: file format changes → Convert |
 | Translation | Convert (the output is a new document) | `presentIf: 'ai.local'` or an engine | Not "Research" |
@@ -1256,7 +1258,7 @@ The questions this spec raised, as the owner answered them after the architectur
     Tools becomes visible.
 13. **Operations vs commands:** future automation (Batch, Flow) uses **operation ids** from an operation
     registry over the pure cores, not Tool ids and not commands. The registry came with batch processing:
-    `operations/registry.js`, specified in ARCHITECTURE_GUIDELINES.md, *Operations and batch processing*.
+    `operations/registry.js`, specified in ARCHITECTURE_GUIDELINES.md, *Operations, batch processing and workflows*.
 14. **Favorites storage:** localStorage `vellum.catalog`, not `vellum.tools` (annotation colours).
 
 ## 30. Recommended implementation phases

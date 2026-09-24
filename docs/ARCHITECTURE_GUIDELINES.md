@@ -134,8 +134,9 @@ ProcessRunner                the only way a provider starts a program: time limi
   there are no preference settings yet.
 - **One operation, no UI in it.** `office.toPdf` takes full paths and returns a structured result (status,
   message, provider, output, diagnostics). The bridge's `office.toPdf` adds the Open and Save dialogs; batch
-  processing calls the operation through `batch.office` with the files the person chose, and Flow will too,
-  never through a tool id. `office.providers` reports
+  processing calls the operation through `batch.office` with the files the person chose, and a workflow does
+  too (held, when it is a step in between: see *Operations, batch processing and workflows*), never through a
+  tool id. `office.providers` reports
   what the PC has, starting nothing (off the UI thread).
 - **The tools** (`js/office/`): Word, Excel and PowerPoint to PDF, one per format, each `presentIf`
   `engine.office.word` / `.excel` / `.powerpoint`: present when an installed provider can convert the format,
@@ -157,10 +158,21 @@ ProcessRunner                the only way a provider starts a program: time limi
 - **Privacy.** Vellum uploads nothing. The provider is a third-party application: a document that links to
   web content may make it fetch that content, as opening the document in that application would. Claim no more.
 
-## Operations and batch processing
+## Operations, batch processing and workflows
 
-Automation runs **operations**, never tools or commands (docs/TOOLS_UX_SPEC.md §29 Q13). Batch processing is
-the first thing that does; Vellum Flow will compose the same operations.
+Automation runs **operations**, never tools or commands (docs/TOOLS_UX_SPEC.md §29 Q13). Five words, five things:
+
+| | What it is | Where |
+|---|---|---|
+| **Tool** | a discovery record: the task a person looks for, pointing at a command | `catalog/catalog.js` |
+| **Command** | a user action (label, keys, availability, `run`) that menus, the palette and Tools call | `commands.js` |
+| **Operation** | a feature's core, run on one file with nobody at the screen: stable id, serialisable parameters | `operations/registry.js` |
+| **Batch** | one operation repeated over many files, one at a time | `batch/engine.js` |
+| **Workflow** | a saved, named list of operations and their settings, run in order on each file | `flow/`, `workflows.json` |
+
+A workflow composes operations; a batch repeats one. A workflow runs on the files the person picks *as a batch*
+(it is handed to the batch engine as one operation), so batch never knows about workflows and nothing is built
+twice.
 
 - **An operation** (`js/operations/registry.js`) is a feature's own core reached without its UI — never a
   second implementation. It has a stable id (a Flow step will name it: never a tool id or a command id), the
@@ -171,8 +183,13 @@ the first thing that does; Vellum Flow will compose the same operations.
   the operation's own words, the provider and diagnostics — and a refusal is an outcome, never an exception.
   `env` is how it reaches the host (the abort signal, progress, reading and writing files, pdf-lib), so the
   registry imports no UI and no bridge and runs in Node. Two today: `pdf.compress` (Compress PDF V1,
-  `optimize/compress.js`, on the file's bytes) and `office.toPdf` (the host's operation, one file per
-  `batch.office`). A new one is added here, with its tests, when its feature's core can run without its UI.
+  `optimize/compress.js`, on the file's bytes), `office.toPdf` (the host's operation, one file per
+  `batch.office`), `pdf.pageNumbers` and `pdf.watermark` (text only) — every page, through the writer saving a
+  document uses (`pages/stamps.js` `writePageSettings`), with the Page numbers and Watermark dialogs' own size and
+  opacity. A new one is added here, with its tests, when its feature's core can run without its UI. For
+  workflows an operation also says what it is as a step (`step`), the kind of file it makes (`makes`, which the
+  next step must `accept`), what it needs on this PC at all (`presentIf`, with the sentence `absent`), and —
+  optionally — what only pdf-lib can check about its settings (`verify`: a watermark's characters).
 - **The engine** (`js/batch/engine.js`, pure, tested in Node) plans and runs one operation over many files.
   Files run one at a time, in the order they were added: conversions are one at a time on the host anyway,
   and the page's operations share one thread, so running two at once would only race. Each file has its own
@@ -200,6 +217,33 @@ the first thing that does; Vellum Flow will compose the same operations.
   will be skipped and why), running (each file's state, the batch's progress, Stop; it can't be closed while
   a file is being worked on) and finished (each file's outcome with Show in folder, a summary that says what
   didn't work, Try again). One batch at a time; closing Vellum while one runs asks first.
+- **Workflows, the definition** (`js/flow/model.js`, pure): `{ id, name, steps: [{ op, params }] }` — an operation
+  id and plain settings per step, nothing from a document and no path; which files it runs on and where the new
+  files go are chosen each time it runs. Kept by the host in `workflows.json` in the data folder
+  (`Services/Workflows.cs`, `MainWindow.Flow.cs`: `flow.load`, `flow.save`) as `{ v: 1, workflows: [...] }`,
+  written atomically. Reading is forgiving and loses nothing it can keep: a step whose operation this Vellum
+  doesn't have, or whose settings don't check, stays as written and the workflow says it can't run and why;
+  only entries that aren't workflows are dropped (and counted); a file that isn't a workflow list is kept as
+  `workflows.json.bad` and the list starts empty; a file from a newer Vellum (`v` above 1) isn't read, so it is
+  never written over. `checkWorkflow` checks each step (unknown operation, settings, this PC, and order: a step
+  must take the kind of file the one before makes, so Office → PDF can only come first) and at most 12 steps.
+- **Workflows, running** (`js/flow/runner.js`, pure): `workflowOperation` presents a workflow to the batch engine
+  as one operation (its first step's files, one output per file named "<file> (<workflow>).pdf", a time limit
+  that is the net under every step's own). For one file the steps run in order, each through the engine's
+  `runOperation` — its own time limit, Stop and grace, judged honestly. A step's file goes to the next **in
+  memory** (a *held* output); only the last step writes, through the same destination contract as a batch.
+  **All or nothing:** a step that fails, is skipped, stopped or past its time ends the file with that outcome in
+  that step's words ("Step 2, Add page numbers: …") and nothing is written. An Office step in between converts
+  with `batch.office` `hold: true` into the host's own work folder (`flow-work` under the data folder), is read
+  by a read-only token and let go (`batch.release`: forgotten and deleted); anything left is removed when Vellum
+  next starts. No concurrency, no branching, loops, scripts or network steps.
+- **Workflows, the UI** (`js/ui/flow.js`, `js/flow/actions.js`): one dialog, from the Automate tool *Workflows*
+  and the palette (`flow.open`): the list (each workflow's steps, or why it can't run; Run, Edit, Delete — which
+  asks first — and New) and the editor in place (a name; the steps in order, each with its operation's own
+  choices, moved up or down or removed; Add step offers only the operations that can follow the last one and
+  that this PC can do; Save stays off, with the reason, until the workflow can run). Run opens the batch dialog
+  on the workflow: files, destination, progress, Stop, results and Try again are batch processing's own. There
+  is no task history yet: the finished batch is the record of a run.
 
 ## Adding a feature
 
@@ -235,10 +279,17 @@ conversion with whatever this PC has, skipped when it has none. The Office tools
 `tests/catalog`; their wiring in the app (presence, the running dialog, Cancel, one at a time, Home, Recent
 and Favorites) is the e2e suite `office-tools`, with the host stubbed on the page: no dialog, no Office.
 `node --test "tests/batch/*.test.mjs"` covers the operations and the batch engine (planning, names, order,
-isolation, Stop, time limits, outcomes, Try again) with fake hosts; `tests/host` covers the export targets
-(no output on a read-only source). The e2e suite `batch` runs it in the app: a real Compress over copies,
+isolation, Stop, time limits, outcomes, Try again) with fake hosts, and page numbers, watermarks and a held
+Office conversion on generated PDFs read back with pdf.js; `tests/host` covers the export targets
+(no output on a read-only source) and the workflow store (whole, atomic, damaged kept as .bad). The e2e suite
+`batch` runs it in the app: a real Compress over copies,
 through the host's write path, and Office files, Stop, the quit question and a partial result with
 `batch.choose`, `batch.office` and `office.providers` stubbed on the page.
+`node --test "tests/flow/*.test.mjs"` covers workflows: reading damaged, newer and unknown definitions, a
+deterministic round trip, checking (unknown operation, settings, order, this PC), steps in order in memory with
+one write, failure, skip, errors and time limits per step, Stop, many files with Try again, and real operations
+chained. The e2e suite `flow` makes, saves, reloads, runs (real files on copies), stops (Office stubbed), repairs
+and deletes workflows in the app, and checks a damaged `workflows.json`.
 
 **The app, end to end**: `node tests/e2e/run.mjs [--no-build] [suite ...]` drives the real Debug
 build over DevTools (`tools/cdp-client.mjs`) with keys, mouse and typing. Suites are in
