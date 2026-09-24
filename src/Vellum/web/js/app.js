@@ -38,6 +38,7 @@ import { createExportActions } from './export/actions.js';
 import { createOptimizeActions } from './optimize/actions.js';
 import { createOfficeActions } from './office/actions.js';
 import { createBatchActions } from './batch/actions.js';
+import { createFlowActions } from './flow/actions.js';
 import { Updates } from './ui/updates.js';
 import { captureCover } from './recent-covers.js';
 import { loadAppearance, applyAppearance, switchAppearance, onSystemModeChange, originOf, toHex } from './themes.js';
@@ -452,6 +453,7 @@ actions.export = createExportActions({ pdfjsLib: libs.pdfjsLib });
 actions.optimize = createOptimizeActions();
 actions.office = createOfficeActions({ onOpenFile: (file) => app.open(file) });
 actions.batch = createBatchActions({ office: actions.office });
+actions.flow = createFlowActions({ batch: actions.batch, office: actions.office });
 actions.history = createHistoryActions({ app, compare: actions.compare, save: (view) => saveView(view) });
 actions.attachments = { show: (view) => showAttachments(view) };
 

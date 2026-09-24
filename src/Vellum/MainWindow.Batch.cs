@@ -16,7 +16,9 @@ namespace Vellum;
 //   batch.office   one item of Office → PDF: the office.toPdf operation (Services/Conversion) on a source chosen
 //                  here, into the export destination contract (MainWindow.Export.cs: a folder the person chose
 //                  or the source's own, a cleaned name, "replace" or "keepBoth"). One conversion at a time,
-//                  shared with the Office tools; office.cancel stops it. Always a structured result.
+//                  shared with the Office tools; office.cancel stops it. Always a structured result. With hold (a
+//                  workflow's step in between), the PDF goes to Vellum's own work folder instead and is handed over
+//                  read-only by a token, until batch.release (MainWindow.Flow.cs).
 //
 // Files a batch makes from the page's own operations (Compress) are written through export.targets and the
 // /export/{token} route, exactly as the single-document tools write theirs.
@@ -73,25 +75,38 @@ public partial class MainWindow
         bridge.Register("batch.office", async request =>
         {
             string source, destination;
+            // hold: a workflow's step in between; the PDF goes to Vellum's own work folder (MainWindow.Flow.cs).
+            var hold = OptionalBool(request, "hold") == true;
             try
             {
                 source = BatchSource(RequiredString(request, "source"));
-                var folder = ExportFolder(request);
-                var keepBoth = OptionalString(request, "overwrite") == "keepBoth";
-                destination = ExportTargets.Resolve(folder, RequiredString(request, "name"), keepBoth,
-                    new HashSet<string>(StringComparer.OrdinalIgnoreCase), _server!.IsReadOnly);
+                if (hold) destination = HeldPath(RequiredString(request, "name"));
+                else
+                {
+                    var folder = ExportFolder(request);
+                    var keepBoth = OptionalString(request, "overwrite") == "keepBoth";
+                    destination = ExportTargets.Resolve(folder, RequiredString(request, "name"), keepBoth,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase), _server!.IsReadOnly);
+                }
             }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException)
             {
                 return BatchItem(new ConversionResult(ConversionStatus.InvalidInput, ex.Message));
             }
             if (_officeRun is not null)
+            {
+                if (hold) DeleteHeld(destination);
                 return BatchItem(new ConversionResult(ConversionStatus.Unavailable, "A document is already being converted. Wait for it to finish, or cancel it, then try again."));
+            }
 
             // Set before the first await, so an office.cancel sent after this request always finds it.
             using var run = new CancellationTokenSource();
             _officeRun = run;
-            try { return BatchItem(await _office.ConvertAsync(new OfficeToPdfRequest(source, destination), run.Token)); }
+            try
+            {
+                var result = await _office.ConvertAsync(new OfficeToPdfRequest(source, destination), run.Token);
+                return hold ? HeldItem(result, destination) : BatchItem(result);
+            }
             finally { _officeRun = null; }
         });
     }
@@ -130,14 +145,17 @@ public partial class MainWindow
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
     }
 
-    /// <summary>One item's outcome, as the page reads it: the operation's own result, with the PDF when there is one.</summary>
-    private static object BatchItem(ConversionResult result) => new
+    /// <summary>
+    /// One item's outcome, as the page reads it: the operation's own result, with the PDF when there is one
+    /// (or `output`, when given: a held PDF's, with its token).
+    /// </summary>
+    private static object BatchItem(ConversionResult result, object? output = null) => new
     {
         status = StatusName(result.Status),
         message = result.Message,
         provider = result.Provider,
         providerName = result.ProviderName,
-        output = result.Succeeded ? new { name = Path.GetFileName(result.Output!), path = result.Output } : null,
+        output = output ?? (result.Succeeded ? new { name = Path.GetFileName(result.Output!), path = result.Output } : null),
         elapsedMs = (long)result.Elapsed.TotalMilliseconds,
         diagnostics = result.Diagnostics,
     };

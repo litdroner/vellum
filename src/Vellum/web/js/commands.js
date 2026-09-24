@@ -143,6 +143,8 @@ export function createCommands(app, ui, actions) {
     // Batch processing (batch/actions.js): one operation over many files the person picks; no document needed.
     'batch.compress': { group: 'Tools', icon: 'minimize-2', label: 'Compress many PDFs…', run: () => actions.batch.open('pdf.compress') },
     'batch.officeToPdf': { group: 'Tools', icon: 'files', label: 'Convert many Office files to PDF…', presentIf: 'engine.office', run: () => actions.batch.open('office.toPdf') },
+    // Workflows (flow/actions.js): saved lists of operations, run on the files the person picks; no document needed.
+    'flow.open': { group: 'Tools', icon: 'list-checks', label: 'Workflows…', run: () => actions.flow.open() },
 
     'annot.select': { group: 'Annotate', icon: 'mouse-pointer-2', doc: true, label: 'Select text', keys: ['V'], run: () => doc()?.setTool('select') },
     'annot.highlight': { group: 'Annotate', icon: 'highlighter', doc: true, label: 'Highlight', keys: ['H'], run: markOrTool('highlight') },

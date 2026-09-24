@@ -33,7 +33,7 @@ export const CATEGORIES = Object.freeze([
     sections: [{ id: 'redact', name: 'Redact' }] },
   { id: 'optimize', name: 'Optimize', icon: 'minimize-2', blurb: 'Smaller, searchable, archive-ready, checked', sections: [] },
   { id: 'research', name: 'Research', icon: 'book-open', blurb: 'Understand a document and quote from it', sections: [] },
-  // Batch processing: one operation over many files (batch/). Vellum Flow will join it.
+  // Batch processing (batch/): one operation over many files; workflows (flow/): several operations in a row.
   { id: 'automate', name: 'Automate', icon: 'sliders-horizontal', blurb: 'Run the same steps on many files', sections: [] },
 ].map((category) => Object.freeze({ reserved: false, ...category })));
 
@@ -168,6 +168,8 @@ export const TOOLS = Object.freeze([
     command: 'batch.compress', scope: 'files', aliases: ['batch compress', 'bulk compress', 'compress folder', 'compress multiple pdfs', 'batch processing'] }),
   tool({ id: 'batch-office-to-pdf', name: 'Convert many Office files to PDF', blurb: 'Word, Excel and PowerPoint files, each as a PDF, in one go', category: 'automate', section: null,
     command: 'batch.officeToPdf', scope: 'files', aliases: ['batch convert', 'bulk convert', 'convert folder to pdf', 'many word files to pdf', 'batch processing'] }),
+  tool({ id: 'workflows', name: 'Workflows', blurb: 'Steps you choose once, such as convert, number and compress, run on any files', category: 'automate', section: null,
+    command: 'flow.open', scope: 'files', aliases: ['vellum flow', 'automation', 'automate steps', 'saved steps', 'pipeline', 'steps on many files'] }),
 ]);
 
 /** The Home row's tools when none has been run yet, in order (docs/TOOLS_UX_SPEC.md §8): tool ids. */

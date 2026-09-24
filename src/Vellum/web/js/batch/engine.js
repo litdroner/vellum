@@ -145,9 +145,23 @@ function finish(it, result, elapsedMs) {
 
 const ABANDONED = Symbol('abandoned');
 
-async function runItem(operation, it, { params, overwrite, env, signal, graceMs, changed }) {
+function runItem(operation, it, { params, overwrite, env, signal, graceMs, changed }) {
+  const progress = (label) => {
+    if (it.status !== 'running') return;
+    it.progress = typeof label === 'string' ? label : null;
+    changed(it);
+  };
+  return runOperation(operation, { input: it.input, output: it.output, params, overwrite }, { env, signal, graceMs, progress });
+}
+
+/**
+ * One operation on one file (`job`, as operations/registry.js describes it), with the operation's own time limit:
+ * resolves what it came to, judged (judge()), with elapsedMs. `signal` stops it; past graceMs after a stop or the
+ * time limit it is left behind. A batch runs each file with it, and a workflow (flow/runner.js) each step.
+ */
+export async function runOperation(operation, job, { env, signal = null, graceMs = GRACE_MS, progress = null }) {
   const controller = new AbortController();
-  let why = null; // 'cancelled' (the batch was stopped) or 'timedOut'
+  let why = null; // 'cancelled' (stopped from outside) or 'timedOut'
   const stop = (reason) => {
     if (why) return;
     why = reason;
@@ -164,16 +178,10 @@ async function runItem(operation, it, { params, overwrite, env, signal, graceMs,
     if (controller.signal.aborted) wait();
     else controller.signal.addEventListener('abort', wait, { once: true });
   });
-  const progress = (label) => {
-    if (it.status !== 'running') return;
-    it.progress = typeof label === 'string' ? label : null;
-    changed(it);
-  };
   const started = Date.now();
   let settled;
   try {
-    const job = { input: it.input, output: it.output, params, overwrite };
-    const work = Promise.resolve().then(() => operation.run(job, env({ signal: controller.signal, progress })));
+    const work = Promise.resolve().then(() => operation.run(job, env({ signal: controller.signal, progress: progress ?? (() => {}) })));
     settled = await Promise.race([work, abandoned]);
   } catch (err) {
     settled = { thrown: err };
@@ -199,7 +207,8 @@ export function judge(settled, why, operation) {
   if (!settled || !FINAL.includes(settled.status)) {
     return outcome('failed', { code: 'error', message: 'Vellum couldn’t finish this file.', diagnostics: `An outcome Vellum doesn’t know: ${JSON.stringify(settled)}` });
   }
-  if (settled.status === 'succeeded' && !settled.output?.path) {
+  // A success has its file: written (a path), or held in memory for a workflow's next step.
+  if (settled.status === 'succeeded' && !settled.output?.path && !(settled.output?.held && settled.output.bytes)) {
     return outcome('failed', { ...settled, code: 'noOutput', message: 'It finished without a file to show, so it isn’t counted as done.' });
   }
   // The operation stopped because its time was up: say that, and keep what it said about the file.

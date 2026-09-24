@@ -2,7 +2,8 @@
 //   commands.js and requirements.js  no UI module, no bridge (they load anywhere, Node included)
 //   catalog/*                        nothing from the app at all: data and pure functions
 //   the palette                      loads the catalog only when it first opens, never at startup
-//   operations/ and batch/engine.js  no UI module, no bridge, no catalog, no commands: automation runs
+//   operations/, batch/engine.js,    no UI module, no bridge, no catalog, no commands: automation runs
+//   flow/model.js, flow/runner.js
 //                                    operations, never tools or commands (docs/TOOLS_UX_SPEC.md §29 Q13)
 // Run: node --test "tests/catalog/*.test.mjs"
 
@@ -72,9 +73,15 @@ test('nothing imports the palette from the catalog side, and the catalog never i
   }
 });
 
-test('operations and the batch engine load no UI, bridge, catalog or command registry, however indirectly', () => {
-  for (const start of ['operations/registry.js', 'batch/engine.js']) {
+test('operations, the batch engine and workflows (model, runner) load no UI, bridge, catalog or command registry, however indirectly', () => {
+  for (const start of ['operations/registry.js', 'batch/engine.js', 'flow/model.js', 'flow/runner.js']) {
     const loaded = loadedBy(start);
     assert.deepEqual(loaded.filter((n) => uiOrBridge(n) || n.startsWith('catalog/') || n === 'commands.js' || n === 'requirements.js'), [], start);
+  }
+});
+
+test('batch processing never loads a workflow: flow composes batch, not the other way round', () => {
+  for (const start of ['batch/engine.js', 'batch/actions.js', 'ui/batch.js', 'operations/registry.js']) {
+    assert.deepEqual(loadedBy(start).filter((n) => n.startsWith('flow/')), [], start);
   }
 });

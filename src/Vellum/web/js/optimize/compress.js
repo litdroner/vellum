@@ -164,7 +164,7 @@ const readingFailed = (err) => (/encrypt/i.test(String(err?.message ?? err))
   : `This PDF couldn’t be read for compressing (${err?.message ?? err}).`);
 
 /** The same test the document profile uses (editing/source.js), on an already-loaded document. */
-function isSigned(lib, doc) {
+export function isSigned(lib, doc) {
   const { PDFName, PDFDict, PDFNumber, PDFArray, PDFString, PDFHexString } = lib;
   const form = doc.context.lookup(doc.catalog.get(PDFName.of('AcroForm')));
   const flags = form instanceof PDFDict ? doc.context.lookup(form.get(PDFName.of('SigFlags'))) : null;

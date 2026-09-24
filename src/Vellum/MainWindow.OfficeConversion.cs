@@ -13,7 +13,7 @@ namespace Vellum;
 // office.providers says what this PC has, starting nothing, so the page can decide whether each Office tool
 // exists at all (presence `engine.office.word`, `.excel`, `.powerpoint`). office.toPdf is the interactive entry
 // behind those tools: the person picks the document and the PDF here, as for HTML to PDF, so the page never
-// names a path; the conversion itself is the office.toPdf operation, which Batch and Flow will call with their
+// names a path; the conversion itself is the office.toPdf operation, which Batch and workflows call with their
 // own files. `office-converting` tells the page the dialogs are done and the conversion has started, so it can
 // show that and offer Cancel; office.cancel stops it. One at a time: a second request is refused, not queued.
 public partial class MainWindow

@@ -1842,6 +1842,22 @@ kbd {
 .batch-folder { flex-basis: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .batch-dialog .progress { margin-top: 14px; }
 
+/* ---- workflows (ui/flow.js) ----------------------------------------------------------------- */
+
+/* The batch dialog’s list and buttons and the page-setting fields; this only lays out a step: its number, its
+   name, what is wrong with it, and its settings under the name. */
+.flow-name { margin-bottom: 12px; }
+.flow-step { align-items: flex-start; }
+.flow-step .batch-act { align-self: center; }
+.flow-item .batch-act { align-items: center; gap: 2px; }
+.flow-number { margin-top: 1px; color: var(--ink-3); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.flow-step[data-problem="true"] .flow-number, .flow-item[data-runnable="false"] .batch-glyph { color: var(--danger); }
+.flow-problem { color: var(--ink-2); }
+.flow-settings { margin: 6px 0 2px; }
+.flow-add { margin: 10px 0 0; }
+.flow-add .field { flex: 1; height: 32px; }
+.flow-dialog .batch-btn:disabled { opacity: .35; pointer-events: none; }
+
 /* ---- signature (ui/signature.js) ----------------------------------------------------------- */
 
 .dialog.signature-dialog { width: min(540px, calc(100vw - 40px)); }

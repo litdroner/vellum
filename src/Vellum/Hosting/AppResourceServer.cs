@@ -104,6 +104,13 @@ public sealed class AppResourceServer
     /// <summary>A downloaded OCR language pack's verified bytes by language code, or null (set by the window).</summary>
     public Func<string, byte[]?>? OcrLanguage { get; set; }
 
+    /// <summary>The page may no longer read or name this file (a workflow's held PDF, once read).</summary>
+    public void Forget(string token)
+    {
+        _documents.TryRemove(token, out _);
+        _readOnly.TryRemove(token, out _);
+    }
+
     public string? ResolveDocument(string token) => _documents.TryGetValue(token, out var p) ? p : null;
 
     /// <summary>

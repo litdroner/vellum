@@ -77,7 +77,7 @@ export function showBatch({ operation, services }) {
     const note = h('p', { class: 'dialog-note', 'aria-live': 'polite' });
     const actions = h('div', { class: 'dialog-actions' });
     const dialog = h('div', { class: 'dialog batch-dialog', role: 'dialog', 'aria-labelledby': titleId },
-      h('div', { class: 'dialog-icon', html: icon(operation.accept === 'pdf' ? 'minimize-2' : 'file-output', 22) }),
+      h('div', { class: 'dialog-icon', html: icon(operation.icon ?? (operation.accept === 'pdf' ? 'minimize-2' : 'file-output'), 22) }),
       title, message, adder, empty, list, options, bar, note, actions);
     const backdrop = h('div', { class: 'dialog-backdrop ui' }, dialog);
 

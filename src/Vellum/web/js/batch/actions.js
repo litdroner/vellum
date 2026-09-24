@@ -73,9 +73,14 @@ export function createBatchActions({ office }) {
     get running() { return run !== null; },
 
     /** Opens the batch dialog on an operation id (operations/registry.js); false if it can't open now. */
-    async open(id) {
+    open(id) {
       const op = operationById(id);
-      if (!op || open) return false;
+      return op ? this.openOperation(op) : Promise.resolve(false);
+    },
+
+    /** Opens the batch dialog on an operation itself: one from the registry, or a workflow (flow/runner.js). */
+    async openOperation(op) {
+      if (open) return false;
       open = true;
       try {
         // Which Office formats this PC converts decides which files are skipped before anything runs.

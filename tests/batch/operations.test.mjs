@@ -14,9 +14,10 @@ const input = { token: 'tok', path: 'C:\\in\\Quarterly report.docx', name: 'Quar
 const job = (over = {}) => ({ input, output: { folder: 'C:\\in', name: 'Quarterly report.pdf' }, params: {}, overwrite: 'keepBoth', ...over });
 
 test('the registry: stable ids, one per operation, each complete; no tool id, command id or UI in a record', () => {
-  assert.deepEqual([...OPERATIONS.keys()], ['office.toPdf', 'pdf.compress']);
+  assert.deepEqual([...OPERATIONS.keys()], ['office.toPdf', 'pdf.compress', 'pdf.pageNumbers', 'pdf.watermark']);
   for (const op of OPERATIONS.values()) {
-    for (const key of ['id', 'name', 'verb', 'noun', 'about', 'accept', 'unsupported']) assert.equal(typeof op[key], 'string', `${op.id}.${key}`);
+    for (const key of ['id', 'name', 'step', 'verb', 'noun', 'about', 'accept', 'makes', 'unsupported']) assert.equal(typeof op[key], 'string', `${op.id}.${key}`);
+    for (const choice of op.choices) assert.ok(choice.label && (choice.kind === 'text' || choice.options.some((o) => o.value === op.params[choice.param])), `${op.id}.${choice.param}`);
     for (const key of ['accepts', 'outputName', 'checkParams', 'refusal', 'run']) assert.equal(typeof op[key], 'function', `${op.id}.${key}`);
     assert.ok(op.timeoutMs > 0 && Array.isArray(op.choices) && Object.isFrozen(op), op.id);
     assert.ok(!('command' in op) && !('tool' in op), op.id);

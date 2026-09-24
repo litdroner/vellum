@@ -69,6 +69,7 @@ const GOLDEN = [
   ['powerpoint to pdf', 'powerpoint-to-pdf'], ['slides to pdf', 'powerpoint-to-pdf'],
   ['powerpoint', 'pdf-to-powerpoint'],
   ['batch', 'batch-compress'], ['compress many pdfs', 'batch-compress'], ['bulk compress', 'batch-compress'],
+  ['workflow', 'workflows'], ['vellum flow', 'workflows'], ['automation', 'workflows'], ['pipeline', 'workflows'],
   ['batch convert', 'batch-office-to-pdf'], ['many word files to pdf', 'batch-office-to-pdf'], ['convert folder to pdf', 'batch-office-to-pdf'],
 ];
 
@@ -165,7 +166,7 @@ test('palette: the phrases the e2e suites type still find their command', () => 
     'Merge PDFs': 'pages.merge', 'Rotate page left': 'pages.rotateLeft', 'Rotate page right': 'pages.rotateRight',
     'Duplicate page': 'pages.duplicate', 'Watermark': 'pages.watermark', 'Page numbers': 'pages.numbers',
     'Crop pages': 'pages.crop', 'Word to PDF': 'office.wordToPdf', 'Excel to PDF': 'office.excelToPdf', 'Space evenly down': 'arrange.spaceDown', 'About Vellum': 'app.about',
-    'Compress many PDFs': 'batch.compress', 'Convert many Office files': 'batch.officeToPdf',
+    'Compress many PDFs': 'batch.compress', 'Convert many Office files': 'batch.officeToPdf', 'Workflows': 'flow.open',
   };
   for (const [query, id] of Object.entries(typed)) assert.equal(paletteTop(query), id, query);
   // And a partial label still works as it did: a word at the start of a label counts more.

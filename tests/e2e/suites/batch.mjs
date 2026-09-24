@@ -88,13 +88,13 @@ export async function run(t) {
   area('Automate');
   await provide('noProvider', 'noProvider', 'noProvider');
   let ids = await automateRows();
-  check('Automate lists Compress many PDFs, and no Office batch without Office', J(ids) === J(['batch-compress']), J(ids));
+  check('Automate lists Compress many PDFs, and no Office batch without Office', J(ids) === J(['batch-compress', 'workflows']), J(ids));
   await q(`document.querySelector('.tools-input').value = ''`);
   await t.c.key('Escape');
   await waitFor(`!${TOOLS_OPEN}`, 5000);
   await provide('ready', 'ready', 'noProvider');
   ids = await automateRows();
-  check('with Word or Excel on this PC, both batch tools', J(ids) === J(['batch-compress', 'batch-office-to-pdf']), J(ids));
+  check('with Word or Excel on this PC, both batch tools', J(ids) === J(['batch-compress', 'batch-office-to-pdf', 'workflows']), J(ids));
   await shot('batch-automate');
 
   area('setup');

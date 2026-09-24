@@ -7,6 +7,7 @@
 // Saved research (src/Vellum/Services/SavedResearch.cs): a result kept as the page made it, given back unchanged, deleted one at a time.
 // Office → PDF providers (src/Vellum/Services/Conversion): see OfficeConversionTests.cs.
 // Export targets (src/Vellum/Services/ExportTargets.cs): where a file Vellum writes lands; never on a file it may only read.
+// Saved workflows (src/Vellum/Services/Workflows.cs): the list kept whole; a damaged file kept as .bad.
 
 using System.Net;
 using System.Security.Cryptography;
@@ -308,6 +309,28 @@ Check("… but not twice in one request", ExportTargets.Resolve(targets, "REPORT
 Check("keep both numbers a name already there", ExportTargets.Resolve(targets, "report.pdf", true, new HashSet<string>(StringComparer.OrdinalIgnoreCase), ReadOnly) == Path.Combine(targets, "report (2).pdf"));
 Check("a read-only source is never a target, even when replacing", ExportTargets.Resolve(targets, "Source.pdf", false, new HashSet<string>(StringComparer.OrdinalIgnoreCase), ReadOnly) == Path.Combine(targets, "Source (2).pdf"));
 Check("… and is left as it was", File.ReadAllText(batchSource) == "source" && File.ReadAllText(Path.Combine(targets, "report.pdf")) == "old");
+
+// Saved workflows: kept whole and atomically; a damaged file is kept as .bad and reads as nothing; only a
+// workflow list is accepted.
+var flowFolder = Path.Combine(root, "flow");
+var store = new WorkflowStore(flowFolder);
+Check("no saved workflows to begin with", store.Load() == (null, false));
+const string listJson = """{"v":1,"workflows":[{"id":"w1","name":"Client copy","steps":[{"op":"pdf.compress","params":{"level":"safe"}}]}]}""";
+store.Save(listJson);
+Check("a saved list reads back exactly", new WorkflowStore(flowFolder).Load() == (listJson, false));
+Check("no temporary file is left behind", !File.Exists(store.FilePath + ".tmp"));
+Exception? notList = null;
+try { store.Save("""{"v":1,"workflows":{}}"""); } catch (Exception refused) { notList = refused; }
+Check("anything but a workflow list is refused, and the saved one kept", notList is ArgumentException && store.Load().Json == listJson, notList?.GetType().Name);
+Exception? tooBig = null;
+try { store.Save("{\"workflows\":[\"" + new string('x', WorkflowStore.MaxBytes) + "\"]}"); } catch (Exception refused) { tooBig = refused; }
+Check("an oversized list is refused", tooBig is ArgumentException && store.Load().Json == listJson);
+File.WriteAllText(store.FilePath, "{ not json");
+var damagedFlow = store.Load();
+Check("a damaged file reads as nothing, said as damaged", damagedFlow == (null, true));
+Check("… and is kept beside it as .bad", File.ReadAllText(store.FilePath + ".bad") == "{ not json");
+store.Save(listJson);
+Check("a new list can then be saved", store.Load() == (listJson, false) && File.Exists(store.FilePath + ".bad"));
 
 await OfficeConversionTests.Run(Check, root);
 

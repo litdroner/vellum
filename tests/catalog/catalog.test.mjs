@@ -19,12 +19,12 @@ const words = (text) => tokenise(text).join(' ');
 const FORBIDDEN = [
   'encrypt', 'decrypt', 'password', 'unlock', 'permission', 'bates', 'translate', 'translation', 'ai', 'chat',
   'summarize', 'summary', 'cloud', 'share', 'upload', 'certificate', 'digital signature', 'repair',
-  'workflow', 'template',
+  'template',
 ];
 const RECORD_KEYS = ['id', 'name', 'blurb', 'category', 'section', 'command', 'variants', 'aliases', 'fits', 'scope', 'icon'];
 
-test('54 tools, each a discovery record and nothing more', () => {
-  assert.equal(TOOLS.length, 54);
+test('55 tools, each a discovery record and nothing more', () => {
+  assert.equal(TOOLS.length, 55);
   for (const t of TOOLS) {
     assert.deepEqual(Object.keys(t).sort(), [...RECORD_KEYS].sort(), `${t.id}: no requires, presentIf, preset or run on a tool`);
     assert.ok(Object.isFrozen(t), t.id);
@@ -80,7 +80,7 @@ test('the five PDF to … tools each have their own export command; Fill in form
 
 test('categories: the nine, in order; Automate appeared with batch processing, and nothing is reserved', () => {
   assert.deepEqual(CATEGORIES.map((c) => c.name), ['Edit', 'Review', 'Organize', 'Convert', 'Fill & Sign', 'Protect', 'Optimize', 'Research', 'Automate']);
-  assert.deepEqual(TOOLS.filter((t) => t.category === 'automate').map((t) => t.command), ['batch.compress', 'batch.officeToPdf']);
+  assert.deepEqual(TOOLS.filter((t) => t.category === 'automate').map((t) => t.command), ['batch.compress', 'batch.officeToPdf', 'flow.open']);
   assert.deepEqual(CATEGORIES.filter((c) => c.reserved).map((c) => c.id), []);
   assert.equal(new Set(CATEGORIES.map((c) => c.id)).size, CATEGORIES.length);
   for (const c of CATEGORIES) {
