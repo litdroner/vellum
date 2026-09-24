@@ -182,7 +182,7 @@ twice.
   (always with the file it wrote), `failed`, `skipped`, `cancelled` or `timedOut`, with a code, the reason in
   the operation's own words, the provider and diagnostics — and a refusal is an outcome, never an exception.
   `env` is how it reaches the host (the abort signal, progress, reading and writing files, pdf-lib), so the
-  registry imports no UI and no bridge and runs in Node. Two today: `pdf.compress` (Compress PDF V1,
+  registry imports no UI and no bridge and runs in Node. Four today: `pdf.compress` (Compress PDF V1,
   `optimize/compress.js`, on the file's bytes), `office.toPdf` (the host's operation, one file per
   `batch.office`), `pdf.pageNumbers` and `pdf.watermark` (text only) — every page, through the writer saving a
   document uses (`pages/stamps.js` `writePageSettings`), with the Page numbers and Watermark dialogs' own size and
